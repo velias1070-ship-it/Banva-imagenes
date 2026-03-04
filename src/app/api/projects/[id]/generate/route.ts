@@ -199,9 +199,9 @@ async function startBatchProcessing(batchId: string) {
     .eq('id', batchId);
 
   // Trigger the first job via the process-next endpoint (serverless chain)
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : 'http://localhost:3000';
+  const baseUrl = process.env.APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'http://localhost:3000';
 
   console.log(`[startBatch] Triggering process-next chain for batch ${batchId}`);
 

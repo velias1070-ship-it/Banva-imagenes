@@ -181,18 +181,20 @@ async function processOneJob(batchId: string) {
   }
 
   // Chain: trigger next job via self-invocation
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : process.env.NEXT_PUBLIC_SUPABASE_URL
-      ? 'http://localhost:3000'
-      : 'http://localhost:3000';
+  const baseUrl = process.env.APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'http://localhost:3000';
+
+  const chainUrl = `${baseUrl}/api/batches/${batchId}/process-next`;
+  console.log(`[process-next] Chaining to: ${chainUrl}`);
 
   try {
-    await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
+    const chainRes = await fetch(chainUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
-  } catch {
-    console.error('[process-next] Failed to chain next invocation');
+    console.log(`[process-next] Chain response: ${chainRes.status}`);
+  } catch (err) {
+    console.error('[process-next] Failed to chain next invocation:', err);
   }
 }
