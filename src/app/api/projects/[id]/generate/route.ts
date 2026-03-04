@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark } from '@/lib/image-processing';
-import { COST_PER_IMAGE_USD, DELAY_BETWEEN_REQUESTS_SEC } from '@/lib/constants';
+import { COST_PER_IMAGE_USD } from '@/lib/constants';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -190,8 +188,8 @@ ${finalCheck}
 Generate at 1024x1024 resolution.`;
 }
 
-// Process jobs in the background
-async function processJobs(batchId: string, projectId: string) {
+// Start batch processing: update status and trigger the chain of one-at-a-time invocations
+async function startBatchProcessing(batchId: string) {
   const supabase = createAdminClient();
 
   // Update batch to generating
@@ -200,147 +198,19 @@ async function processJobs(batchId: string, projectId: string) {
     .update({ status: 'generating', started_at: new Date().toISOString() })
     .eq('id', batchId);
 
-  // Get project
-  const { data: project } = await supabase
-    .from('projects')
-    .select('*')
-    .eq('id', projectId)
-    .single();
+  // Trigger the first job via the process-next endpoint (serverless chain)
+  const baseUrl = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : 'http://localhost:3000';
 
-  // Get all jobs with relations
-  const { data: jobs } = await supabase
-    .from('generation_jobs')
-    .select(`
-      *,
-      hero_shot:hero_shots(*),
-      swatch:swatches(*)
-    `)
-    .eq('batch_id', batchId)
-    .eq('status', 'pending');
+  console.log(`[startBatch] Triggering process-next chain for batch ${batchId}`);
 
-  if (!jobs?.length) return;
-
-  let completedCount = 0;
-  let approvedCount = 0;
-  let errorCount = 0;
-
-  for (const job of jobs) {
-    try {
-      // Download hero and swatch from Storage
-      const [heroRes, swatchRes] = await Promise.all([
-        supabase.storage.from('images').download(job.hero_shot.storage_path),
-        supabase.storage.from('images').download(job.swatch.storage_path),
-      ]);
-
-      if (heroRes.error || swatchRes.error) {
-        throw new Error(`Storage download failed: ${heroRes.error?.message || swatchRes.error?.message}`);
-      }
-
-      const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
-      const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
-      const heroBase64 = heroBuffer.toString('base64');
-      const swatchBase64 = swatchBuffer.toString('base64');
-
-      // Detect dark swatches for prompt adjustments (no image enhancement)
-      const darkSwatch = await isSwatchDark(swatchBuffer);
-      if (darkSwatch) {
-        console.log(`[processJobs] Dark swatch detected: "${job.swatch.name}" — using dark-fabric prompt`);
-      }
-
-      const prompt = buildPrompt(
-        project?.category || 'textile',
-        job.swatch.name,
-        job.swatch.color_description,
-        job.hero_shot.shot_type,
-        darkSwatch
-      );
-
-      // Update job to generating
-      await supabase
-        .from('generation_jobs')
-        .update({ status: 'generating', prompt_text: prompt, attempt: job.attempt + 1 })
-        .eq('id', job.id);
-
-      // Call Gemini with original swatch (dark swatches get adjusted prompt, not enhanced image)
-      const result = await generateImage({
-        heroImageBase64: heroBase64,
-        heroMimeType: job.hero_shot.mime_type || 'image/png',
-        swatchImageBase64: swatchBase64,
-        swatchMimeType: 'image/png',
-        promptText: prompt,
-      });
-
-      if (!result.success || !result.imageBase64) {
-        throw new Error(result.error || 'Generation failed');
-      }
-
-      // Upload result to Storage
-      const outputPath = `projects/${projectId}/generated/${job.id}.png`;
-      const imageBuffer = Buffer.from(result.imageBase64, 'base64');
-
-      await supabase.storage
-        .from('images')
-        .upload(outputPath, imageBuffer, {
-          contentType: result.imageMimeType || 'image/png',
-          upsert: true,
-        });
-
-      // Mark job as approved
-      await supabase
-        .from('generation_jobs')
-        .update({
-          status: 'approved',
-          output_storage_path: outputPath,
-          generation_time_ms: result.durationMs,
-          gemini_model_used: process.env.GEMINI_MODEL || 'gemini-3-pro-image-preview',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
-
-      approvedCount++;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      await supabase
-        .from('generation_jobs')
-        .update({
-          status: 'error',
-          error_message: errorMessage,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
-
-      errorCount++;
-    }
-
-    completedCount++;
-
-    // Update batch progress
-    await supabase
-      .from('generation_batches')
-      .update({
-        completed_count: completedCount,
-        approved_count: approvedCount,
-        error_count: errorCount,
-      })
-      .eq('id', batchId);
-
-    // Rate limit: wait between requests
-    if (completedCount < jobs.length) {
-      await new Promise((resolve) => setTimeout(resolve, DELAY_BETWEEN_REQUESTS_SEC * 1000));
-    }
-  }
-
-  // Finalize batch
-  await supabase
-    .from('generation_batches')
-    .update({
-      status: 'completed',
-      completed_count: completedCount,
-      approved_count: approvedCount,
-      error_count: errorCount,
-      completed_at: new Date().toISOString(),
-    })
-    .eq('id', batchId);
+  await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).catch((err) => {
+    console.error('[startBatch] Failed to trigger process-next:', err);
+  });
 }
 
 // GET: Return heroes with their generation status (how many jobs completed per hero)
@@ -488,10 +358,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: jobsError.message }, { status: 500 });
   }
 
-  // Use after() to keep serverless function alive for background processing
+  // Start the serverless chain: one job per invocation, each under 60s
   after(async () => {
     try {
-      await processJobs(batch.id, id);
+      await startBatchProcessing(batch.id);
     } catch (err) {
       console.error('Background processing error:', err);
     }
