@@ -37,8 +37,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const buffer = Buffer.from(await fileData.arrayBuffer());
-    const heroName = (job.hero_shot as { filename: string })?.filename?.replace(/\.[^.]+$/, '') || 'hero';
-    const swatchName = (job.swatch as { name: string })?.name || 'variant';
+    const heroName = (job.hero_shot as unknown as { filename: string })?.filename?.replace(/\.[^.]+$/, '') || 'hero';
+    const swatchName = (job.swatch as unknown as { name: string })?.name || 'variant';
     const filename = `${heroName}_${swatchName}.png`.replace(/[^a-zA-Z0-9._-]/g, '_');
 
     return new NextResponse(buffer, {
@@ -102,8 +102,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (error || !fileData) continue;
 
     const buffer = Buffer.from(await fileData.arrayBuffer());
-    const heroName = (job.hero_shot as { filename: string })?.filename?.replace(/\.[^.]+$/, '') || 'hero';
-    const swatchName = (job.swatch as { name: string })?.name || 'variant';
+    const heroName = (job.hero_shot as unknown as { filename: string })?.filename?.replace(/\.[^.]+$/, '') || 'hero';
+    const swatchName = (job.swatch as unknown as { name: string })?.name || 'variant';
     const filename = `${heroName}_${swatchName}.png`.replace(/[^a-zA-Z0-9._-]/g, '_');
 
     archive.append(buffer, { name: filename });
