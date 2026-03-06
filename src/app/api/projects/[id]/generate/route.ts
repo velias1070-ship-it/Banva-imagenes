@@ -22,9 +22,15 @@ PRODUCT CONTEXT: A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.
 
-What to change in Image 1:
-• The QUILT / BED COVER (the large textile covering the bed) → apply the quilt pattern/color from Image 2
-• The PILLOWCASES → apply the pillowcase pattern/color from Image 2 (same tones as the quilt)
+What to change in Image 1 — BOTH color AND quilting stitch pattern:
+• The QUILT / BED COVER → apply BOTH the COLOR and the QUILTING/STITCHING PATTERN from Image 2's quilt
+• The PILLOWCASES → apply BOTH the COLOR and the QUILTING/STITCHING PATTERN from Image 2's pillowcases
+
+⚠️ IMPORTANT — The quilting stitch pattern (the embossed/raised design stitched into the fabric) is part of the product design and MUST be changed to match Image 2.
+• If Image 1's quilt has a MANDALA/MEDALLION quilting pattern but Image 2's quilt has a BASKET WEAVE/HERRINGBONE pattern → the output MUST show BASKET WEAVE/HERRINGBONE
+• If Image 1's quilt has a GEOMETRIC pattern but Image 2's has FLORAL → the output MUST show FLORAL
+• Do NOT keep Image 1's quilting stitch pattern — it must be REPLACED with Image 2's quilting stitch pattern
+• The quilting pattern is as important as the color — both must come from Image 2
 
 The quilt and pillowcases in Image 2 share the same color tones. Apply them accordingly.
 
@@ -37,13 +43,15 @@ DO NOT change:
 FINAL CHECK
 ═══════════════════════════════════════════
 Before outputting, verify:
-1. Is the camera angle IDENTICAL to Image 1?
+1. Is the camera angle IDENTICAL to Image 1? (NOT Image 2's angle!)
 2. Are the products in the SAME position as Image 1?
 3. Did I add any elements that weren't in Image 1? If yes → REMOVE IT.
-4. Does the QUILT/BED COVER match the quilt pattern from Image 2?
-5. Do the PILLOWCASES match the pillowcase tones from Image 2?
-6. Did I accidentally change the surface UNDERNEATH the quilt? It should be unchanged.
-7. Did I invent any pattern not found in Image 2? If yes → FIX IT.`
+4. Does the QUILT/BED COVER COLOR match Image 2's quilt color?
+5. Does the QUILT/BED COVER QUILTING STITCH PATTERN match Image 2's quilting stitch pattern? (e.g., if Image 2 has basket weave but output has mandala → WRONG, FIX IT)
+6. Do the PILLOWCASES match Image 2's pillowcase color AND quilting pattern?
+7. Did I accidentally change the surface UNDERNEATH the quilt? It should be unchanged.
+8. Did I keep Image 1's quilting pattern instead of replacing it with Image 2's? If yes → FIX IT.
+9. Did I copy any part of Image 2's SCENE (room, furniture, composition) instead of just the fabric? If yes → FIX IT.`
     };
   }
 
@@ -147,7 +155,11 @@ MANDATORY for dark swatches:
   return `You are a photo editor specializing in textile product photography for e-commerce.
 
 IMAGE 1 (Hero Shot): The BASE photograph that you must EDIT. This is a ${category} product shown in a ${shotType} shot.
-IMAGE 2 (Swatch Reference): Shows the target color/pattern/design called "${swatchName}"${colorInfo}. Use ONLY the fabric patterns from this image. IGNORE its composition, camera angle, and scene — you only need the textile patterns.${darkSwatchNote}
+IMAGE 2 (Swatch Reference): Shows the target color/pattern/design called "${swatchName}"${colorInfo}.
+⚠️ CRITICAL: Image 2 may be a FULL PRODUCT PHOTO (complete bedroom scene with furniture, props, people) — NOT just a fabric closeup.
+You must EXTRACT ONLY the fabric's color, quilting/stitching pattern, and surface texture from the TEXTILE PRODUCT visible in Image 2.
+COMPLETELY IGNORE Image 2's: composition, camera angle, scene, room, furniture, lighting setup, text overlays, props.
+You are using Image 2 ONLY as a color/pattern reference — nothing else.${darkSwatchNote}
 
 ═══════════════════════════════════════════
 RULE #1 — COMPOSITION LOCK (HIGHEST PRIORITY)
@@ -170,6 +182,8 @@ FORBIDDEN — do NOT do any of these:
 ✗ Change the framing (wider/tighter crop)
 ✗ Rearrange or reposition the products
 ✗ Create a "bedroom scene" if Image 1 is just a flat-lay of pillows
+✗ Copy Image 2's SCENE or COMPOSITION — Image 2 is ONLY a color/pattern reference, NOT a layout reference
+✗ If Image 1 is a close-up/detail shot, the output MUST remain a close-up/detail shot (do NOT zoom out to show a full bed scene from Image 2)
 
 ${rule2}
 
@@ -179,8 +193,10 @@ RULE #3 — PATTERN FIDELITY (from Image 2)
 Extract the fabric designs from Image 2 and apply them faithfully:
 • Copy the EXACT colors — do not shift hues or saturate differently
 • Copy the EXACT pattern type — if Image 2 has flowers only on borders, put flowers only on borders; if all-over, make it all-over
+• Copy the EXACT quilting/stitching pattern — if Image 2's fabric has a basket weave stitch, the output must have basket weave (NOT mandala, NOT medallion, NOT any other pattern from Image 1)
 • Copy the EXACT density — if the pattern is sparse with lots of white space, keep it sparse; if dense, keep it dense
 • Copy the EXACT motifs — do not simplify flowers into blobs, do not invent new motifs
+• Do NOT keep Image 1's fabric pattern/texture — it must be FULLY REPLACED by Image 2's
 • Do NOT invent any design element not present in Image 2
 
 ${finalCheck}
