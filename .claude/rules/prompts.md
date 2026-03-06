@@ -66,6 +66,24 @@ Resolucion: 1024x1024
 - **Solucion aplicada**: Prompt advierte explicitamente que Image 2 puede ser foto completa
 - **Status**: Resuelto para composicion (ya no copia escena), parcial para patron
 
+## Tecnica: Swatch Recortado (NUEVO — validado 2026-03-06)
+
+**Cuando usar**: El swatch es una foto lifestyle completa (dormitorio, muebles) y Gemini no reemplaza el patron quilting del hero.
+
+**Como hacerlo**:
+1. Cargar el swatch con PIL/Sharp
+2. Identificar la zona de tela del quilt (evitar bordes, muebles, fondo)
+3. Crop del area de tela: aproximadamente y:480-860 para fotos landscape de cama
+4. Resize a cuadrado 800x800 (Gemini prefiere cuadrado)
+5. Usar el crop como Image 2 en vez del swatch original
+
+**Resultado validado**:
+- Heroes con hero mangling moderado (mujer durmiendo): FUNCIONO — mandala → basket weave
+- Heroes con close-up de tela (detail shot): FUNCIONO perfectamente
+- Heroes con mandala muy prominente en superficie plana (mujer leyendo extendida): NO FUNCIONO — limitacion del modelo
+
+**Implementacion futura**: Automatizar el crop del swatch si la imagen tiene >40% de pixels no-tela (detectado por varianza de color alta que indica muebles/fondo).
+
 ## ANTI-PATRONES (NO hacer)
 
 1. **3 imagenes**: Enviar Image 3 (swatch enhanced) NO funciona — Gemini ignora la 3ra imagen
