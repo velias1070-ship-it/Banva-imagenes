@@ -78,11 +78,43 @@ Resolucion: 1024x1024
 5. Usar el crop como Image 2 en vez del swatch original
 
 **Resultado validado**:
-- Heroes con hero mangling moderado (mujer durmiendo): FUNCIONO — mandala → basket weave
+- Heroes con quilt arrugado/doblado (mujer durmiendo): FUNCIONO — mandala → basket weave
 - Heroes con close-up de tela (detail shot): FUNCIONO perfectamente
-- Heroes con mandala muy prominente en superficie plana (mujer leyendo extendida): NO FUNCIONO — limitacion del modelo
+- Heroes con mandala plana extendida (mujer leyendo): NO FUNCIONA solo con crop — requiere flatten del hero
 
 **Implementacion futura**: Automatizar el crop del swatch si la imagen tiene >40% de pixels no-tela (detectado por varianza de color alta que indica muebles/fondo).
+
+## Tecnica: Flatten del Hero (NUEVO — validado 2026-03-06)
+
+**Cuando usar**: El hero tiene un patron de quilting 3D muy prominente en superficie PLANA (mandala extendida, medallion) que el crop de swatch solo no logra reemplazar.
+
+**Por que funciona**: La mandala embossed tiene canales de sombra profundos que Gemini interpreta como geometria fisica del objeto. Al aplanar esas sombras digitalmente, el modelo ya no "lee" la mandala como estructura fija y puede aplicar el basket weave.
+
+**Como hacerlo** (PIL/Python):
+```python
+def flatten_emboss(img_bytes, max_size=1200):
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    w, h = img.size
+    if max(w, h) > max_size:
+        ratio = max_size / max(w, h)
+        img = img.resize((int(w*ratio), int(h*ratio)), Image.LANCZOS)
+    # Lift darks: map 0->40, 255->255 (reduce shadow depth in embossed channels)
+    img_lifted = img.point(lambda p: int(p * 0.843 + 40))
+    # Light blur to soften embossed edge transitions
+    img_blurred = img_lifted.filter(ImageFilter.GaussianBlur(radius=1.5))
+    # Reduce contrast to bring highlights/shadows closer
+    img_flat = ImageEnhance.Contrast(img_blurred).enhance(0.75)
+    buf = io.BytesIO()
+    img_flat.save(buf, "PNG")
+    return buf.getvalue()
+```
+
+**Resultado validado**:
+- Hero "mujer leyendo" con mandala plana extendida: FUNCIONO — basket weave visible en todo el quilt body
+- Usar temperatura 0.4 (no 0.2) para este caso
+- Usar SIEMPRE combinado con el swatch recortado (crop de la tela)
+
+**IMPORTANTE**: Solo modificar el HERO (Image 1). Nunca el swatch. El resultado de Gemini tiene textura correcta y calidad normal — el flatten es solo para la entrada.
 
 ## ANTI-PATRONES (NO hacer)
 
