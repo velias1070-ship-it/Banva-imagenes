@@ -36,6 +36,7 @@ export default function GeneratePage() {
   const [heroesWithStatus, setHeroesWithStatus] = useState<HeroWithStatus[]>([]);
   const [swatches, setSwatches] = useState<Swatch[]>([]);
   const [selectedHeroIds, setSelectedHeroIds] = useState<Set<string>>(new Set());
+  const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState<GenerationBatch | null>(null);
   const [generating, setGenerating] = useState(false);
 
@@ -57,7 +58,12 @@ export default function GeneratePage() {
       // If all are processed, select none (user must explicitly choose)
       setSelectedHeroIds(newSelected);
     }
-    if (swatchRes.ok) setSwatches(await swatchRes.json());
+    if (swatchRes.ok) {
+      const swatchData: Swatch[] = await swatchRes.json();
+      setSwatches(swatchData);
+      // Auto-select all swatches
+      setSelectedSwatchIds(new Set(swatchData.map((s) => s.id)));
+    }
   }, [id]);
 
   useEffect(() => {
@@ -88,7 +94,8 @@ export default function GeneratePage() {
   }, [batch, fetchData]);
 
   const selectedCount = selectedHeroIds.size;
-  const totalCombinations = selectedCount * swatches.length;
+  const selectedSwatchCount = selectedSwatchIds.size;
+  const totalCombinations = selectedCount * selectedSwatchCount;
   const estimatedCost = (totalCombinations * COST_PER_IMAGE_USD).toFixed(2);
   const estimatedTime = Math.ceil((totalCombinations * 7) / 60);
 
@@ -121,6 +128,26 @@ export default function GeneratePage() {
     setSelectedHeroIds(new Set());
   }
 
+  function toggleSwatch(swatchId: string) {
+    setSelectedSwatchIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(swatchId)) {
+        next.delete(swatchId);
+      } else {
+        next.add(swatchId);
+      }
+      return next;
+    });
+  }
+
+  function selectAllSwatches() {
+    setSelectedSwatchIds(new Set(swatches.map((s) => s.id)));
+  }
+
+  function selectNoSwatches() {
+    setSelectedSwatchIds(new Set());
+  }
+
   async function handleGenerate() {
     if (selectedCount === 0) return;
     setGenerating(true);
@@ -128,7 +155,10 @@ export default function GeneratePage() {
       const res = await fetch(`/api/projects/${id}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hero_ids: Array.from(selectedHeroIds) }),
+        body: JSON.stringify({
+          hero_ids: Array.from(selectedHeroIds),
+          swatch_ids: Array.from(selectedSwatchIds),
+        }),
       });
 
       if (res.ok) {
@@ -255,6 +285,67 @@ export default function GeneratePage() {
         </CardContent>
       </Card>
 
+      {/* Swatch Selection */}
+      <Card className="mb-6">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>Seleccionar Swatches</CardTitle>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={selectAllSwatches}>
+                Todos ({swatches.length})
+              </Button>
+              <Button variant="outline" size="sm" onClick={selectNoSwatches}>
+                Ninguno
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {swatches.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground">
+              No hay swatches.{' '}
+              <Link href={`/projects/${id}/swatches`} className="text-blue-600 hover:underline">
+                Subir swatches
+              </Link>
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {swatches.map((swatch) => {
+                const isSelected = selectedSwatchIds.has(swatch.id);
+                return (
+                  <div
+                    key={swatch.id}
+                    className={`relative flex flex-col items-center gap-2 rounded-lg border p-2 transition-colors cursor-pointer hover:bg-gray-50 ${
+                      isSelected ? 'border-purple-300 bg-purple-50/50' : ''
+                    }`}
+                    onClick={() => toggleSwatch(swatch.id)}
+                  >
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggleSwatch(swatch.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute top-1 left-1"
+                    />
+                    <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-gray-100">
+                      <Image
+                        src={getStorageUrl(swatch.storage_path)}
+                        alt={swatch.name}
+                        fill
+                        className="object-cover"
+                        sizes="64px"
+                      />
+                    </div>
+                    <p className="text-xs text-center text-muted-foreground truncate w-full">
+                      {swatch.name.length > 20 ? swatch.name.substring(0, 20) + '...' : swatch.name}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Matrix Preview */}
       <Card className="mb-6">
         <CardHeader>
@@ -272,8 +363,10 @@ export default function GeneratePage() {
               <div className="text-3xl font-bold text-gray-400">x</div>
             </div>
             <div>
-              <div className="text-3xl font-bold text-purple-600">{swatches.length}</div>
-              <p className="text-sm text-muted-foreground">Swatches</p>
+              <div className="text-3xl font-bold text-purple-600">{selectedSwatchCount}</div>
+              <p className="text-sm text-muted-foreground">
+                Swatch{selectedSwatchCount !== 1 ? 'es' : ''} seleccionado{selectedSwatchCount !== 1 ? 's' : ''}
+              </p>
             </div>
           </div>
           <div className="mt-4 rounded-lg bg-gray-50 p-4 text-center">
@@ -351,7 +444,7 @@ export default function GeneratePage() {
         <Button
           size="lg"
           onClick={handleGenerate}
-          disabled={generating || selectedCount === 0 || swatches.length === 0}
+          disabled={generating || selectedCount === 0 || selectedSwatchCount === 0}
           className="px-12"
         >
           {generating ? (

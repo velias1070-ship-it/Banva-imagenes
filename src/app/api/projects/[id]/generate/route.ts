@@ -279,9 +279,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const supabase = await createServerSupabase();
 
-  // Read optional hero_ids from body
+  // Read optional hero_ids and swatch_ids from body
   const body = await request.json().catch(() => ({}));
   const heroIds: string[] | undefined = body.hero_ids;
+  const swatchIds: string[] | undefined = body.swatch_ids;
 
   // Get project
   const { data: project, error: projError } = await supabase
@@ -316,7 +317,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'No matching heroes found' }, { status: 400 });
   }
 
-  const totalCombinations = selectedHeroes.length * swatches.length;
+  // Filter swatches if specific ones were selected
+  const selectedSwatches = swatchIds?.length
+    ? swatches.filter((s) => swatchIds.includes(s.id))
+    : swatches;
+
+  if (!selectedSwatches.length) {
+    return NextResponse.json({ error: 'No matching swatches found' }, { status: 400 });
+  }
+
+  const totalCombinations = selectedHeroes.length * selectedSwatches.length;
 
   // Create batch
   const { data: batch, error: batchError } = await supabase
@@ -339,9 +349,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: batchError?.message || 'Failed to create batch' }, { status: 500 });
   }
 
-  // Create individual jobs only for selected heroes
+  // Create individual jobs for selected heroes × selected swatches
   const jobs = selectedHeroes.flatMap((hero) =>
-    swatches!.map((swatch) => ({
+    selectedSwatches.map((swatch) => ({
       batch_id: batch.id,
       hero_shot_id: hero.id,
       swatch_id: swatch.id,
