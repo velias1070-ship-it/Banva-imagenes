@@ -117,7 +117,7 @@ async function processOneQAJob(batchId: string) {
 
     if (currentJob?.status !== 'qa_pending') {
       console.log(`[process-qa] Job ${job.id.substring(0, 8)} status changed to ${currentJob?.status}, skipping QA write`);
-      chainNext(batchId);
+      await chainNext(batchId);
       return;
     }
 
@@ -207,8 +207,8 @@ async function processOneQAJob(batchId: string) {
       .eq('id', job.id);
   }
 
-  // Chain: trigger next QA job
-  chainNext(batchId);
+  // Chain: trigger next QA job (MUST await — fire-and-forget gets killed by Vercel)
+  await chainNext(batchId);
 }
 
 /**
@@ -268,15 +268,17 @@ function getBaseUrl(): string {
     || 'http://localhost:3000';
 }
 
-function chainNext(batchId: string) {
+async function chainNext(batchId: string) {
   const baseUrl = getBaseUrl();
   const chainUrl = `${baseUrl}/api/batches/${batchId}/process-qa`;
   console.log(`[process-qa] Chaining to: ${chainUrl}`);
 
-  fetch(chainUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  }).catch((err) => {
+  try {
+    await fetch(chainUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
     console.error('[process-qa] Failed to chain next QA invocation:', err);
-  });
+  }
 }

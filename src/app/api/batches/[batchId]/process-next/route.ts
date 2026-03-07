@@ -288,8 +288,8 @@ async function processOneJob(batchId: string) {
     console.error(`[process-next] Job ${job.id.substring(0, 8)} error:`, errorMessage);
   }
 
-  // Chain: trigger next job
-  chainNext(batchId);
+  // Chain: trigger next job (MUST await — fire-and-forget gets killed by Vercel)
+  await chainNext(batchId);
 }
 
 function getBaseUrl(): string {
@@ -298,15 +298,17 @@ function getBaseUrl(): string {
     || 'http://localhost:3000';
 }
 
-function chainNext(batchId: string) {
+async function chainNext(batchId: string) {
   const baseUrl = getBaseUrl();
   const chainUrl = `${baseUrl}/api/batches/${batchId}/process-next`;
   console.log(`[process-next] Chaining to: ${chainUrl}`);
 
-  fetch(chainUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  }).catch((err) => {
+  try {
+    await fetch(chainUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
     console.error('[process-next] Failed to chain next invocation:', err);
-  });
+  }
 }
