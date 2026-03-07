@@ -253,10 +253,16 @@ async function processOneJob(batchId: string) {
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
         gemini_model_used: process.env.GEMINI_MODEL || 'gemini-3-pro-image-preview',
-        total_api_calls: (job.total_api_calls || 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', job.id);
+
+    // Increment API call counter (non-blocking — column may not exist yet)
+    Promise.resolve(
+      supabase.from('generation_jobs')
+        .update({ total_api_calls: (job.total_api_calls || 0) + 1 })
+        .eq('id', job.id)
+    ).catch(() => {});
 
     console.log(`[process-next] Job ${job.id.substring(0, 8)} done — status: qa_pending`);
 
@@ -267,7 +273,6 @@ async function processOneJob(batchId: string) {
       .update({
         status: 'error',
         error_message: errorMessage,
-        total_api_calls: (job.total_api_calls || 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', job.id);

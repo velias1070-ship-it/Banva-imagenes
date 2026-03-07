@@ -143,7 +143,6 @@ async function processOneQAJob(batchId: string) {
         qa_score: scoreResult.score,
         qa_detail: scoreResult.detail,
         qa_feedback: scoreResult.feedback,
-        total_api_calls: (job.total_api_calls || 0) + 1,
         prompt_metadata: {
           ...(job.prompt_metadata || {}),
           qa_action: scoreResult.action.action,
@@ -201,13 +200,10 @@ async function processOneQAJob(batchId: string) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown QA error';
     console.error(`[process-qa] Job ${job.id.substring(0, 8)} QA error:`, errorMessage);
 
-    // Update total_api_calls even on error
+    // Update timestamp on error (leave as qa_pending)
     await supabase
       .from('generation_jobs')
-      .update({
-        total_api_calls: (job.total_api_calls || 0) + 1,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ updated_at: new Date().toISOString() })
       .eq('id', job.id);
   }
 

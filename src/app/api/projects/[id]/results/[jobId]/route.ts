@@ -215,7 +215,6 @@ async function regenerateJob(
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,
-        total_api_calls: ((job.total_api_calls as number) || 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId);
@@ -246,7 +245,6 @@ async function regenerateJob(
       .update({
         status: 'error',
         error_message: errorMessage,
-        total_api_calls: ((job.total_api_calls as number) || 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId);
