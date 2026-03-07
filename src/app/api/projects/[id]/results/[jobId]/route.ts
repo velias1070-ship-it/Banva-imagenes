@@ -2,7 +2,13 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric } from '@/lib/image-processing';
+import {
+  getCategoryStrategy,
+  getEffectiveTemperature,
+  buildPromptForMode,
+  type GenerationMode,
+} from '@/lib/category-strategy';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -66,7 +72,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     .eq('id', id)
     .single();
 
-  // Mark as generating
+  // Mark as generating (prevents QA from writing stale results)
   await supabase
     .from('generation_jobs')
     .update({ status: 'generating', updated_at: new Date().toISOString() })
@@ -90,12 +96,30 @@ async function regenerateJob(
   category: string,
   projectId: string
 ) {
-  // Import buildPrompt directly — single source of truth for prompt construction
-  const { buildPrompt } = await import('../../generate/route');
-
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string>;
   const swatch = job.swatch as Record<string, string>;
+  const strategy = getCategoryStrategy(category);
+
+  // Determine mode — check if QA flagged hero_contamination
+  let mode: GenerationMode = strategy.generation_mode;
+  const qaDetail = job.qa_detail as Record<string, number> | null;
+  const attempt = (job.attempt as number) || 0;
+
+  if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
+    // Hero contamination detected — escalate
+    mode = strategy.retry_escalation;
+    console.log(
+      `[regenerateJob] Hero contamination ${(qaDetail.hero_contamination * 100).toFixed(0)}% — ` +
+      `escalating from ${strategy.generation_mode} to ${mode}`
+    );
+  } else if (attempt > 0 && strategy.retry_escalation) {
+    // Previous attempt failed — use retry escalation
+    mode = strategy.retry_escalation;
+    console.log(`[regenerateJob] Retry attempt ${attempt} — using ${mode}`);
+  }
+
+  const temperature = getEffectiveTemperature(strategy, mode, attempt);
 
   try {
     // Download hero and swatch
@@ -110,32 +134,61 @@ async function regenerateJob(
 
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
-    const heroBase64 = heroBuffer.toString('base64');
-    const swatchBase64 = swatchBuffer.toString('base64');
 
-    // Detect dark swatches for prompt adjustments (no image enhancement)
+    // Detect dark swatches for prompt adjustments
     const darkSwatch = await isSwatchDark(swatchBuffer);
     if (darkSwatch) {
-      console.log(`[regenerateJob] Dark swatch detected: "${swatch.name}" — using dark-fabric prompt`);
+      console.log(`[regenerateJob] Dark swatch detected: "${swatch.name}"`);
     }
 
-    // Use the SAME buildPrompt function as batch generation — no duplication
-    const prompt = buildPrompt(
-      category,
+    // Preprocessing
+    let swatchBase64 = swatchBuffer.toString('base64');
+    if (strategy.preprocessing.crop_swatch) {
+      const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
+      swatchBase64 = croppedSwatch.toString('base64');
+    }
+
+    // Build prompt
+    const prompt = buildPromptForMode(
+      mode,
+      strategy,
       swatch.name,
       swatch.color_description || null,
       heroShot.shot_type,
       darkSwatch
     );
 
-    // Call Gemini with original swatch (dark swatches get adjusted prompt, not enhanced image)
-    const result = await generateImage({
-      heroImageBase64: heroBase64,
-      heroMimeType: heroShot.mime_type || 'image/png',
-      swatchImageBase64: swatchBase64,
-      swatchMimeType: 'image/png',
-      promptText: prompt,
-    });
+    const promptMetadata: Record<string, unknown> = {
+      strategy: mode,
+      category,
+      attempt,
+      temperature,
+      dark_swatch: darkSwatch,
+      crop_swatch: strategy.preprocessing.crop_swatch,
+      manual_regeneration: true,
+    };
+
+    // Generate
+    let result;
+
+    if (mode === 'from_scratch') {
+      result = await generateImage({
+        swatchImageBase64: swatchBase64,
+        swatchMimeType: 'image/png',
+        promptText: prompt,
+        temperature,
+      });
+    } else {
+      const heroBase64 = heroBuffer.toString('base64');
+      result = await generateImage({
+        heroImageBase64: heroBase64,
+        heroMimeType: heroShot.mime_type || 'image/png',
+        swatchImageBase64: swatchBase64,
+        swatchMimeType: 'image/png',
+        promptText: prompt,
+        temperature,
+      });
+    }
 
     if (!result.success || !result.imageBase64) {
       throw new Error(result.error || 'Generation failed');
@@ -152,18 +205,39 @@ async function regenerateJob(
         upsert: true,
       });
 
-    // Mark as approved
+    // Mark as qa_pending (QA will evaluate asynchronously)
     await supabase
       .from('generation_jobs')
       .update({
-        status: 'approved',
+        status: 'qa_pending',
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
-        attempt: (job.attempt as number || 0) + 1,
+        attempt: attempt + 1,
         prompt_text: prompt,
+        prompt_metadata: promptMetadata,
+        total_api_calls: ((job.total_api_calls as number) || 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId);
+
+    // Trigger QA for this job
+    const baseUrl = process.env.APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+      || 'http://localhost:3000';
+
+    // Get batch_id from the job to invoke QA chain
+    const batchId = job.batch_id as string;
+    if (batchId) {
+      try {
+        await fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        console.log(`[regenerateJob] Triggered QA for batch ${batchId}`);
+      } catch (err) {
+        console.error('[regenerateJob] Failed to trigger QA:', err);
+      }
+    }
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -172,6 +246,7 @@ async function regenerateJob(
       .update({
         status: 'error',
         error_message: errorMessage,
+        total_api_calls: ((job.total_api_calls as number) || 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId);

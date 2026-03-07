@@ -26,6 +26,12 @@ export const SHOT_TYPES = [
   { key: 'flatlay', label: 'Flat Lay' },
 ] as const;
 
-export const COST_PER_IMAGE_USD = 0.045;
+export const COST_PER_IMAGE_USD = 0.050;
 export const GEMINI_RPM_LIMIT = 9;
 export const DELAY_BETWEEN_REQUESTS_SEC = 7;
+
+// QA & chain constants
+export const MAX_QA_RETRIES = 2;
+export const BATCH_HALT_MIN_PROCESSED = 5;
+export const BATCH_HALT_FLAGGED_PERCENT = 0.20;
+export const CHAIN_STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes

@@ -10,199 +10,12 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-export function getCategoryRule(category: string): { rule2: string; finalCheck: string } {
-  const cat = category.toLowerCase();
-
-  if (cat.includes('quilt')) {
-    return {
-      rule2: `═══════════════════════════════════════════
-RULE #2 — WHAT TO CHANGE (QUILT category)
-═══════════════════════════════════════════
-PRODUCT CONTEXT: A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
-The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
-There are NO sheets and NO fitted sheets in this product.
-
-What to change in Image 1 — BOTH color AND quilting stitch pattern:
-• The QUILT / BED COVER → apply BOTH the COLOR and the QUILTING/STITCHING PATTERN from Image 2's quilt
-• The PILLOWCASES → apply BOTH the COLOR and the QUILTING/STITCHING PATTERN from Image 2's pillowcases
-
-⚠️ IMPORTANT — The quilting stitch pattern (the embossed/raised design stitched into the fabric) is part of the product design and MUST be changed to match Image 2.
-• If Image 1's quilt has a MANDALA/MEDALLION quilting pattern but Image 2's quilt has a BASKET WEAVE/HERRINGBONE pattern → the output MUST show BASKET WEAVE/HERRINGBONE
-• If Image 1's quilt has a GEOMETRIC pattern but Image 2's has FLORAL → the output MUST show FLORAL
-• Do NOT keep Image 1's quilting stitch pattern — it must be REPLACED with Image 2's quilting stitch pattern
-• The quilting pattern is as important as the color — both must come from Image 2
-
-The quilt and pillowcases in Image 2 share the same color tones. Apply them accordingly.
-
-DO NOT change:
-• The bed surface UNDERNEATH the quilt (mattress, fitted sheet, bed base) — keep as-is
-• Non-textile elements (walls, furniture, floor, props, headboard)
-• Persons, hands, or clothing`,
-
-      finalCheck: `═══════════════════════════════════════════
-FINAL CHECK
-═══════════════════════════════════════════
-Before outputting, verify:
-1. Is the camera angle IDENTICAL to Image 1? (NOT Image 2's angle!)
-2. Are the products in the SAME position as Image 1?
-3. Did I add any elements that weren't in Image 1? If yes → REMOVE IT.
-4. Does the QUILT/BED COVER COLOR match Image 2's quilt color?
-5. Does the QUILT/BED COVER QUILTING STITCH PATTERN match Image 2's quilting stitch pattern? (e.g., if Image 2 has basket weave but output has mandala → WRONG, FIX IT)
-6. Do the PILLOWCASES match Image 2's pillowcase color AND quilting pattern?
-7. Did I accidentally change the surface UNDERNEATH the quilt? It should be unchanged.
-8. Did I keep Image 1's quilting pattern instead of replacing it with Image 2's? If yes → FIX IT.
-9. Did I copy any part of Image 2's SCENE (room, furniture, composition) instead of just the fabric? If yes → FIX IT.`
-    };
-  }
-
-  if (cat.includes('sabana') || cat.includes('sábana')) {
-    return {
-      rule2: `═══════════════════════════════════════════
-RULE #2 — WHAT TO CHANGE (SABANAS category)
-═══════════════════════════════════════════
-PRODUCT CONTEXT: This is a bed sheet set (juego de sábanas).
-The set includes: pillowcases + flat/top sheet + fitted sheet (sábana bajera).
-
-IMPORTANT — Image 2 may show DIFFERENT patterns for different pieces:
-• The PILLOWCASES in Image 2 have one pattern (could be floral, striped, etc.)
-• The FITTED SHEET (sábana bajera) in Image 2 may have a DIFFERENT pattern (often stripes or solid color)
-
-Apply each pattern to the correct piece in Image 1:
-• Pillowcases in Image 1 → use the PILLOWCASE pattern from Image 2
-• The flat surface underneath the pillows (fitted sheet) → use the FITTED SHEET pattern from Image 2
-• If a top sheet is visible in Image 1 → use its corresponding pattern from Image 2
-
-If Image 2 shows only ONE pattern for everything → apply that same pattern to all textiles.
-If you cannot clearly distinguish the fitted sheet pattern in Image 2 → use the dominant background color/pattern visible beneath the pillows in Image 2.
-
-DO NOT change:
-• Non-textile elements (walls, furniture, floor, props)
-• Persons, hands, or clothing`,
-
-      finalCheck: `═══════════════════════════════════════════
-FINAL CHECK
-═══════════════════════════════════════════
-Before outputting, verify:
-1. Is the camera angle IDENTICAL to Image 1?
-2. Are the products in the SAME position as Image 1?
-3. Did I add any elements that weren't in Image 1? If yes → REMOVE IT.
-4. Do the PILLOWCASES match the pillowcase pattern from Image 2?
-5. Does the FITTED SHEET match the fitted sheet pattern from Image 2? (NOT gray unless the swatch shows gray)
-6. Did I invent any pattern not found in Image 2? If yes → FIX IT.`
-    };
-  }
-
-  // Default for other categories (almohadas, toallas, cubrecamas, cortinas, etc.)
-  return {
-    rule2: `═══════════════════════════════════════════
-RULE #2 — WHAT TO CHANGE (ALL visible textile surfaces)
-═══════════════════════════════════════════
-Change ALL fabric/textile surfaces visible in Image 1, matching them to Image 2.
-
-Apply the pattern/color from Image 2 to every textile product visible in Image 1:
-• Pillowcases, cushion covers
-• Blankets, throws, covers
-• Towels, curtains
-• Any other fabric product
-
-If Image 2 shows different patterns on different pieces, match each piece accordingly.
-
-DO NOT change:
-• Non-textile elements (walls, furniture, floor, props)
-• Background surfaces that are NOT part of the product
-• Persons, hands, or clothing`,
-
-    finalCheck: `═══════════════════════════════════════════
-FINAL CHECK
-═══════════════════════════════════════════
-Before outputting, verify:
-1. Is the camera angle IDENTICAL to Image 1?
-2. Are the products in the SAME position as Image 1?
-3. Did I add any elements that weren't in Image 1? If yes → REMOVE IT.
-4. Does EVERY textile product match the pattern from Image 2?
-5. Did I invent any pattern not found in Image 2? If yes → FIX IT.`
-  };
-}
-
-export function buildPrompt(
-  category: string,
-  swatchName: string,
-  colorDescription: string | null,
-  shotType: string,
-  isDarkSwatch: boolean = false
-): string {
-  const colorInfo = colorDescription ? ` (${colorDescription})` : '';
-  const { rule2, finalCheck } = getCategoryRule(category);
-
-  const darkSwatchNote = isDarkSwatch
-    ? `
-
-═══════════════════════════════════════════
-CRITICAL — DARK FABRIC HANDLING
-═══════════════════════════════════════════
-Image 2 shows a VERY DARK fabric ("${swatchName}"${colorInfo}).
-On dark fabrics, quilting/stitching patterns are naturally BARELY VISIBLE — this is correct and intentional.
-
-MANDATORY for dark swatches:
-• The output fabric color MUST be TRUE BLACK / very dark — match Image 2's darkness exactly
-• Do NOT lighten the fabric to make the pattern visible — dark fabric stays dark
-• The quilting texture should be EXTREMELY SUBTLE — only visible as slight shadows/highlights at fabric folds
-• Match how the fabric LOOKS in Image 2: dark, uniform, with minimal visible texture
-• Do NOT render the pattern prominently — on black fabric, patterns almost disappear
-`
-    : '';
-
-  return `You are a photo editor specializing in textile product photography for e-commerce.
-
-IMAGE 1 (Hero Shot): The BASE photograph that you must EDIT. This is a ${category} product shown in a ${shotType} shot.
-IMAGE 2 (Swatch Reference): Shows the target color/pattern/design called "${swatchName}"${colorInfo}.
-⚠️ CRITICAL: Image 2 may be a FULL PRODUCT PHOTO (complete bedroom scene with furniture, props, people) — NOT just a fabric closeup.
-You must EXTRACT ONLY the fabric's color, quilting/stitching pattern, and surface texture from the TEXTILE PRODUCT visible in Image 2.
-COMPLETELY IGNORE Image 2's: composition, camera angle, scene, room, furniture, lighting setup, text overlays, props.
-You are using Image 2 ONLY as a color/pattern reference — nothing else.${darkSwatchNote}
-
-═══════════════════════════════════════════
-RULE #1 — COMPOSITION LOCK (HIGHEST PRIORITY)
-═══════════════════════════════════════════
-You are EDITING Image 1, not generating a new image. The output MUST be a faithful reproduction of Image 1 with ONLY the fabric patterns/colors changed.
-
-MANDATORY — preserve ALL of these EXACTLY from Image 1:
-• Camera angle (if top-down, output must be top-down; if 45°, output must be 45°)
-• Framing and crop (same zoom level, same edges)
-• Product placement and arrangement (same position, rotation, overlap of items)
-• Number of items (if 2 pillows, output has exactly 2 pillows — not 1, not 3)
-• Lighting direction, shadows, and highlights
-• Any text, icons, infographic overlays
-• Any persons, furniture, props
-
-FORBIDDEN — do NOT do any of these:
-✗ Change camera angle (e.g. cenital/top-down → 45° angled)
-✗ Add elements not in Image 1 (headboard, wall, top sheet, bed frame, decorative items)
-✗ Remove elements that ARE in Image 1
-✗ Change the framing (wider/tighter crop)
-✗ Rearrange or reposition the products
-✗ Create a "bedroom scene" if Image 1 is just a flat-lay of pillows
-✗ Copy Image 2's SCENE or COMPOSITION — Image 2 is ONLY a color/pattern reference, NOT a layout reference
-✗ If Image 1 is a close-up/detail shot, the output MUST remain a close-up/detail shot (do NOT zoom out to show a full bed scene from Image 2)
-
-${rule2}
-
-═══════════════════════════════════════════
-RULE #3 — PATTERN FIDELITY (from Image 2)
-═══════════════════════════════════════════
-Extract the fabric designs from Image 2 and apply them faithfully:
-• Copy the EXACT colors — do not shift hues or saturate differently
-• Copy the EXACT pattern type — if Image 2 has flowers only on borders, put flowers only on borders; if all-over, make it all-over
-• Copy the EXACT quilting/stitching pattern — if Image 2's fabric has a basket weave stitch, the output must have basket weave (NOT mandala, NOT medallion, NOT any other pattern from Image 1)
-• Copy the EXACT density — if the pattern is sparse with lots of white space, keep it sparse; if dense, keep it dense
-• Copy the EXACT motifs — do not simplify flowers into blobs, do not invent new motifs
-• Do NOT keep Image 1's fabric pattern/texture — it must be FULLY REPLACED by Image 2's
-• Do NOT invent any design element not present in Image 2
-
-${finalCheck}
-
-Generate at 1024x1024 resolution.`;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: Category rules, prompt builders, and shot compositions have been
+// extracted to src/lib/category-strategy.ts (single source of truth).
+// The old getCategoryRule(), buildPrompt(), buildGenerationPrompt(), and
+// getShotTypeComposition() functions are no longer here.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Start batch processing: update status and trigger the chain of one-at-a-time invocations
 async function startBatchProcessing(batchId: string) {
@@ -260,7 +73,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   const batchIds = batches?.map((b) => b.id) || [];
 
   // Get job counts per hero (across all batches)
-  let jobsByHero: Record<string, { total: number; approved: number }> = {};
+  const jobsByHero: Record<string, { total: number; approved: number }> = {};
 
   if (batchIds.length > 0) {
     const { data: jobs } = await supabase
@@ -365,7 +178,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: batchError?.message || 'Failed to create batch' }, { status: 500 });
   }
 
-  // Create individual jobs for selected heroes × selected swatches
+  // Create individual jobs for selected heroes x selected swatches
   const jobs = selectedHeroes.flatMap((hero) =>
     selectedSwatches.map((swatch) => ({
       batch_id: batch.id,

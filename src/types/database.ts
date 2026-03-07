@@ -90,6 +90,7 @@ export interface QADetail {
   resolution: number;
   aspect_ratio: number;
   ml_compliance: number;
+  hero_contamination: number;  // 0=clean, 1=identical to hero. Independent escalation trigger (NOT in weighted score)
 }
 
 export interface CategoryTemplate {

@@ -17,6 +17,12 @@ interface JobWithRelations {
   status: string;
   output_storage_path: string | null;
   qa_score: number | null;
+  qa_feedback: string | null;
+  qa_detail: {
+    product_fidelity?: number;
+    hero_contamination?: number;
+    [key: string]: number | undefined;
+  } | null;
   error_message: string | null;
   hero_shot: { filename: string; shot_type: string; storage_path: string } | null;
   swatch: { name: string; color_description: string | null; storage_path: string } | null;
@@ -26,7 +32,7 @@ function getStorageUrl(path: string): string {
   return `${SUPABASE_URL}/storage/v1/object/public/images/${path}`;
 }
 
-type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error';
+type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending';
 
 export default function ResultsPage() {
   const { id } = useParams<{ id: string }>();
@@ -52,6 +58,7 @@ export default function ResultsPage() {
   const retryCount = jobs.filter((j) => j.status === 'retry').length;
   const flaggedCount = jobs.filter((j) => j.status === 'flagged').length;
   const errorCount = jobs.filter((j) => j.status === 'error').length;
+  const qaPendingCount = jobs.filter((j) => j.status === 'qa_pending').length;
 
   async function handleDownloadAll() {
     toast.info('Preparando descarga ZIP...');
@@ -91,13 +98,15 @@ export default function ResultsPage() {
           if (updated.ok) {
             const allJobs = await updated.json();
             const thisJob = allJobs.find((j: JobWithRelations) => j.id === jobId);
-            if (thisJob && thisJob.status !== 'generating') {
-              setJobs(allJobs);
+            setJobs(allJobs); // Always update to show latest state
+            if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending') {
               clearInterval(poll);
               if (thisJob.status === 'approved') {
-                toast.success('Imagen regenerada correctamente');
+                toast.success('Imagen regenerada y aprobada por QA');
+              } else if (thisJob.status === 'flagged') {
+                toast.error('Imagen regenerada pero rechazada por QA');
               } else {
-                toast.error(`Regeneración terminó con estado: ${thisJob.status}`);
+                toast.error(`Regeneracion termino con estado: ${thisJob.status}`);
               }
             }
           }
@@ -157,6 +166,10 @@ export default function ResultsPage() {
         return <AlertTriangle className="h-4 w-4 text-orange-500" />;
       case 'error':
         return <XCircle className="h-4 w-4 text-red-500" />;
+      case 'qa_pending':
+        return <RotateCcw className="h-4 w-4 text-purple-500 animate-spin" />;
+      case 'generating':
+        return <RotateCcw className="h-4 w-4 text-blue-500 animate-spin" />;
       default:
         return null;
     }
@@ -190,6 +203,7 @@ export default function ResultsPage() {
           <TabsTrigger value="approved">Aprobadas ({approvedCount})</TabsTrigger>
           <TabsTrigger value="retry">Retry ({retryCount})</TabsTrigger>
           <TabsTrigger value="flagged">Flagged ({flaggedCount})</TabsTrigger>
+          <TabsTrigger value="qa_pending">QA ({qaPendingCount})</TabsTrigger>
           <TabsTrigger value="error">Errores ({errorCount})</TabsTrigger>
         </TabsList>
 
@@ -247,20 +261,47 @@ export default function ResultsPage() {
                         </Badge>
                       </div>
                       {job.qa_score !== null && (
-                        <span className="text-xs font-medium">
+                        <span
+                          className="text-xs font-medium cursor-help"
+                          title={job.qa_feedback || 'Sin feedback'}
+                        >
                           QA: {(job.qa_score * 100).toFixed(0)}%
+                          {job.qa_detail?.hero_contamination != null && job.qa_detail.hero_contamination > 0.3 && (
+                            <span className="ml-1 text-orange-500" title={`Hero contamination: ${(job.qa_detail.hero_contamination * 100).toFixed(0)}%`}>
+                              !
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      {job.status === 'qa_pending' && (
+                        <span className="text-xs text-purple-600 flex items-center gap-1">
+                          <RotateCcw className="h-3 w-3 animate-spin" />
+                          QA...
                         </span>
                       )}
                     </div>
+
+                    {/* QA Feedback */}
+                    {job.qa_feedback && job.status !== 'approved' && (
+                      <p className="text-xs text-muted-foreground mb-2 line-clamp-2" title={job.qa_feedback}>
+                        {job.qa_feedback}
+                      </p>
+                    )}
 
                     {/* Actions */}
                     {job.status === 'generating' && (
                       <div className="flex items-center gap-2 text-xs text-blue-600">
                         <RotateCcw className="h-3 w-3 animate-spin" />
-                        Regenerando...
+                        Generando...
                       </div>
                     )}
-                    {job.status !== 'pending' && job.status !== 'generating' && (
+                    {job.status === 'qa_pending' && (
+                      <div className="flex items-center gap-2 text-xs text-purple-600">
+                        <RotateCcw className="h-3 w-3 animate-spin" />
+                        QA en progreso...
+                      </div>
+                    )}
+                    {job.status !== 'pending' && job.status !== 'generating' && job.status !== 'qa_pending' && (
                       <div className="flex gap-1.5">
                         {job.output_storage_path && (
                           <Button
