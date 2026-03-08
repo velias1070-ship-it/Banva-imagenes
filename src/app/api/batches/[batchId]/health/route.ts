@@ -25,13 +25,17 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Batch not found' }, { status: 404 });
   }
 
-  // Skip if batch is already completed, halted, or failed
-  if (['completed', 'halted', 'failed'].includes(batch.status)) {
+  // Skip if batch is already completed or failed (nothing to do)
+  if (['completed', 'failed'].includes(batch.status)) {
     return NextResponse.json({
       status: batch.status,
       message: 'Batch is not active',
     });
   }
+
+  // Halted batches: still check for qa_pending jobs that need evaluation
+  // (already generated — no point wasting them)
+  const batchIsHalted = batch.status === 'halted';
 
   const staleThreshold = new Date(Date.now() - CHAIN_STALE_THRESHOLD_MS).toISOString();
 
@@ -67,31 +71,36 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   const actions: string[] = [];
 
   // Relaunch generation chain if stale generating jobs OR pending jobs exist
-  if ((staleGenerating?.length || 0) > 0) {
-    // Reset stale generating jobs back to pending
-    for (const job of staleGenerating || []) {
-      await supabase
-        .from('generation_jobs')
-        .update({
-          status: 'pending',
-          error_message: 'Reset by health check — stale generating',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
+  // (only for non-halted batches — halted batches don't regenerate)
+  if (!batchIsHalted) {
+    if ((staleGenerating?.length || 0) > 0) {
+      // Reset stale generating jobs back to pending
+      for (const job of staleGenerating || []) {
+        await supabase
+          .from('generation_jobs')
+          .update({
+            status: 'pending',
+            error_message: 'Reset by health check — stale generating',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', job.id);
+      }
+      actions.push(`Reset ${staleGenerating?.length} stale generating jobs to pending`);
     }
-    actions.push(`Reset ${staleGenerating?.length} stale generating jobs to pending`);
-  }
 
-  if ((staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0) {
-    try {
-      await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      actions.push('Relaunched generation chain (process-next)');
-    } catch (err) {
-      actions.push(`Failed to relaunch generation: ${err}`);
+    if ((staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0) {
+      try {
+        await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        actions.push('Relaunched generation chain (process-next)');
+      } catch (err) {
+        actions.push(`Failed to relaunch generation: ${err}`);
+      }
     }
+  } else if ((staleGenerating?.length || 0) > 0) {
+    actions.push(`Batch halted — ${staleGenerating?.length} stale generating jobs skipped`);
   }
 
   // Relaunch QA chain if stale qa_pending jobs exist

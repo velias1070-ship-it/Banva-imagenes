@@ -45,10 +45,11 @@ async function processOneQAJob(batchId: string) {
     return;
   }
 
-  // Check if batch is halted
-  if (batch.status === 'halted') {
-    console.log('[process-qa] Batch is halted, stopping QA chain:', batchId);
-    return;
+  // Track halted status — QA still evaluates already-generated images,
+  // but retries are suppressed (retry → flagged) when batch is halted.
+  const batchIsHalted = batch.status === 'halted';
+  if (batchIsHalted) {
+    console.log('[process-qa] Batch is halted — will evaluate qa_pending but suppress retries');
   }
 
   // Get ONE qa_pending job (atomic claim: select then update)
@@ -128,7 +129,13 @@ async function processOneQAJob(batchId: string) {
         newStatus = 'approved';
         break;
       case 'retry':
-        newStatus = 'pending'; // Goes back to pending for process-next to pick up
+        // If batch is halted, suppress retries — flag instead of retry
+        if (batchIsHalted) {
+          newStatus = 'flagged';
+          console.log(`[process-qa] Job ${job.id.substring(0, 8)} — retry suppressed (batch halted) → flagged`);
+        } else {
+          newStatus = 'pending'; // Goes back to pending for process-next to pick up
+        }
         break;
       case 'flag':
         newStatus = 'flagged';
@@ -172,8 +179,8 @@ async function processOneQAJob(batchId: string) {
         .eq('id', batchId);
     }
 
-    // Check batch halt condition
-    if (newStatus === 'flagged') {
+    // Check batch halt condition (only if not already halted)
+    if (newStatus === 'flagged' && !batchIsHalted) {
       const haltCheck = shouldHaltBatch(
         (batch.flagged_count || 0) + 1,
         (batch.completed_count || 0) + 1
@@ -185,7 +192,9 @@ async function processOneQAJob(batchId: string) {
           .from('generation_batches')
           .update({ status: 'halted' })
           .eq('id', batchId);
-        return; // Stop the chain
+        // NOTE: Do NOT return here — continue QA chain to evaluate remaining
+        // qa_pending jobs. They've already been generated, no point wasting them.
+        // Retries will be suppressed on next iteration (batchIsHalted check above).
       }
     }
 
@@ -216,6 +225,7 @@ async function processOneQAJob(batchId: string) {
  */
 async function handleQAComplete(batchId: string, batch: Record<string, unknown>) {
   const supabase = createAdminClient();
+  const batchIsHalted = (batch as { status?: string }).status === 'halted';
 
   // Check if there are pending jobs (retries from QA)
   const { count: pendingCount } = await supabase
@@ -225,16 +235,21 @@ async function handleQAComplete(batchId: string, batch: Record<string, unknown>)
     .eq('status', 'pending');
 
   if (pendingCount && pendingCount > 0) {
-    // There are retry jobs — invoke process-next to regenerate them
-    console.log(`[process-qa] ${pendingCount} pending retries — invoking process-next`);
-    const baseUrl = getBaseUrl();
-    try {
-      await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-    } catch (err) {
-      console.error('[process-qa] Failed to invoke process-next for retries:', err);
+    if (batchIsHalted) {
+      // Batch is halted — don't invoke retries, just log
+      console.log(`[process-qa] ${pendingCount} pending retries but batch is halted — skipping`);
+    } else {
+      // There are retry jobs — invoke process-next to regenerate them
+      console.log(`[process-qa] ${pendingCount} pending retries — invoking process-next`);
+      const baseUrl = getBaseUrl();
+      try {
+        await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('[process-qa] Failed to invoke process-next for retries:', err);
+      }
     }
     return;
   }
@@ -252,14 +267,19 @@ async function handleQAComplete(batchId: string, batch: Record<string, unknown>)
   }
 
   // All done — finalize batch
-  console.log('[process-qa] All jobs done for batch:', batchId);
-  await supabase
-    .from('generation_batches')
-    .update({
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-    })
-    .eq('id', batchId);
+  if (batchIsHalted) {
+    // Batch was halted — keep halted status (user reviews manually)
+    console.log('[process-qa] All QA done for halted batch:', batchId);
+  } else {
+    console.log('[process-qa] All jobs done for batch:', batchId);
+    await supabase
+      .from('generation_batches')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', batchId);
+  }
 }
 
 function getBaseUrl(): string {
