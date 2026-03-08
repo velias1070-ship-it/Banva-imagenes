@@ -21,7 +21,7 @@ interface RouteContext {
  * CADENA 1 — GENERATION CHAIN
  * Process ONE pending job from a batch, then self-invoke for the next.
  * Does NOT do QA — generates, uploads, sets status=qa_pending, chains.
- * QA is done by a separate chain (process-qa).
+ * After EACH job → triggers QA chain so both run in parallel.
  */
 export async function POST(_request: NextRequest, context: RouteContext) {
   const { batchId } = await context.params;
@@ -72,10 +72,10 @@ async function processOneJob(batchId: string) {
     .limit(1);
 
   if (!jobs?.length) {
-    // No more pending jobs — check if there are qa_pending jobs to process
+    // No more pending jobs — generation chain complete
     console.log('[process-next] No pending jobs for batch:', batchId);
 
-    // Check for qa_pending jobs that need QA
+    // Safety net: ensure QA chain is running for any remaining qa_pending
     const { count: qaPendingCount } = await supabase
       .from('generation_jobs')
       .select('*', { count: 'exact', head: true })
@@ -83,27 +83,26 @@ async function processOneJob(batchId: string) {
       .eq('status', 'qa_pending');
 
     if (qaPendingCount && qaPendingCount > 0) {
-      // Trigger QA chain
-      console.log(`[process-next] ${qaPendingCount} qa_pending jobs — invoking process-qa`);
-      const baseUrl = getBaseUrl();
-      try {
-        await fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
-      } catch (err) {
-        console.error('[process-next] Failed to invoke process-qa:', err);
-      }
+      console.log(`[process-next] Safety net: ${qaPendingCount} qa_pending — ensuring QA chain`);
+      await triggerQAChain(batchId);
     } else {
-      // Truly done — finalize batch
-      console.log('[process-next] All jobs done for batch:', batchId);
-      await supabase
-        .from('generation_batches')
-        .update({
-          status: 'completed',
-          completed_at: new Date().toISOString(),
-        })
-        .eq('id', batchId);
+      // Check if truly done (no generating, no qa_pending, no pending)
+      const { count: activeCount } = await supabase
+        .from('generation_jobs')
+        .select('*', { count: 'exact', head: true })
+        .eq('batch_id', batchId)
+        .in('status', ['generating', 'qa_pending', 'pending']);
+
+      if (!activeCount || activeCount === 0) {
+        console.log('[process-next] All jobs done for batch:', batchId);
+        await supabase
+          .from('generation_batches')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', batchId);
+      }
     }
     return;
   }
@@ -136,7 +135,7 @@ async function processOneJob(batchId: string) {
       })
       .eq('id', batchId);
 
-    chainNext(batchId);
+    await chainNext(batchId);
     return;
   }
 
@@ -266,6 +265,10 @@ async function processOneJob(batchId: string) {
 
     console.log(`[process-next] Job ${job.id.substring(0, 8)} done — status: qa_pending`);
 
+    // Trigger QA chain after EACH generated job (runs in parallel with generation)
+    // This is idempotent — if QA chain is already running, extra triggers are harmless
+    await triggerQAChain(batchId);
+
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     await supabase
@@ -288,7 +291,7 @@ async function processOneJob(batchId: string) {
     console.error(`[process-next] Job ${job.id.substring(0, 8)} error:`, errorMessage);
   }
 
-  // Chain: trigger next job (MUST await — fire-and-forget gets killed by Vercel)
+  // Chain: trigger next generation job (MUST await)
   await chainNext(batchId);
 }
 
@@ -310,5 +313,20 @@ async function chainNext(batchId: string) {
     });
   } catch (err) {
     console.error('[process-next] Failed to chain next invocation:', err);
+  }
+}
+
+async function triggerQAChain(batchId: string) {
+  const baseUrl = getBaseUrl();
+  const qaUrl = `${baseUrl}/api/batches/${batchId}/process-qa`;
+  console.log(`[process-next] Triggering QA chain: ${qaUrl}`);
+
+  try {
+    await fetch(qaUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[process-next] Failed to trigger QA chain:', err);
   }
 }
