@@ -93,6 +93,39 @@ export default function GeneratePage() {
     return () => clearInterval(interval);
   }, [batch, fetchData]);
 
+  // Auto-healing: call health check every 90s to relaunch broken chains
+  useEffect(() => {
+    if (!batch || batch.status === 'completed' || batch.status === 'failed') return;
+
+    const healthInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/cron/health-check?project_id=${id}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.healed?.length > 0) {
+            console.log('[auto-heal] Chains relaunched:', data.healed);
+          }
+        }
+      } catch {
+        // Silently ignore — health check is best-effort
+      }
+    }, 90_000); // every 90 seconds
+
+    // Also run once immediately after 10s (catches early chain breaks)
+    const initialTimeout = setTimeout(async () => {
+      try {
+        await fetch(`/api/cron/health-check?project_id=${id}`);
+      } catch {
+        // ignore
+      }
+    }, 10_000);
+
+    return () => {
+      clearInterval(healthInterval);
+      clearTimeout(initialTimeout);
+    };
+  }, [batch, id]);
+
   const selectedCount = selectedHeroIds.size;
   const selectedSwatchCount = selectedSwatchIds.size;
   const totalCombinations = selectedCount * selectedSwatchCount;

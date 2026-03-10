@@ -34,4 +34,4 @@ export const DELAY_BETWEEN_REQUESTS_SEC = 7;
 export const MAX_QA_RETRIES = 2;
 export const BATCH_HALT_MIN_PROCESSED = 5;
 export const BATCH_HALT_FLAGGED_PERCENT = 0.20;
-export const CHAIN_STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+export const CHAIN_STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
