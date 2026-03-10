@@ -31,24 +31,42 @@ export default function HeroShotsPage() {
 
   async function handleUpload(files: File[]) {
     setUploading(true);
+    let successCount = 0;
     try {
       for (const file of files) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('shot_type', shotType);
 
-        const res = await fetch(`/api/projects/${id}/heroes`, {
-          method: 'POST',
-          body: formData,
-        });
+        try {
+          const res = await fetch(`/api/projects/${id}/heroes`, {
+            method: 'POST',
+            body: formData,
+          });
 
-        if (!res.ok) {
-          const err = await res.json();
-          toast.error(`Error subiendo ${file.name}: ${err.error}`);
+          if (!res.ok) {
+            let errorMsg = `HTTP ${res.status}`;
+            try {
+              const err = await res.json();
+              errorMsg = err.error || errorMsg;
+            } catch {
+              // Response is not JSON (e.g., Vercel HTML error page)
+              if (res.status === 413) {
+                errorMsg = 'Archivo muy grande para el servidor';
+              }
+            }
+            toast.error(`Error subiendo ${file.name}: ${errorMsg}`);
+          } else {
+            successCount++;
+          }
+        } catch (networkErr) {
+          toast.error(`Error de red subiendo ${file.name}`);
         }
       }
-      toast.success(`${files.length} hero shot(s) subidos`);
-      fetchHeroes();
+      if (successCount > 0) {
+        toast.success(`${successCount} hero shot(s) subidos`);
+        fetchHeroes();
+      }
     } finally {
       setUploading(false);
     }

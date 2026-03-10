@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { Upload, X, ImageIcon, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 interface UploadedFile {
   id: string;
@@ -16,6 +17,7 @@ interface DropzoneProps {
   onUpload: (files: File[]) => Promise<void>;
   accept?: string;
   maxFiles?: number;
+  maxSizeMB?: number;
   label?: string;
   description?: string;
   uploading?: boolean;
@@ -25,6 +27,7 @@ export function Dropzone({
   onUpload,
   accept = 'image/*',
   maxFiles = 20,
+  maxSizeMB = 4,
   label = 'Arrastra imagenes aqui',
   description = 'o haz click para seleccionar',
   uploading = false,
@@ -47,7 +50,28 @@ export function Dropzone({
   const processFiles = useCallback(
     (files: FileList | File[]) => {
       const fileArray = Array.from(files).slice(0, maxFiles);
-      const newPreviews: UploadedFile[] = fileArray.map((file) => ({
+      const maxBytes = maxSizeMB * 1024 * 1024;
+
+      // Filter out files that are too large
+      const validFiles: File[] = [];
+      const rejectedFiles: string[] = [];
+      for (const file of fileArray) {
+        if (file.size > maxBytes) {
+          rejectedFiles.push(`${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
+        } else {
+          validFiles.push(file);
+        }
+      }
+
+      if (rejectedFiles.length > 0) {
+        toast.error(
+          `Archivos muy grandes (max ${maxSizeMB}MB): ${rejectedFiles.join(', ')}`
+        );
+      }
+
+      if (validFiles.length === 0) return;
+
+      const newPreviews: UploadedFile[] = validFiles.map((file) => ({
         id: crypto.randomUUID(),
         filename: file.name,
         previewUrl: URL.createObjectURL(file),
@@ -55,7 +79,7 @@ export function Dropzone({
       }));
       setPreviews((prev) => [...prev, ...newPreviews].slice(0, maxFiles));
     },
-    [maxFiles]
+    [maxFiles, maxSizeMB]
   );
 
   const handleDrop = useCallback(
@@ -112,7 +136,7 @@ export function Dropzone({
         <Upload className="mb-3 h-10 w-10 text-gray-400" />
         <p className="text-sm font-medium text-gray-700">{label}</p>
         <p className="mt-1 text-xs text-gray-500">{description}</p>
-        <p className="mt-1 text-xs text-gray-400">PNG, JPG, WEBP (max {maxFiles} archivos)</p>
+        <p className="mt-1 text-xs text-gray-400">PNG, JPG, WEBP (max {maxSizeMB}MB por archivo, max {maxFiles} archivos)</p>
         <input
           type="file"
           accept={accept}

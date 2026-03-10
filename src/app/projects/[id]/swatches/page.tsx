@@ -29,6 +29,7 @@ export default function SwatchesPage() {
 
   async function handleUpload(files: File[]) {
     setUploading(true);
+    let successCount = 0;
     try {
       for (const file of files) {
         const formData = new FormData();
@@ -37,18 +38,34 @@ export default function SwatchesPage() {
         const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
         formData.append('name', name);
 
-        const res = await fetch(`/api/projects/${id}/swatches`, {
-          method: 'POST',
-          body: formData,
-        });
+        try {
+          const res = await fetch(`/api/projects/${id}/swatches`, {
+            method: 'POST',
+            body: formData,
+          });
 
-        if (!res.ok) {
-          const err = await res.json();
-          toast.error(`Error subiendo ${file.name}: ${err.error}`);
+          if (!res.ok) {
+            let errorMsg = `HTTP ${res.status}`;
+            try {
+              const err = await res.json();
+              errorMsg = err.error || errorMsg;
+            } catch {
+              if (res.status === 413) {
+                errorMsg = 'Archivo muy grande para el servidor';
+              }
+            }
+            toast.error(`Error subiendo ${file.name}: ${errorMsg}`);
+          } else {
+            successCount++;
+          }
+        } catch (networkErr) {
+          toast.error(`Error de red subiendo ${file.name}`);
         }
       }
-      toast.success(`${files.length} swatch(es) subidos`);
-      fetchSwatches();
+      if (successCount > 0) {
+        toast.success(`${successCount} swatch(es) subidos`);
+        fetchSwatches();
+      }
     } finally {
       setUploading(false);
     }
