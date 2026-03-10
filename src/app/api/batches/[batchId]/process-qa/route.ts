@@ -15,22 +15,38 @@ interface RouteContext {
  * CADENA 2 — QA CHAIN
  * Process ONE qa_pending job from a batch, then self-invoke for the next.
  * Decoupled from generation chain — runs independently.
+ *
+ * ARCHITECTURE: Heavy work (QA scoring) runs BEFORE the response.
+ * Only lightweight chain continuation (fetch calls) runs in after().
+ * This prevents Vercel from killing the after() callback mid-scoring.
  */
 export async function POST(_request: NextRequest, context: RouteContext) {
   const { batchId } = await context.params;
 
-  after(async () => {
-    try {
-      await processOneQAJob(batchId);
-    } catch (err) {
-      console.error('[process-qa] Error:', err);
-    }
-  });
+  let shouldChain = false;
+
+  try {
+    shouldChain = await processOneQAJob(batchId);
+  } catch (err) {
+    console.error('[process-qa] Error:', err);
+    shouldChain = true; // still try next QA job
+  }
+
+  // Use after() ONLY for lightweight chain continuation (~1s)
+  if (shouldChain) {
+    after(async () => {
+      try {
+        await chainNext(batchId);
+      } catch (err) {
+        console.error('[process-qa] Chain continuation error:', err);
+      }
+    });
+  }
 
   return NextResponse.json({ status: 'qa_processing' });
 }
 
-async function processOneQAJob(batchId: string) {
+async function processOneQAJob(batchId: string): Promise<boolean> {
   const supabase = createAdminClient();
 
   // Get batch info with project
@@ -42,7 +58,7 @@ async function processOneQAJob(batchId: string) {
 
   if (!batch) {
     console.log('[process-qa] Batch not found:', batchId);
-    return;
+    return false;
   }
 
   // Track halted status — QA still evaluates already-generated images,
@@ -69,7 +85,7 @@ async function processOneQAJob(batchId: string) {
     // No more qa_pending jobs — check for retry jobs
     console.log('[process-qa] No qa_pending jobs for batch:', batchId);
     await handleQAComplete(batchId, batch);
-    return;
+    return false;
   }
 
   const job = jobs[0];
@@ -118,8 +134,7 @@ async function processOneQAJob(batchId: string) {
 
     if (currentJob?.status !== 'qa_pending') {
       console.log(`[process-qa] Job ${job.id.substring(0, 8)} status changed to ${currentJob?.status}, skipping QA write`);
-      await chainNext(batchId);
-      return;
+      return true; // chain to next
     }
 
     // Determine new status based on QA action
@@ -216,8 +231,8 @@ async function processOneQAJob(batchId: string) {
       .eq('id', job.id);
   }
 
-  // Chain: trigger next QA job (MUST await — fire-and-forget gets killed by Vercel)
-  await chainNext(batchId);
+  // Signal: chain to next QA job
+  return true;
 }
 
 /**

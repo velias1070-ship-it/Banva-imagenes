@@ -22,22 +22,46 @@ interface RouteContext {
  * Process ONE pending job from a batch, then self-invoke for the next.
  * Does NOT do QA — generates, uploads, sets status=qa_pending, chains.
  * After EACH job → triggers QA chain so both run in parallel.
+ *
+ * ARCHITECTURE: Heavy work (Gemini API) runs BEFORE the response.
+ * Only lightweight chain continuation (fetch calls) runs in after().
+ * This prevents Vercel from killing the after() callback mid-generation.
  */
 export async function POST(_request: NextRequest, context: RouteContext) {
   const { batchId } = await context.params;
 
-  after(async () => {
-    try {
-      await processOneJob(batchId);
-    } catch (err) {
-      console.error('[process-next] Error:', err);
-    }
-  });
+  let shouldChain = false;
+  let shouldTriggerQA = false;
+
+  try {
+    const result = await processOneJob(batchId);
+    shouldChain = result.chain;
+    shouldTriggerQA = result.triggerQA;
+  } catch (err) {
+    console.error('[process-next] Error:', err);
+    shouldChain = true; // still try to chain to the next job
+  }
+
+  // Use after() ONLY for lightweight chain continuation (~1s)
+  if (shouldChain || shouldTriggerQA) {
+    after(async () => {
+      try {
+        if (shouldTriggerQA) {
+          await triggerQAChain(batchId);
+        }
+        if (shouldChain) {
+          await chainNext(batchId);
+        }
+      } catch (err) {
+        console.error('[process-next] Chain continuation error:', err);
+      }
+    });
+  }
 
   return NextResponse.json({ status: 'processing' });
 }
 
-async function processOneJob(batchId: string) {
+async function processOneJob(batchId: string): Promise<{ chain: boolean; triggerQA: boolean }> {
   const supabase = createAdminClient();
 
   // Get batch info
@@ -49,13 +73,13 @@ async function processOneJob(batchId: string) {
 
   if (!batch) {
     console.log('[process-next] Batch not found:', batchId);
-    return;
+    return { chain: false, triggerQA: false };
   }
 
   // Check if batch is halted
   if (batch.status === 'halted') {
     console.log('[process-next] Batch is halted, stopping chain:', batchId);
-    return;
+    return { chain: false, triggerQA: false };
   }
 
   // Get ONE pending job with relations
@@ -84,7 +108,7 @@ async function processOneJob(batchId: string) {
 
     if (qaPendingCount && qaPendingCount > 0) {
       console.log(`[process-next] Safety net: ${qaPendingCount} qa_pending — ensuring QA chain`);
-      await triggerQAChain(batchId);
+      return { chain: false, triggerQA: true };
     } else {
       // Check if truly done (no generating, no qa_pending, no pending)
       const { count: activeCount } = await supabase
@@ -104,7 +128,7 @@ async function processOneJob(batchId: string) {
           .eq('id', batchId);
       }
     }
-    return;
+    return { chain: false, triggerQA: false };
   }
 
   const job = jobs[0];
@@ -135,8 +159,7 @@ async function processOneJob(batchId: string) {
       })
       .eq('id', batchId);
 
-    await chainNext(batchId);
-    return;
+    return { chain: true, triggerQA: false };
   }
 
   try {
@@ -265,9 +288,8 @@ async function processOneJob(batchId: string) {
 
     console.log(`[process-next] Job ${job.id.substring(0, 8)} done — status: qa_pending`);
 
-    // Trigger QA chain after EACH generated job (runs in parallel with generation)
-    // This is idempotent — if QA chain is already running, extra triggers are harmless
-    await triggerQAChain(batchId);
+    // Signal: chain to next + trigger QA
+    return { chain: true, triggerQA: true };
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -289,10 +311,10 @@ async function processOneJob(batchId: string) {
       .eq('id', batchId);
 
     console.error(`[process-next] Job ${job.id.substring(0, 8)} error:`, errorMessage);
-  }
 
-  // Chain: trigger next generation job (MUST await)
-  await chainNext(batchId);
+    // Still chain to try the next job
+    return { chain: true, triggerQA: false };
+  }
 }
 
 function getBaseUrl(): string {
