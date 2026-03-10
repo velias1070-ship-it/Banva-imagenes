@@ -104,9 +104,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const buffer = Buffer.from(await fileData.arrayBuffer());
     const heroName = (job.hero_shot as unknown as { filename: string })?.filename?.replace(/\.[^.]+$/, '') || 'hero';
     const swatchName = (job.swatch as unknown as { name: string })?.name || 'variant';
-    const filename = `${heroName}_${swatchName}.png`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const sanitized = (s: string) => s.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const folderName = sanitized(swatchName);
+    const fileName = sanitized(`${heroName}_${swatchName}.png`);
 
-    archive.append(buffer, { name: filename });
+    archive.append(buffer, { name: `${folderName}/${fileName}` });
   }
 
   await archive.finalize();

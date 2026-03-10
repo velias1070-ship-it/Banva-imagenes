@@ -26,7 +26,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     .select(`
       *,
       hero_shot:hero_shots(filename, shot_type, storage_path),
-      swatch:swatches(name, color_description, storage_path)
+      swatch:swatches(id, name, color_description, storage_path, display_order)
     `)
     .in('batch_id', batchIds)
     .order('created_at', { ascending: true });

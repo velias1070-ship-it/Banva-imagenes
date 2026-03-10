@@ -1,13 +1,16 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle, ImageIcon, RotateCcw } from 'lucide-react';
+import {
+  ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
+  ImageIcon, RotateCcw, LayoutGrid, Layers, ChevronDown, ChevronRight,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -25,7 +28,16 @@ interface JobWithRelations {
   } | null;
   error_message: string | null;
   hero_shot: { filename: string; shot_type: string; storage_path: string } | null;
-  swatch: { name: string; color_description: string | null; storage_path: string } | null;
+  swatch: { id: string; name: string; color_description: string | null; storage_path: string; display_order: number } | null;
+}
+
+interface SwatchGroup {
+  swatchId: string;
+  swatchName: string;
+  colorDescription: string | null;
+  swatchStoragePath: string;
+  displayOrder: number;
+  jobs: JobWithRelations[];
 }
 
 function getStorageUrl(path: string): string {
@@ -33,11 +45,19 @@ function getStorageUrl(path: string): string {
 }
 
 type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending';
+type ViewMode = 'grid' | 'grouped';
 
 export default function ResultsPage() {
   const { id } = useParams<{ id: string }>();
   const [jobs, setJobs] = useState<JobWithRelations[]>([]);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('banva-results-view') as ViewMode) || 'grouped';
+    }
+    return 'grouped';
+  });
+  const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string>>(new Set());
 
   const fetchResults = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/results`);
@@ -59,6 +79,45 @@ export default function ResultsPage() {
   const flaggedCount = jobs.filter((j) => j.status === 'flagged').length;
   const errorCount = jobs.filter((j) => j.status === 'error').length;
   const qaPendingCount = jobs.filter((j) => j.status === 'qa_pending').length;
+
+  // Group filtered jobs by swatch
+  const groupedBySwatch = useMemo<SwatchGroup[]>(() => {
+    const map = new Map<string, SwatchGroup>();
+
+    for (const job of filtered) {
+      const swatchId = job.swatch?.id ?? '__unknown__';
+      if (!map.has(swatchId)) {
+        map.set(swatchId, {
+          swatchId,
+          swatchName: job.swatch?.name ?? 'Sin variante',
+          colorDescription: job.swatch?.color_description ?? null,
+          swatchStoragePath: job.swatch?.storage_path ?? '',
+          displayOrder: job.swatch?.display_order ?? 999,
+          jobs: [],
+        });
+      }
+      map.get(swatchId)!.jobs.push(job);
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.displayOrder - b.displayOrder);
+  }, [filtered]);
+
+  function handleViewModeChange(mode: ViewMode) {
+    setViewMode(mode);
+    localStorage.setItem('banva-results-view', mode);
+  }
+
+  function toggleSwatchCollapse(swatchId: string) {
+    setCollapsedSwatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(swatchId)) {
+        next.delete(swatchId);
+      } else {
+        next.add(swatchId);
+      }
+      return next;
+    });
+  }
 
   async function handleDownloadAll() {
     toast.info('Preparando descarga ZIP...');
@@ -91,14 +150,13 @@ export default function ResultsPage() {
         setJobs((prev) =>
           prev.map((j) => (j.id === jobId ? { ...j, status: 'generating' } : j))
         );
-        toast.success('Regenerando — se actualizará automáticamente');
-        // Poll for completion
+        toast.success('Regenerando — se actualizara automaticamente');
         const poll = setInterval(async () => {
           const updated = await fetch(`/api/projects/${id}/results`);
           if (updated.ok) {
             const allJobs = await updated.json();
             const thisJob = allJobs.find((j: JobWithRelations) => j.id === jobId);
-            setJobs(allJobs); // Always update to show latest state
+            setJobs(allJobs);
             if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending') {
               clearInterval(poll);
               if (thisJob.status === 'approved') {
@@ -112,10 +170,10 @@ export default function ResultsPage() {
           }
         }, 5000);
       } else {
-        toast.error('Error iniciando regeneración');
+        toast.error('Error iniciando regeneracion');
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error('Error de conexion');
     }
   }
 
@@ -175,6 +233,134 @@ export default function ResultsPage() {
     }
   }
 
+  // ---- Reusable JobCard ----
+  function JobCard({ job }: { job: JobWithRelations }) {
+    return (
+      <Card className="overflow-hidden">
+        <div className="aspect-square bg-gray-100 relative">
+          {job.output_storage_path ? (
+            <img
+              src={getStorageUrl(job.output_storage_path)}
+              alt={job.swatch?.name || 'Generated image'}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-xs text-gray-400">
+              {job.status === 'error' ? job.error_message || 'Error' : 'Sin imagen'}
+            </div>
+          )}
+        </div>
+        <CardContent className="p-3">
+          <div className="mb-2">
+            <p className="text-sm font-medium truncate">{job.swatch?.name || 'Variante'}</p>
+            <p className="text-xs text-muted-foreground truncate">
+              {job.hero_shot?.filename || 'Hero'} &middot; {job.hero_shot?.shot_type}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              {statusIcon(job.status)}
+              <Badge
+                variant={
+                  job.status === 'approved' ? 'default' :
+                  job.status === 'error' ? 'destructive' : 'secondary'
+                }
+                className="text-xs"
+              >
+                {job.status}
+              </Badge>
+            </div>
+            {job.qa_score !== null && (
+              <span
+                className="text-xs font-medium cursor-help"
+                title={job.qa_feedback || 'Sin feedback'}
+              >
+                QA: {(job.qa_score * 100).toFixed(0)}%
+                {job.qa_detail?.hero_contamination != null && job.qa_detail.hero_contamination > 0.3 && (
+                  <span className="ml-1 text-orange-500" title={`Hero contamination: ${(job.qa_detail.hero_contamination * 100).toFixed(0)}%`}>
+                    !
+                  </span>
+                )}
+              </span>
+            )}
+            {job.status === 'qa_pending' && (
+              <span className="text-xs text-purple-600 flex items-center gap-1">
+                <RotateCcw className="h-3 w-3 animate-spin" />
+                QA...
+              </span>
+            )}
+          </div>
+
+          {job.qa_feedback && job.status !== 'approved' && (
+            <p className="text-xs text-muted-foreground mb-2 line-clamp-2" title={job.qa_feedback}>
+              {job.qa_feedback}
+            </p>
+          )}
+
+          {job.status === 'generating' && (
+            <div className="flex items-center gap-2 text-xs text-blue-600">
+              <RotateCcw className="h-3 w-3 animate-spin" />
+              Generando...
+            </div>
+          )}
+          {job.status === 'qa_pending' && (
+            <div className="flex items-center gap-2 text-xs text-purple-600">
+              <RotateCcw className="h-3 w-3 animate-spin" />
+              QA en progreso...
+            </div>
+          )}
+          {job.status !== 'pending' && job.status !== 'generating' && job.status !== 'qa_pending' && (
+            <div className="flex gap-1.5">
+              {job.output_storage_path && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => handleDownloadOne(job.id)}
+                >
+                  <Download className="h-3 w-3" />
+                </Button>
+              )}
+              {(job.status === 'flagged' || job.status === 'error') && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-blue-600"
+                  onClick={() => handleRegenerate(job.id)}
+                >
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Regenerar
+                </Button>
+              )}
+              {job.status !== 'approved' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 flex-1 text-xs text-green-600"
+                  onClick={() => handleOverride(job.id, 'approved')}
+                >
+                  Aprobar
+                </Button>
+              )}
+              {job.status !== 'flagged' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 flex-1 text-xs text-red-600"
+                  onClick={() => handleOverride(job.id, 'flagged')}
+                >
+                  Rechazar
+                </Button>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ---- Render ----
   return (
     <div className="p-8">
       <Link href={`/projects/${id}`} className="mb-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
@@ -198,14 +384,56 @@ export default function ResultsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)}>
-        <TabsList className="mb-6">
-          <TabsTrigger value="all">Todas ({jobs.length})</TabsTrigger>
-          <TabsTrigger value="approved">Aprobadas ({approvedCount})</TabsTrigger>
-          <TabsTrigger value="retry">Retry ({retryCount})</TabsTrigger>
-          <TabsTrigger value="flagged">Flagged ({flaggedCount})</TabsTrigger>
-          <TabsTrigger value="qa_pending">QA ({qaPendingCount})</TabsTrigger>
-          <TabsTrigger value="error">Errores ({errorCount})</TabsTrigger>
-        </TabsList>
+        {/* View toggle + Tabs */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="all">Todas ({jobs.length})</TabsTrigger>
+            <TabsTrigger value="approved">Aprobadas ({approvedCount})</TabsTrigger>
+            <TabsTrigger value="retry">Retry ({retryCount})</TabsTrigger>
+            <TabsTrigger value="flagged">Flagged ({flaggedCount})</TabsTrigger>
+            <TabsTrigger value="qa_pending">QA ({qaPendingCount})</TabsTrigger>
+            <TabsTrigger value="error">Errores ({errorCount})</TabsTrigger>
+          </TabsList>
+
+          <div className="flex items-center gap-2">
+            {viewMode === 'grouped' && groupedBySwatch.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => {
+                  if (collapsedSwatches.size === groupedBySwatch.length) {
+                    setCollapsedSwatches(new Set());
+                  } else {
+                    setCollapsedSwatches(new Set(groupedBySwatch.map((g) => g.swatchId)));
+                  }
+                }}
+              >
+                {collapsedSwatches.size === groupedBySwatch.length ? 'Expandir todo' : 'Colapsar todo'}
+              </Button>
+            )}
+            <div className="flex items-center gap-0.5 rounded-lg border p-0.5 bg-muted">
+              <Button
+                variant={viewMode === 'grid' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 gap-1.5 text-xs px-2.5"
+                onClick={() => handleViewModeChange('grid')}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+                Grilla
+              </Button>
+              <Button
+                variant={viewMode === 'grouped' ? 'default' : 'ghost'}
+                size="sm"
+                className="h-7 gap-1.5 text-xs px-2.5"
+                onClick={() => handleViewModeChange('grouped')}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Por Variante
+              </Button>
+            </div>
+          </div>
+        </div>
 
         <TabsContent value={activeTab}>
           {filtered.length === 0 ? (
@@ -221,134 +449,91 @@ export default function ResultsPage() {
                 </div>
               </CardContent>
             </Card>
-          ) : (
+          ) : viewMode === 'grid' ? (
+            /* ---- FLAT GRID VIEW ---- */
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
               {filtered.map((job) => (
-                <Card key={job.id} className="overflow-hidden">
-                  <div className="aspect-square bg-gray-100 relative">
-                    {job.output_storage_path ? (
-                      <img
-                        src={getStorageUrl(job.output_storage_path)}
-                        alt={job.swatch?.name || 'Generated image'}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-xs text-gray-400">
-                        {job.status === 'error' ? job.error_message || 'Error' : 'Sin imagen'}
+                <JobCard key={job.id} job={job} />
+              ))}
+            </div>
+          ) : (
+            /* ---- GROUPED BY SWATCH VIEW ---- */
+            <div className="space-y-4">
+              {groupedBySwatch.map((group) => {
+                const isCollapsed = collapsedSwatches.has(group.swatchId);
+                const approvedInGroup = group.jobs.filter((j) => j.status === 'approved').length;
+
+                return (
+                  <div key={group.swatchId} className="rounded-xl border bg-card shadow-sm overflow-hidden">
+                    {/* Section header */}
+                    <button
+                      onClick={() => toggleSwatchCollapse(group.swatchId)}
+                      className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
+                    >
+                      {/* Swatch thumbnail */}
+                      {group.swatchStoragePath ? (
+                        <div className="h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border bg-gray-100">
+                          <img
+                            src={getStorageUrl(group.swatchStoragePath)}
+                            alt={group.swatchName}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-14 w-14 flex-shrink-0 rounded-lg border bg-gray-100 flex items-center justify-center">
+                          <ImageIcon className="h-6 w-6 text-gray-300" />
+                        </div>
+                      )}
+
+                      {/* Swatch info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm leading-tight truncate">{group.swatchName}</p>
+                        {group.colorDescription && (
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{group.colorDescription}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {group.jobs.length} imagen{group.jobs.length !== 1 ? 'es' : ''}
+                          {approvedInGroup > 0 && (
+                            <span className="text-green-600"> &middot; {approvedInGroup} aprobada{approvedInGroup !== 1 ? 's' : ''}</span>
+                          )}
+                        </p>
+                      </div>
+
+                      {/* Status summary badges */}
+                      <div className="flex-shrink-0 flex items-center gap-1.5">
+                        {approvedInGroup === group.jobs.length ? (
+                          <Badge variant="default" className="text-xs bg-green-100 text-green-700 border-green-200">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Completo
+                          </Badge>
+                        ) : approvedInGroup > 0 ? (
+                          <Badge variant="secondary" className="text-xs">
+                            {approvedInGroup}/{group.jobs.length}
+                          </Badge>
+                        ) : null}
+                      </div>
+
+                      {/* Collapse chevron */}
+                      <div className="flex-shrink-0 text-muted-foreground">
+                        {isCollapsed
+                          ? <ChevronRight className="h-5 w-5" />
+                          : <ChevronDown className="h-5 w-5" />}
+                      </div>
+                    </button>
+
+                    {/* Section body — collapsible */}
+                    {!isCollapsed && (
+                      <div className="px-4 pb-4 border-t">
+                        <div className="grid gap-3 pt-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                          {group.jobs.map((job) => (
+                            <JobCard key={job.id} job={job} />
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
-                  <CardContent className="p-3">
-                    {/* Swatch + Hero info */}
-                    <div className="mb-2">
-                      <p className="text-sm font-medium truncate">{job.swatch?.name || 'Variante'}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {job.hero_shot?.filename || 'Hero'} · {job.hero_shot?.shot_type}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-1.5">
-                        {statusIcon(job.status)}
-                        <Badge
-                          variant={
-                            job.status === 'approved' ? 'default' :
-                            job.status === 'error' ? 'destructive' : 'secondary'
-                          }
-                          className="text-xs"
-                        >
-                          {job.status}
-                        </Badge>
-                      </div>
-                      {job.qa_score !== null && (
-                        <span
-                          className="text-xs font-medium cursor-help"
-                          title={job.qa_feedback || 'Sin feedback'}
-                        >
-                          QA: {(job.qa_score * 100).toFixed(0)}%
-                          {job.qa_detail?.hero_contamination != null && job.qa_detail.hero_contamination > 0.3 && (
-                            <span className="ml-1 text-orange-500" title={`Hero contamination: ${(job.qa_detail.hero_contamination * 100).toFixed(0)}%`}>
-                              !
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      {job.status === 'qa_pending' && (
-                        <span className="text-xs text-purple-600 flex items-center gap-1">
-                          <RotateCcw className="h-3 w-3 animate-spin" />
-                          QA...
-                        </span>
-                      )}
-                    </div>
-
-                    {/* QA Feedback */}
-                    {job.qa_feedback && job.status !== 'approved' && (
-                      <p className="text-xs text-muted-foreground mb-2 line-clamp-2" title={job.qa_feedback}>
-                        {job.qa_feedback}
-                      </p>
-                    )}
-
-                    {/* Actions */}
-                    {job.status === 'generating' && (
-                      <div className="flex items-center gap-2 text-xs text-blue-600">
-                        <RotateCcw className="h-3 w-3 animate-spin" />
-                        Generando...
-                      </div>
-                    )}
-                    {job.status === 'qa_pending' && (
-                      <div className="flex items-center gap-2 text-xs text-purple-600">
-                        <RotateCcw className="h-3 w-3 animate-spin" />
-                        QA en progreso...
-                      </div>
-                    )}
-                    {job.status !== 'pending' && job.status !== 'generating' && job.status !== 'qa_pending' && (
-                      <div className="flex gap-1.5">
-                        {job.output_storage_path && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs"
-                            onClick={() => handleDownloadOne(job.id)}
-                          >
-                            <Download className="h-3 w-3" />
-                          </Button>
-                        )}
-                        {(job.status === 'flagged' || job.status === 'error') && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs text-blue-600"
-                            onClick={() => handleRegenerate(job.id)}
-                          >
-                            <RotateCcw className="h-3 w-3 mr-1" />
-                            Regenerar
-                          </Button>
-                        )}
-                        {job.status !== 'approved' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 flex-1 text-xs text-green-600"
-                            onClick={() => handleOverride(job.id, 'approved')}
-                          >
-                            Aprobar
-                          </Button>
-                        )}
-                        {job.status !== 'flagged' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 flex-1 text-xs text-red-600"
-                            onClick={() => handleOverride(job.id, 'flagged')}
-                          >
-                            Rechazar
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </TabsContent>
