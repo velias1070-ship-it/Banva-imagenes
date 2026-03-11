@@ -9,6 +9,7 @@ import {
   buildPromptForMode,
   type GenerationMode,
 } from '@/lib/category-strategy';
+import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -141,6 +142,40 @@ async function regenerateJob(
       console.log(`[regenerateJob] Dark swatch detected: "${swatch.name}"`);
     }
 
+    // ── Auto-analyze swatch color if missing ──
+    let swatchColorDescription = swatch.color_description || null;
+    if (!swatchColorDescription) {
+      console.log(`[regenerateJob] Swatch "${swatch.name}" has no color_description — auto-analyzing...`);
+      try {
+        const colorAnalysis = await analyzeSwatchColor(
+          swatchBuffer.toString('base64'),
+          swatch.mime_type || 'image/png'
+        );
+        if (colorAnalysis) {
+          swatchColorDescription = colorAnalysis.colorDescription;
+          console.log(`[regenerateJob] Auto-detected color: "${swatchColorDescription}"`);
+          // Cache in DB (non-blocking)
+          Promise.resolve(
+            supabase
+              .from('swatches')
+              .update({
+                color_description: colorAnalysis.colorDescription,
+                dominant_color_hex: colorAnalysis.dominantHex,
+              })
+              .eq('id', swatch.id)
+          ).catch((err: unknown) => console.error('[regenerateJob] Failed to cache swatch color:', err));
+        }
+      } catch (err) {
+        console.error('[regenerateJob] Swatch color analysis failed:', err);
+      }
+    }
+
+    // ── Get QA feedback from previous attempt ──
+    const qaFeedback = (job.qa_feedback as string) || null;
+    if (qaFeedback) {
+      console.log(`[regenerateJob] Using QA feedback: "${qaFeedback}"`);
+    }
+
     // Preprocessing
     let swatchBase64 = swatchBuffer.toString('base64');
     if (strategy.preprocessing.crop_swatch) {
@@ -153,9 +188,10 @@ async function regenerateJob(
       mode,
       strategy,
       swatch.name,
-      swatch.color_description || null,
+      swatchColorDescription,
       heroShot.shot_type,
-      darkSwatch
+      darkSwatch,
+      qaFeedback
     );
 
     const promptMetadata: Record<string, unknown> = {
@@ -165,6 +201,8 @@ async function regenerateJob(
       temperature,
       dark_swatch: darkSwatch,
       crop_swatch: strategy.preprocessing.crop_swatch,
+      swatch_color: swatchColorDescription,
+      qa_feedback_used: qaFeedback ? true : false,
       manual_regeneration: true,
     };
 

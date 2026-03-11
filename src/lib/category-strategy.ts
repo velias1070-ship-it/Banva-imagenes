@@ -731,6 +731,55 @@ ${strategy.prompt.dark_swatch_note}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Color emphasis builder — ensures Gemini matches the swatch color precisely
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildColorEmphasis(colorDescription: string | null): string {
+  if (colorDescription) {
+    return `
+
+===================================================
+COLOR MATCHING — CRITICAL PRIORITY
+===================================================
+The target color for this product is: "${colorDescription}"
+The generated product MUST have this EXACT color.
+COMMON ERROR: Generating neutral beige/cream/white tones when the swatch is actually a specific color.
+If the swatch is "${colorDescription}", your output MUST be "${colorDescription}" — NOT beige, NOT cream, NOT a muted version.
+Before finalizing, compare your output's color against the swatch — they must match in hue, saturation, and brightness.`;
+  }
+
+  return `
+
+===================================================
+COLOR MATCHING — CRITICAL PRIORITY
+===================================================
+BEFORE generating, carefully analyze the swatch image to identify its EXACT dominant color.
+The generated product MUST match this color precisely — same hue, same saturation, same brightness.
+COMMON ERROR: Defaulting to neutral beige/cream/white tones when the swatch actually shows a distinct color (green, blue, pink, etc.).
+If the swatch shows a colored fabric, your output MUST show that SAME color — NOT a neutral tone.
+Before finalizing, compare your output's color against the swatch — they must match.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA feedback builder — injects previous attempt feedback into retry prompts
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildQAFeedbackNote(qaFeedback: string | null | undefined): string {
+  if (!qaFeedback) return '';
+
+  return `
+
+===================================================
+⚠️ PREVIOUS ATTEMPT FAILED — FIX THESE ISSUES
+===================================================
+This is a RETRY. The previous generation was REJECTED for the following reason:
+"${qaFeedback}"
+You MUST fix this specific issue. Pay extra attention to the problem described above.
+If the feedback mentions wrong COLOR → double-check the swatch color and match it precisely.
+If the feedback mentions wrong PATTERN → look more carefully at the swatch pattern details.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompt builder: EDIT mode (hero + swatch, "edit Image 1")
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -739,10 +788,13 @@ export function buildEditPrompt(
   swatchName: string,
   colorDescription: string | null,
   shotType: string,
-  isDarkSwatch: boolean = false
+  isDarkSwatch: boolean = false,
+  qaFeedback?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
+  const colorEmphasis = buildColorEmphasis(colorDescription);
+  const qaNote = buildQAFeedbackNote(qaFeedback);
 
   return `You are a photo editor specializing in textile product photography for e-commerce.
 
@@ -751,7 +803,7 @@ IMAGE 2 (Swatch Reference): Shows the target color/pattern/design called "${swat
 CRITICAL: Image 2 may be a FULL PRODUCT PHOTO (complete scene with furniture, props, people) — NOT just a fabric closeup.
 You must EXTRACT ONLY the fabric's color, pattern, and surface texture from the TEXTILE PRODUCT visible in Image 2.
 COMPLETELY IGNORE Image 2's: composition, camera angle, scene, room, furniture, lighting setup, text overlays, props.
-You are using Image 2 ONLY as a color/pattern reference — nothing else.${darkNote}
+You are using Image 2 ONLY as a color/pattern reference — nothing else.${colorEmphasis}${darkNote}${qaNote}
 
 ===================================================
 RULE #1 — COMPOSITION LOCK (HIGHEST PRIORITY)
@@ -816,10 +868,13 @@ export function buildReferencePrompt(
   swatchName: string,
   colorDescription: string | null,
   shotType: string,
-  isDarkSwatch: boolean = false
+  isDarkSwatch: boolean = false,
+  qaFeedback?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
+  const colorEmphasis = buildColorEmphasis(colorDescription);
+  const qaNote = buildQAFeedbackNote(qaFeedback);
 
   const referenceInstruction = strategy.reference_instruction
     || `Image 1 shows a REFERENCE COMPOSITION — use its camera angle, scene layout, and overall arrangement as a GUIDE for generating a NEW image.
@@ -828,7 +883,7 @@ Do NOT preserve Image 1's textile patterns or colors. Generate new textiles usin
   return `You are a professional product photographer specializing in textile/bedding photography for e-commerce.
 
 IMAGE 1 (Reference Composition): A GUIDE for the scene composition — camera angle, layout, arrangement.
-IMAGE 2 (Swatch Reference): The target fabric called "${swatchName}"${colorInfo}. This defines the product's color, pattern, and texture.
+IMAGE 2 (Swatch Reference): The target fabric called "${swatchName}"${colorInfo}. This defines the product's color, pattern, and texture.${colorEmphasis}${qaNote}
 
 ===================================================
 COMPOSITION REFERENCE (Image 1)
@@ -893,11 +948,14 @@ export function buildFromScratchPrompt(
   swatchName: string,
   colorDescription: string | null,
   shotType: string,
-  isDarkSwatch: boolean = false
+  isDarkSwatch: boolean = false,
+  qaFeedback?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const composition = getShotComposition(strategy, shotType);
   const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
+  const colorEmphasis = buildColorEmphasis(colorDescription);
+  const qaNote = buildQAFeedbackNote(qaFeedback);
 
   return `You are a professional product photographer specializing in textile/bedding photography for e-commerce.
 
@@ -906,7 +964,7 @@ TASK: Generate a high-quality product photograph of a ${strategy.label} product.
 COMPOSITION: Create ${composition}
 
 THE PROVIDED IMAGE is a fabric swatch reference called "${swatchName}"${colorInfo}.
-It shows the EXACT color and pattern that the product in your generated photo MUST have.
+It shows the EXACT color and pattern that the product in your generated photo MUST have.${colorEmphasis}${qaNote}
 
 ===================================================
 MANDATORY FABRIC REQUIREMENTS
@@ -940,15 +998,16 @@ export function buildPromptForMode(
   swatchName: string,
   colorDescription: string | null,
   shotType: string,
-  isDarkSwatch: boolean = false
+  isDarkSwatch: boolean = false,
+  qaFeedback?: string | null
 ): string {
   switch (mode) {
     case 'edit':
-      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch);
+      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback);
     case 'reference':
-      return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch);
+      return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback);
     case 'from_scratch':
-      return buildFromScratchPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch);
+      return buildFromScratchPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback);
   }
 }
 

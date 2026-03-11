@@ -8,6 +8,7 @@ import {
   getEffectiveTemperature,
   buildPromptForMode,
 } from '@/lib/category-strategy';
+import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -192,13 +193,49 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Dark swatch: "${job.swatch.name}"`);
     }
 
+    // ── Auto-analyze swatch color if missing ──
+    // Uses Gemini Flash (~2s) to detect color, then caches in DB for future jobs
+    let swatchColorDescription = job.swatch.color_description;
+    if (!swatchColorDescription) {
+      console.log(`[process-next] Swatch "${job.swatch.name}" has no color_description — auto-analyzing...`);
+      try {
+        const colorAnalysis = await analyzeSwatchColor(
+          swatchBuffer.toString('base64'),
+          job.swatch.mime_type || 'image/png'
+        );
+        if (colorAnalysis) {
+          swatchColorDescription = colorAnalysis.colorDescription;
+          console.log(`[process-next] Auto-detected color: "${swatchColorDescription}" (${colorAnalysis.dominantHex})`);
+          // Cache in DB (non-blocking — don't let failure stop generation)
+          Promise.resolve(
+            supabase
+              .from('swatches')
+              .update({
+                color_description: colorAnalysis.colorDescription,
+                dominant_color_hex: colorAnalysis.dominantHex,
+              })
+              .eq('id', job.swatch.id)
+          ).catch((err: unknown) => console.error('[process-next] Failed to cache swatch color:', err));
+        }
+      } catch (err) {
+        console.error('[process-next] Swatch color analysis failed (non-blocking):', err);
+      }
+    }
+
+    // ── Get QA feedback from previous attempt (for retries) ──
+    const qaFeedback = job.attempt > 0 ? (job.qa_feedback || null) : null;
+    if (qaFeedback) {
+      console.log(`[process-next] Retry with QA feedback: "${qaFeedback}"`);
+    }
+
     // ── Determine effective generation mode ──
     const effectiveMode = getEffectiveMode(strategy, job.attempt);
     const temperature = getEffectiveTemperature(strategy, effectiveMode, job.attempt);
 
     console.log(
       `[process-next] Job ${job.id.substring(0, 8)} — ` +
-      `category: ${category}, mode: ${effectiveMode}, attempt: ${job.attempt}, temp: ${temperature}`
+      `category: ${category}, mode: ${effectiveMode}, attempt: ${job.attempt}, temp: ${temperature}` +
+      `${swatchColorDescription ? `, color: ${swatchColorDescription}` : ''}`
     );
 
     // ── Preprocessing ──
@@ -212,9 +249,10 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       effectiveMode,
       strategy,
       job.swatch.name,
-      job.swatch.color_description,
+      swatchColorDescription,
       job.hero_shot.shot_type,
-      darkSwatch
+      darkSwatch,
+      qaFeedback
     );
 
     const promptMetadata: Record<string, unknown> = {
@@ -224,6 +262,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       temperature,
       dark_swatch: darkSwatch,
       crop_swatch: strategy.preprocessing.crop_swatch,
+      swatch_color: swatchColorDescription || null,
+      qa_feedback_used: qaFeedback ? true : false,
     };
 
     // Mark as generating
