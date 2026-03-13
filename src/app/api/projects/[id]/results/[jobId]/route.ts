@@ -10,6 +10,7 @@ import {
   type GenerationMode,
 } from '@/lib/category-strategy';
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
+import { getProjectSettings } from '@/lib/project-settings';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -66,10 +67,10 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  // Get project for category
+  // Get project for category + settings
   const { data: project } = await supabase
     .from('projects')
-    .select('category')
+    .select('category, metadata')
     .eq('id', id)
     .single();
 
@@ -82,7 +83,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -95,12 +96,14 @@ async function regenerateJob(
   jobId: string,
   job: Record<string, unknown>,
   category: string,
-  projectId: string
+  projectId: string,
+  projectMetadata?: Record<string, unknown> | null
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string>;
   const swatch = job.swatch as Record<string, string>;
   const strategy = getCategoryStrategy(category);
+  const projectSettings = getProjectSettings(projectMetadata);
 
   // Determine mode — check if QA flagged hero_contamination
   let mode: GenerationMode = strategy.generation_mode;
@@ -191,7 +194,8 @@ async function regenerateJob(
       swatchColorDescription,
       heroShot.shot_type,
       darkSwatch,
-      qaFeedback
+      qaFeedback,
+      projectSettings.generation.resolution
     );
 
     const promptMetadata: Record<string, unknown> = {

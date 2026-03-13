@@ -3,10 +3,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // hero_contamination is an INDEPENDENT escalation trigger, NOT part of the
 // weighted score. The 7 original weights sum to 1.0.
+//
+// All functions accept optional ProjectSettings to allow per-project overrides.
+// When settings is undefined, system defaults are used (backward compatible).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { QADetail } from '@/types/database';
 import type { CategoryStrategy } from './category-strategy';
+import type { ProjectSettings } from './project-settings';
 
 export interface QACriteria {
   auto_approve_threshold: number;   // >= this → approved
@@ -57,19 +61,35 @@ const DEFAULT_CRITERIA: QACriteria = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Getter (allows future override from DB or config file)
+// Build QACriteria from ProjectSettings (or use defaults)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function getQACriteria(): QACriteria {
-  return DEFAULT_CRITERIA;
+export function getQACriteria(settings?: ProjectSettings): QACriteria {
+  if (!settings) {
+    return DEFAULT_CRITERIA;
+  }
+
+  return {
+    auto_approve_threshold: settings.qa.auto_approve_threshold,
+    retry_threshold: settings.qa.retry_threshold,
+    max_retries: settings.qa.max_retries,
+    batch_halt_flagged_percent: settings.batch.halt_flagged_percent,
+    batch_halt_min_processed: settings.batch.halt_min_processed,
+    hero_contamination_escalation_threshold: DEFAULT_CRITERIA.hero_contamination_escalation_threshold,
+
+    scoring_weights: { ...settings.scoring_weights },
+
+    product_fidelity_blocker: settings.qa.product_fidelity_blocker,
+    product_fidelity_blocker_threshold: settings.qa.product_fidelity_blocker_threshold,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute weighted score from QADetail (7 dimensions, NOT hero_contamination)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function computeWeightedScore(detail: QADetail): number {
-  const w = DEFAULT_CRITERIA.scoring_weights;
+export function computeWeightedScore(detail: QADetail, settings?: ProjectSettings): number {
+  const w = settings ? settings.scoring_weights : DEFAULT_CRITERIA.scoring_weights;
 
   const score =
     detail.product_fidelity * w.product_fidelity +
@@ -101,9 +121,10 @@ export function determineAction(
   score: number,
   detail: QADetail,
   strategy: CategoryStrategy,
-  attempt: number
+  attempt: number,
+  settings?: ProjectSettings
 ): QAAction {
-  const criteria = DEFAULT_CRITERIA;
+  const criteria = getQACriteria(settings);
 
   // 1. Product fidelity blocker — low fidelity = flag immediately
   if (
@@ -175,9 +196,10 @@ export function determineAction(
 
 export function shouldHaltBatch(
   flaggedCount: number,
-  completedCount: number
+  completedCount: number,
+  settings?: ProjectSettings
 ): { halt: boolean; reason?: string } {
-  const criteria = DEFAULT_CRITERIA;
+  const criteria = getQACriteria(settings);
 
   if (completedCount < criteria.batch_halt_min_processed) {
     return { halt: false };

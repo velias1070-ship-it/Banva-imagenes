@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { scoreImage } from '@/lib/qa-scorer';
 import { getCategoryStrategy } from '@/lib/category-strategy';
 import { shouldHaltBatch } from '@/lib/qa-criteria';
+import { getProjectSettings } from '@/lib/project-settings';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 export const maxDuration = 60;
@@ -95,6 +96,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
   const project = batch.project;
   const category = project?.category || 'textile';
   const strategy = getCategoryStrategy(category);
+  const projectSettings = getProjectSettings(project?.metadata as Record<string, unknown> | null);
 
   try {
     // Download 3 images: generated + swatch + hero
@@ -114,7 +116,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     const swatchBase64 = Buffer.from(await swatchRes.data.arrayBuffer()).toString('base64');
     const heroBase64 = Buffer.from(await heroRes.data.arrayBuffer()).toString('base64');
 
-    // Score the image
+    // Score the image (with per-project QA settings)
     const scoreResult = await scoreImage({
       generatedBase64,
       generatedMimeType: 'image/png',
@@ -126,6 +128,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
       swatchName: job.swatch.name,
       strategy,
       attempt: job.attempt,
+      projectSettings,
     });
 
     // Verify job is still qa_pending (might have been regenerated manually)
@@ -201,7 +204,8 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     if (newStatus === 'flagged' && !batchIsHalted) {
       const haltCheck = shouldHaltBatch(
         (batch.flagged_count || 0) + 1,
-        (batch.completed_count || 0) + 1
+        (batch.completed_count || 0) + 1,
+        projectSettings
       );
 
       if (haltCheck.halt) {

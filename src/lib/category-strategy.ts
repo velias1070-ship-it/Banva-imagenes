@@ -789,7 +789,8 @@ export function buildEditPrompt(
   colorDescription: string | null,
   shotType: string,
   isDarkSwatch: boolean = false,
-  qaFeedback?: string | null
+  qaFeedback?: string | null,
+  resolution: string = '1024x1024'
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
@@ -856,7 +857,7 @@ Before outputting, verify:
 3. Did I add any elements that weren't in Image 1? If yes -> REMOVE IT.
 ${strategy.prompt.final_check}
 
-Generate at 1024x1024 resolution.`;
+Generate at ${resolution} resolution.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -869,7 +870,8 @@ export function buildReferencePrompt(
   colorDescription: string | null,
   shotType: string,
   isDarkSwatch: boolean = false,
-  qaFeedback?: string | null
+  qaFeedback?: string | null,
+  resolution: string = '1024x1024'
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
@@ -934,7 +936,7 @@ QUALITY REQUIREMENTS
 * Sharp focus on the product
 * Natural, consistent lighting
 * Realistic fabric texture
-* 1024x1024 resolution
+* ${resolution} resolution
 
 Generate the image now.`;
 }
@@ -949,7 +951,8 @@ export function buildFromScratchPrompt(
   colorDescription: string | null,
   shotType: string,
   isDarkSwatch: boolean = false,
-  qaFeedback?: string | null
+  qaFeedback?: string | null,
+  resolution: string = '1024x1024'
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const composition = getShotComposition(strategy, shotType);
@@ -983,7 +986,7 @@ QUALITY REQUIREMENTS
 * Sharp focus on the product
 * Natural, consistent lighting
 * Realistic fabric texture — NOT plastic or silk unless the swatch shows that
-* 1024x1024 resolution
+* ${resolution} resolution
 
 Generate the image now.`;
 }
@@ -999,15 +1002,16 @@ export function buildPromptForMode(
   colorDescription: string | null,
   shotType: string,
   isDarkSwatch: boolean = false,
-  qaFeedback?: string | null
+  qaFeedback?: string | null,
+  resolution: string = '1024x1024'
 ): string {
   switch (mode) {
     case 'edit':
-      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback);
+      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution);
     case 'reference':
-      return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback);
+      return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution);
     case 'from_scratch':
-      return buildFromScratchPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback);
+      return buildFromScratchPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution);
   }
 }
 

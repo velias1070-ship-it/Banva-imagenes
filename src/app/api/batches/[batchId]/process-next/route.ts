@@ -9,6 +9,7 @@ import {
   buildPromptForMode,
 } from '@/lib/category-strategy';
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
+import { getProjectSettings } from '@/lib/project-settings';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -144,9 +145,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   const project = batch.project;
   const category = project?.category || 'textile';
   const strategy = getCategoryStrategy(category);
+  const projectSettings = getProjectSettings(project?.metadata as Record<string, unknown> | null);
+  const maxRetries = projectSettings.qa.max_retries;
 
-  // ── ANTI-LOOP: if attempt >= MAX_QA_RETRIES, flag directly ──
-  if (job.attempt >= MAX_QA_RETRIES) {
+  // ── ANTI-LOOP: if attempt >= max retries, flag directly ──
+  if (job.attempt >= maxRetries) {
     console.log(
       `[process-next] Job ${job.id.substring(0, 8)} — attempt ${job.attempt} >= max ${MAX_QA_RETRIES}, flagging directly`
     );
@@ -154,7 +157,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       .from('generation_jobs')
       .update({
         status: 'flagged',
-        error_message: `Max QA retries (${MAX_QA_RETRIES}) reached without approval`,
+        error_message: `Max QA retries (${maxRetries}) reached without approval`,
         updated_at: new Date().toISOString(),
       })
       .eq('id', job.id);
@@ -229,8 +232,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     }
 
     // ── Determine effective generation mode ──
-    const effectiveMode = getEffectiveMode(strategy, job.attempt);
-    const temperature = getEffectiveTemperature(strategy, effectiveMode, job.attempt);
+    const effectiveMode = projectSettings.generation.mode !== 'auto'
+      ? projectSettings.generation.mode
+      : getEffectiveMode(strategy, job.attempt);
+    const baseTemperature = getEffectiveTemperature(strategy, effectiveMode, job.attempt);
+    // Use project temperature override if custom settings exist, otherwise use strategy default
+    const temperature = projectSettings.generation.temperature !== 0.2
+      ? projectSettings.generation.temperature
+      : baseTemperature;
 
     console.log(
       `[process-next] Job ${job.id.substring(0, 8)} — ` +
@@ -252,7 +261,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatchColorDescription,
       job.hero_shot.shot_type,
       darkSwatch,
-      qaFeedback
+      qaFeedback,
+      projectSettings.generation.resolution
     );
 
     const promptMetadata: Record<string, unknown> = {

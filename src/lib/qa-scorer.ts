@@ -9,6 +9,7 @@ import { analyzeImages } from '@/lib/gemini/client';
 import { computeWeightedScore, determineAction, type QAAction } from '@/lib/qa-criteria';
 import type { QADetail } from '@/types/database';
 import type { CategoryStrategy } from '@/lib/category-strategy';
+import type { ProjectSettings } from '@/lib/project-settings';
 
 export interface ScoreImageRequest {
   generatedBase64: string;
@@ -21,6 +22,7 @@ export interface ScoreImageRequest {
   swatchName: string;
   strategy: CategoryStrategy;
   attempt: number;
+  projectSettings?: ProjectSettings; // Per-project QA overrides
 }
 
 export interface ScoreImageResult {
@@ -195,8 +197,8 @@ export async function scoreImage(request: ScoreImageRequest): Promise<ScoreImage
     throw new Error(`QA analysis returned unparseable response: ${result.textResponse?.substring(0, 200)}`);
   }
 
-  const score = computeWeightedScore(parsed.detail);
-  const action = determineAction(score, parsed.detail, request.strategy, request.attempt);
+  const score = computeWeightedScore(parsed.detail, request.projectSettings);
+  const action = determineAction(score, parsed.detail, request.strategy, request.attempt, request.projectSettings);
 
   console.log(
     `[qa-scorer] Score: ${(score * 100).toFixed(0)}% | ` +
