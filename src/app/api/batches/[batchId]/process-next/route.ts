@@ -44,13 +44,29 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     shouldChain = true; // still try to chain to the next job
   }
 
-  // Use after() for fire-and-forget chain continuation
-  // CRITICAL: Do NOT await fetch responses — the next invocation takes ~20s
-  // to respond (it does Gemini work before responding). Awaiting would keep
-  // after() alive too long and Vercel kills it, breaking the chain.
+  // ── DUAL-DISPATCH: Fire chain triggers BEFORE response (primary) ──
+  // fetch() without await dispatches the HTTP request immediately via the
+  // underlying TCP layer. Even if this function instance is killed right after
+  // returning the response, the receiving Vercel function will already be
+  // invoked. The chain handlers are idempotent (they pick the next pending
+  // job), so duplicate invocations from after() are harmless.
+  const baseUrl = getBaseUrl();
+  if (shouldTriggerQA) {
+    fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => {});
+  }
+  if (shouldChain) {
+    fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => {});
+  }
+
+  // ── BACKUP: Also fire in after() in case the above didn't dispatch ──
   if (shouldChain || shouldTriggerQA) {
     after(async () => {
-      const baseUrl = getBaseUrl();
       if (shouldTriggerQA) {
         fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
           method: 'POST',
@@ -63,7 +79,6 @@ export async function POST(_request: NextRequest, context: RouteContext) {
           headers: { 'Content-Type': 'application/json' },
         }).catch(() => {});
       }
-      // Brief delay to ensure HTTP requests are dispatched before cleanup
       await new Promise(r => setTimeout(r, 1500));
     });
   }

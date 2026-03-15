@@ -33,16 +33,22 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     shouldChain = true; // still try next QA job
   }
 
-  // Use after() for fire-and-forget chain continuation
-  // CRITICAL: Do NOT await fetch responses — the next invocation takes ~10-20s.
+  // ── DUAL-DISPATCH: Fire chain trigger BEFORE response (primary) ──
+  const baseUrl = getBaseUrl();
+  if (shouldChain) {
+    fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => {});
+  }
+
+  // ── BACKUP: Also fire in after() ──
   if (shouldChain) {
     after(async () => {
-      const baseUrl = getBaseUrl();
       fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       }).catch(() => {});
-      // Brief delay to ensure HTTP request is dispatched before cleanup
       await new Promise(r => setTimeout(r, 1500));
     });
   }

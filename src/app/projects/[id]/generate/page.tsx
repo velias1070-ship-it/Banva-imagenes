@@ -93,38 +93,40 @@ export default function GeneratePage() {
     return () => clearInterval(interval);
   }, [batch, fetchData]);
 
-  // Auto-healing: call health check every 90s to relaunch broken chains
+  // Auto-healing: call per-batch health check every 30s to relaunch broken chains
+  // The health endpoint detects stale jobs (>60s without update) and relaunches chains.
+  // Combined with dual-dispatch in process-next/process-qa, this ensures chains never stay broken.
   useEffect(() => {
     if (!batch || batch.status === 'completed' || batch.status === 'failed') return;
 
     const healthInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/cron/health-check?project_id=${id}`);
+        const res = await fetch(`/api/batches/${batch.id}/health`);
         if (res.ok) {
           const data = await res.json();
-          if (data.healed?.length > 0) {
-            console.log('[auto-heal] Chains relaunched:', data.healed);
+          if (data.actions?.length > 0) {
+            console.log('[auto-heal] Chains relaunched:', data.actions);
           }
         }
       } catch {
         // Silently ignore — health check is best-effort
       }
-    }, 90_000); // every 90 seconds
+    }, 30_000); // every 30 seconds
 
-    // Also run once immediately after 10s (catches early chain breaks)
+    // Also run once at 15s (catches early chain breaks)
     const initialTimeout = setTimeout(async () => {
       try {
-        await fetch(`/api/cron/health-check?project_id=${id}`);
+        await fetch(`/api/batches/${batch.id}/health`);
       } catch {
         // ignore
       }
-    }, 10_000);
+    }, 15_000);
 
     return () => {
       clearInterval(healthInterval);
       clearTimeout(initialTimeout);
     };
-  }, [batch, id]);
+  }, [batch]);
 
   const selectedCount = selectedHeroIds.size;
   const selectedSwatchCount = selectedSwatchIds.size;
