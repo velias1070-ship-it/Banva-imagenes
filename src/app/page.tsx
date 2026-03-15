@@ -26,7 +26,7 @@ export default async function Dashboard() {
 
   const totalGenerated = jobs?.length || 0;
   const approvedCount = jobs?.filter((j) => j.status === 'approved').length || 0;
-  const pendingCount = jobs?.filter((j) => ['pending', 'generating', 'qa_pending'].includes(j.status)).length || 0;
+  const pendingCount = jobs?.filter((j) => ['pending', 'generating', 'qa_pending', 'qa_processing'].includes(j.status)).length || 0;
 
   return (
     <div className="p-8">

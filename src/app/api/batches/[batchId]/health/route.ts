@@ -8,7 +8,10 @@ interface RouteContext {
 
 /**
  * Chain health check — detects stale jobs and relaunches broken chains.
- * Can be called manually or via Vercel Cron (every 5 min).
+ * Handles THREE stale statuses:
+ *   - generating: Gemini API timeout → reset to pending
+ *   - qa_pending: QA chain broke → relaunch QA
+ *   - qa_processing: QA function died mid-scoring → reset to qa_pending
  */
 export async function GET(_request: NextRequest, context: RouteContext) {
   const { batchId } = await context.params;
@@ -33,8 +36,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     });
   }
 
-  // Halted batches: still check for qa_pending jobs that need evaluation
-  // (already generated — no point wasting them)
+  // Halted batches: still check for qa_pending/qa_processing jobs
   const batchIsHalted = batch.status === 'halted';
 
   const staleThreshold = new Date(Date.now() - CHAIN_STALE_THRESHOLD_MS).toISOString();
@@ -46,7 +48,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     .eq('batch_id', batchId)
     .eq('status', 'generating')
     .lt('updated_at', staleThreshold)
-    .limit(5);
+    .limit(10);
 
   // Check for stale qa_pending jobs (QA chain might have died)
   const { data: staleQaPending } = await supabase
@@ -55,7 +57,16 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     .eq('batch_id', batchId)
     .eq('status', 'qa_pending')
     .lt('updated_at', staleThreshold)
-    .limit(5);
+    .limit(10);
+
+  // Check for stale qa_processing jobs (QA function died mid-scoring)
+  const { data: staleQaProcessing } = await supabase
+    .from('generation_jobs')
+    .select('id, status, updated_at')
+    .eq('batch_id', batchId)
+    .eq('status', 'qa_processing')
+    .lt('updated_at', staleThreshold)
+    .limit(10);
 
   // Check for pending jobs that should be processed
   const { count: pendingCount } = await supabase
@@ -70,25 +81,43 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
   const actions: string[] = [];
 
-  // Relaunch generation chain if stale generating jobs OR pending jobs exist
-  // (only for non-halted batches — halted batches don't regenerate)
-  if (!batchIsHalted) {
-    if ((staleGenerating?.length || 0) > 0) {
-      // Reset stale generating jobs back to pending
-      for (const job of staleGenerating || []) {
-        await supabase
-          .from('generation_jobs')
-          .update({
-            status: 'pending',
-            error_message: 'Reset by health check — stale generating',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', job.id);
-      }
-      actions.push(`Reset ${staleGenerating?.length} stale generating jobs to pending`);
+  // ── RESET stale qa_processing → qa_pending ──
+  // These are jobs where the QA function died mid-scoring
+  if ((staleQaProcessing?.length || 0) > 0) {
+    for (const job of staleQaProcessing || []) {
+      await supabase
+        .from('generation_jobs')
+        .update({
+          status: 'qa_pending',
+          error_message: 'Reset by health check — stale qa_processing',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id);
     }
+    actions.push(`Reset ${staleQaProcessing?.length} stale qa_processing → qa_pending`);
+  }
 
-    if ((staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0) {
+  // ── RESET stale generating → pending ──
+  if (!batchIsHalted && (staleGenerating?.length || 0) > 0) {
+    for (const job of staleGenerating || []) {
+      await supabase
+        .from('generation_jobs')
+        .update({
+          status: 'pending',
+          error_message: 'Reset by health check — stale generating',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id);
+    }
+    actions.push(`Reset ${staleGenerating?.length} stale generating → pending`);
+  } else if (batchIsHalted && (staleGenerating?.length || 0) > 0) {
+    actions.push(`Batch halted — ${staleGenerating?.length} stale generating jobs skipped`);
+  }
+
+  // ── RELAUNCH generation chain if needed ──
+  if (!batchIsHalted) {
+    const needsGeneration = (staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0;
+    if (needsGeneration) {
       try {
         await fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
           method: 'POST',
@@ -99,18 +128,17 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         actions.push(`Failed to relaunch generation: ${err}`);
       }
     }
-  } else if ((staleGenerating?.length || 0) > 0) {
-    actions.push(`Batch halted — ${staleGenerating?.length} stale generating jobs skipped`);
   }
 
-  // Relaunch QA chain if stale qa_pending jobs exist
-  if ((staleQaPending?.length || 0) > 0) {
+  // ── RELAUNCH QA chain if stale qa_pending OR recovered qa_processing ──
+  const needsQA = (staleQaPending?.length || 0) > 0 || (staleQaProcessing?.length || 0) > 0;
+  if (needsQA) {
     try {
       await fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
-      actions.push(`Relaunched QA chain — ${staleQaPending?.length} stale qa_pending jobs`);
+      actions.push(`Relaunched QA chain — ${(staleQaPending?.length || 0)} stale qa_pending, ${(staleQaProcessing?.length || 0)} recovered qa_processing`);
     } catch (err) {
       actions.push(`Failed to relaunch QA: ${err}`);
     }
@@ -133,6 +161,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     job_counts: counts,
     stale_generating: staleGenerating?.length || 0,
     stale_qa_pending: staleQaPending?.length || 0,
+    stale_qa_processing: staleQaProcessing?.length || 0,
     pending: pendingCount || 0,
     actions,
     checked_at: new Date().toISOString(),

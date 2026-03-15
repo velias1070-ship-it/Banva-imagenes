@@ -124,23 +124,23 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // No more pending jobs — generation chain complete
     console.log('[process-next] No pending jobs for batch:', batchId);
 
-    // Safety net: ensure QA chain is running for any remaining qa_pending
-    const { count: qaPendingCount } = await supabase
+    // Safety net: ensure QA chain is running for any remaining qa_pending or qa_processing
+    const { count: qaNeededCount } = await supabase
       .from('generation_jobs')
       .select('*', { count: 'exact', head: true })
       .eq('batch_id', batchId)
-      .eq('status', 'qa_pending');
+      .in('status', ['qa_pending', 'qa_processing']);
 
-    if (qaPendingCount && qaPendingCount > 0) {
-      console.log(`[process-next] Safety net: ${qaPendingCount} qa_pending — ensuring QA chain`);
+    if (qaNeededCount && qaNeededCount > 0) {
+      console.log(`[process-next] Safety net: ${qaNeededCount} qa_pending/qa_processing — ensuring QA chain`);
       return { chain: false, triggerQA: true };
     } else {
-      // Check if truly done (no generating, no qa_pending, no pending)
+      // Check if truly done (no generating, no qa_pending, no qa_processing, no pending)
       const { count: activeCount } = await supabase
         .from('generation_jobs')
         .select('*', { count: 'exact', head: true })
         .eq('batch_id', batchId)
-        .in('status', ['generating', 'qa_pending', 'pending']);
+        .in('status', ['generating', 'qa_pending', 'qa_processing', 'pending']);
 
       if (!activeCount || activeCount === 0) {
         console.log('[process-next] All jobs done for batch:', batchId);

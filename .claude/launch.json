@@ -3,8 +3,7 @@
   "configurations": [
     {
       "name": "banva-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "command": "PATH=/usr/local/bin:$PATH npm run dev",
       "port": 3000
     }
   ]

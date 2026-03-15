@@ -74,12 +74,35 @@ export async function GET(request: NextRequest) {
       .eq('status', 'qa_pending')
       .lt('updated_at', staleThreshold);
 
+    // Check for stale qa_processing jobs (QA function died mid-scoring)
+    const { data: staleQaProcessing } = await supabase
+      .from('generation_jobs')
+      .select('id')
+      .eq('batch_id', batch.id)
+      .eq('status', 'qa_processing')
+      .lt('updated_at', staleThreshold);
+
     // Check for pending jobs
     const { count: pendingCount } = await supabase
       .from('generation_jobs')
       .select('*', { count: 'exact', head: true })
       .eq('batch_id', batch.id)
       .eq('status', 'pending');
+
+    // Reset stale qa_processing → qa_pending
+    if ((staleQaProcessing?.length || 0) > 0) {
+      for (const job of staleQaProcessing!) {
+        await supabase
+          .from('generation_jobs')
+          .update({
+            status: 'qa_pending',
+            error_message: 'Reset by cron health check — stale qa_processing',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', job.id);
+      }
+      actions.push(`Reset ${staleQaProcessing!.length} stale qa_processing → qa_pending`);
+    }
 
     // Reset stale generating → pending
     if (!batchIsHalted && (staleGenerating?.length || 0) > 0) {
@@ -109,14 +132,15 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Relaunch QA chain
-    if ((staleQaPending?.length || 0) > 0) {
+    // Relaunch QA chain (for stale qa_pending OR recovered qa_processing)
+    const needsQARelaunch = (staleQaPending?.length || 0) > 0 || (staleQaProcessing?.length || 0) > 0;
+    if (needsQARelaunch) {
       try {
         await fetch(`${baseUrl}/api/batches/${batch.id}/process-qa`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         });
-        actions.push(`Relaunched QA chain (${staleQaPending!.length} stale qa_pending)`);
+        actions.push(`Relaunched QA chain (${staleQaPending?.length || 0} stale qa_pending, ${staleQaProcessing?.length || 0} recovered qa_processing)`);
       } catch (err) {
         actions.push(`Failed to relaunch QA: ${err}`);
       }

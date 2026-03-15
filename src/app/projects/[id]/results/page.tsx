@@ -72,13 +72,15 @@ export default function ResultsPage() {
 
   const filtered = activeTab === 'all'
     ? jobs
-    : jobs.filter((j) => j.status === activeTab);
+    : activeTab === 'qa_pending'
+      ? jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing')
+      : jobs.filter((j) => j.status === activeTab);
 
   const approvedCount = jobs.filter((j) => j.status === 'approved').length;
   const retryCount = jobs.filter((j) => j.status === 'retry').length;
   const flaggedCount = jobs.filter((j) => j.status === 'flagged').length;
   const errorCount = jobs.filter((j) => j.status === 'error').length;
-  const qaPendingCount = jobs.filter((j) => j.status === 'qa_pending').length;
+  const qaPendingCount = jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing').length;
 
   // Group filtered jobs by swatch
   const groupedBySwatch = useMemo<SwatchGroup[]>(() => {
@@ -157,7 +159,7 @@ export default function ResultsPage() {
             const allJobs = await updated.json();
             const thisJob = allJobs.find((j: JobWithRelations) => j.id === jobId);
             setJobs(allJobs);
-            if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending') {
+            if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending' && thisJob.status !== 'qa_processing') {
               clearInterval(poll);
               if (thisJob.status === 'approved') {
                 toast.success('Imagen regenerada y aprobada por QA');
@@ -225,6 +227,7 @@ export default function ResultsPage() {
       case 'error':
         return <XCircle className="h-4 w-4 text-red-500" />;
       case 'qa_pending':
+      case 'qa_processing':
         return <RotateCcw className="h-4 w-4 text-purple-500 animate-spin" />;
       case 'generating':
         return <RotateCcw className="h-4 w-4 text-blue-500 animate-spin" />;
@@ -284,7 +287,7 @@ export default function ResultsPage() {
                 )}
               </span>
             )}
-            {job.status === 'qa_pending' && (
+            {(job.status === 'qa_pending' || job.status === 'qa_processing') && (
               <span className="text-xs text-purple-600 flex items-center gap-1">
                 <RotateCcw className="h-3 w-3 animate-spin" />
                 QA...
@@ -304,13 +307,13 @@ export default function ResultsPage() {
               Generando...
             </div>
           )}
-          {job.status === 'qa_pending' && (
+          {(job.status === 'qa_pending' || job.status === 'qa_processing') && (
             <div className="flex items-center gap-2 text-xs text-purple-600">
               <RotateCcw className="h-3 w-3 animate-spin" />
               QA en progreso...
             </div>
           )}
-          {job.status !== 'pending' && job.status !== 'generating' && job.status !== 'qa_pending' && (
+          {job.status !== 'pending' && job.status !== 'generating' && job.status !== 'qa_pending' && job.status !== 'qa_processing' && (
             <div className="flex gap-1.5">
               {job.output_storage_path && (
                 <Button

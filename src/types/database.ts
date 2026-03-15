@@ -1,7 +1,7 @@
 export type ProjectStatus = 'draft' | 'active' | 'archived';
 export type ShotType = 'main' | 'lifestyle' | 'detail' | 'doblada' | 'flatlay';
 export type BatchStatus = 'pending' | 'generating' | 'qa' | 'retrying' | 'completed' | 'failed' | 'halted';
-export type JobStatus = 'pending' | 'prompt_built' | 'generating' | 'qa_pending' | 'approved' | 'retry' | 'flagged' | 'error';
+export type JobStatus = 'pending' | 'prompt_built' | 'generating' | 'qa_pending' | 'qa_processing' | 'approved' | 'retry' | 'flagged' | 'error';
 
 export interface Project {
   id: string;
