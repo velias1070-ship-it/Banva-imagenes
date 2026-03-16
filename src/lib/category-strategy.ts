@@ -35,8 +35,8 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
   quilts: {
     key: 'quilts',
     label: 'Quilts',
-    generation_mode: 'reference',
-    retry_escalation: 'from_scratch',
+    generation_mode: 'edit',
+    retry_escalation: 'edit',
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
@@ -84,7 +84,7 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       doblada: `the quilt neatly folded on a clean white surface, showing the quilting pattern and fabric texture. Folded in thirds or quarters. Clean studio lighting with subtle soft shadow underneath. No background distractions.`,
       default: `a professional product photograph of a quilt/bedspread on a bed in a clean, well-lit bedroom. The quilt is the main subject, with matching pillowcases. Neutral, minimal decor. Soft natural lighting.`,
     },
-    temperature: 0.3,
+    temperature: 0.4,
     qa_focus_areas: [
       'quilting stitch pattern must match swatch exactly',
       'no pattern from hero bleeding into output',
