@@ -697,22 +697,11 @@ export function buildEditPrompt(
   qaFeedback?: string | null,
   resolution: string = '1024x1024'
 ): string {
-  const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = isDarkSwatch
-    ? `\nLa muestra es MUY OSCURA — el textil generado debe ser igual de oscuro, no lo aclares.`
-    : '';
-  const qaNote = qaFeedback
-    ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}" — corrige este problema específico.`
-    : '';
-  const colorNote = colorDescription
-    ? `\nEl color objetivo es "${colorDescription}" — debe coincidir exactamente.`
+    ? ` La muestra es muy oscura, no aclares el resultado.`
     : '';
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}). Solo cambia la tela/textil del producto (${strategy.label}), todo lo demás debe quedar exactamente igual — misma persona, muebles, ángulo de cámara, iluminación, textos, íconos y decoración.
-
-${strategy.prompt.what_to_change}${colorNote}${darkNote}${qaNote}
-
-Genera una imagen fotorrealista de ${resolution}.`;
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
