@@ -37,16 +37,15 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     label: 'Quilts',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: true, flatten_hero: false },
+    preprocessing: { crop_swatch: false, flatten_hero: false },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.`,
 
-      what_to_change: `Cambia TODA la tela del quilt/cobertor y las fundas de almohada. El diseño completo (patrón de costura, color, textura) debe venir de la imagen 2. NO conserves el patrón del quilt original — reemplázalo completamente.
-No cambies: cama, muebles, persona, ropa, textos.`,
+      what_to_change: `Solo cambia el diseño del cobertor y las fundas de almohada, todo lo demás debe quedar exactamente igual.`,
 
-      final_check: `Verifica: ¿el quilt tiene el diseño de la imagen 2 y NO el patrón original? ¿Las fundas de almohada también coinciden con la imagen 2?`,
+      final_check: `Verifica: ¿el quilt tiene el diseño de la imagen 2 y NO el patrón original?`,
 
       dark_swatch_note: `La muestra es MUY OSCURA — el quilt generado debe ser igual de oscuro. No lo aclares.`,
     },
