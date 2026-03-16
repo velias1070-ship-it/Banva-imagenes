@@ -37,7 +37,7 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     label: 'Quilts',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: false, flatten_hero: true },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.

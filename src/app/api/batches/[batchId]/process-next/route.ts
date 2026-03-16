@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -263,6 +263,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     );
 
     // ── Preprocessing ──
+    if (strategy.preprocessing.flatten_hero) {
+      const flattenedHero = await flattenHeroEmboss(heroBuffer);
+      heroBase64 = flattenedHero.toString('base64');
+      console.log(`[process-next] Flattened hero emboss for ${category}`);
+    }
     if (strategy.preprocessing.crop_swatch) {
       const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
       swatchBase64 = croppedSwatch.toString('base64');
@@ -287,6 +292,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       temperature,
       dark_swatch: darkSwatch,
       crop_swatch: strategy.preprocessing.crop_swatch,
+      flatten_hero: strategy.preprocessing.flatten_hero,
       swatch_color: swatchColorDescription || null,
       qa_feedback_used: qaFeedback ? true : false,
     };
