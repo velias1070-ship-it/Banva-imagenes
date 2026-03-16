@@ -95,34 +95,37 @@ export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
  * Reduces deep shadow channels that Gemini interprets as fixed geometry,
  * allowing it to replace the quilting stitch pattern.
  *
- * V2 — Aggressive parameters for deeply embossed quilts (mandala/paisley):
- * Process: lift darks (0->60) + gaussian blur (3.5) + reduce contrast (0.60)
- * V1 params (blur 1.5, contrast 0.75) were too subtle for deep emboss.
+ * V3 — Very aggressive: blur 5.0 + contrast 0.50 + re-sharpen scene edges.
+ * The high blur destroys emboss texture, then selective sharpen restores
+ * scene clarity (model, furniture, text) without reviving the emboss.
  *
  * IMPORTANT: Only modify the HERO (Image 1). Never the swatch.
  */
 export async function flattenHeroEmboss(imageBuffer: Buffer): Promise<Buffer> {
-  // Step 1: Resize if too large
-  // Step 2: Lift darks — linear(a=0.765, b=60) maps 0->60, 255->255
-  //         Aggressively reduces shadow depth in embossed quilting channels
+  // Step 1: Resize + aggressively lift darks — maps 0->80, 255->255
+  //         a = (255 - 80) / 255 = 0.686, b = 80
   const lifted = await sharp(imageBuffer)
     .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
-    .linear(0.765, 60)
+    .linear(0.686, 80)
     .toBuffer();
 
-  // Step 3: Gaussian blur (3.5) to strongly smooth embossed edge transitions
-  //         V1 used 1.5 which was too subtle for deep mandala/paisley emboss
+  // Step 2: Heavy gaussian blur (5.0) to destroy embossed relief texture
   const blurred = await sharp(lifted)
-    .blur(3.5)
+    .blur(5.0)
     .toBuffer();
 
-  // Step 4: Reduce contrast — linear(a=0.60, b=51) brings highlights/shadows much closer
-  //         51 = 255 * (1 - 0.60) / 2, centers the midpoint
-  //         V1 used 0.75 which preserved too much emboss relief
+  // Step 3: Reduce contrast — linear(0.50, 64) compresses range to 50%
+  //         64 = 255 * (1 - 0.50) / 2
   const flattened = await sharp(blurred)
-    .linear(0.60, 51)
+    .linear(0.50, 64)
     .toBuffer();
 
-  console.log('[image-processing] Flattened hero emboss V2: lift darks 0->60 + blur 3.5 + contrast 0.60');
-  return flattened;
+  // Step 4: Re-sharpen scene edges (model, furniture, text) without reviving emboss
+  //         Low sigma (1.0) only sharpens broad edges, not fine texture
+  const sharpened = await sharp(flattened)
+    .sharpen({ sigma: 1.0, m1: 1.5, m2: 0.5 })
+    .toBuffer();
+
+  console.log('[image-processing] Flattened hero emboss V3: lift 0->80 + blur 5.0 + contrast 0.50 + re-sharpen');
+  return sharpened;
 }
