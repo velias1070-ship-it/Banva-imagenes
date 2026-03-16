@@ -95,31 +95,34 @@ export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
  * Reduces deep shadow channels that Gemini interprets as fixed geometry,
  * allowing it to replace the quilting stitch pattern.
  *
- * Process: lift darks (0->40) + gaussian blur (1.5) + reduce contrast (0.75)
- * Validated on PIL equivalent: img.point(lambda p: int(p * 0.843 + 40))
+ * V2 — Aggressive parameters for deeply embossed quilts (mandala/paisley):
+ * Process: lift darks (0->60) + gaussian blur (3.5) + reduce contrast (0.60)
+ * V1 params (blur 1.5, contrast 0.75) were too subtle for deep emboss.
  *
  * IMPORTANT: Only modify the HERO (Image 1). Never the swatch.
  */
 export async function flattenHeroEmboss(imageBuffer: Buffer): Promise<Buffer> {
   // Step 1: Resize if too large
-  // Step 2: Lift darks — linear(a=0.843, b=40) maps 0->40, 255->255
-  //         This reduces shadow depth in embossed quilting channels
+  // Step 2: Lift darks — linear(a=0.765, b=60) maps 0->60, 255->255
+  //         Aggressively reduces shadow depth in embossed quilting channels
   const lifted = await sharp(imageBuffer)
     .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
-    .linear(0.843, 40)
+    .linear(0.765, 60)
     .toBuffer();
 
-  // Step 3: Gaussian blur to soften embossed edge transitions
+  // Step 3: Gaussian blur (3.5) to strongly smooth embossed edge transitions
+  //         V1 used 1.5 which was too subtle for deep mandala/paisley emboss
   const blurred = await sharp(lifted)
-    .blur(1.5)
+    .blur(3.5)
     .toBuffer();
 
-  // Step 4: Reduce contrast — linear(a=0.75, b=32) brings highlights/shadows closer
-  //         32 = 255 * (1 - 0.75) / 2, centers the midpoint
+  // Step 4: Reduce contrast — linear(a=0.60, b=51) brings highlights/shadows much closer
+  //         51 = 255 * (1 - 0.60) / 2, centers the midpoint
+  //         V1 used 0.75 which preserved too much emboss relief
   const flattened = await sharp(blurred)
-    .linear(0.75, 32)
+    .linear(0.60, 51)
     .toBuffer();
 
-  console.log('[image-processing] Flattened hero emboss: lift darks + blur 1.5 + contrast 0.75');
+  console.log('[image-processing] Flattened hero emboss V2: lift darks 0->60 + blur 3.5 + contrast 0.60');
   return flattened;
 }

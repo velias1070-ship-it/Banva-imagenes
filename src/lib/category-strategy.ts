@@ -43,7 +43,7 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.`,
 
-      what_to_change: `Solo cambia el diseño del cobertor y las fundas de almohada. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
+      what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
 
       final_check: `Verifica: ¿el quilt tiene el diseño de la imagen 2 y NO el patrón original?`,
 
