@@ -43,35 +43,12 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.`,
 
-      what_to_change: `What to change — BOTH color AND quilting stitch pattern:
-* The QUILT / BED COVER -> apply BOTH the COLOR and the QUILTING/STITCHING PATTERN from the swatch reference
-* The PILLOWCASES -> apply BOTH the COLOR and the QUILTING/STITCHING PATTERN from the swatch reference
+      what_to_change: `Cambia TODA la tela del quilt/cobertor y las fundas de almohada. El diseño completo (patrón de costura, color, textura) debe venir de la imagen 2. NO conserves el patrón del quilt original — reemplázalo completamente.
+No cambies: cama, muebles, persona, ropa, textos.`,
 
-IMPORTANT — The quilting stitch pattern (the embossed/raised design stitched into the fabric) is part of the product design and MUST match the swatch exactly.
-* If the original quilt has a MANDALA/MEDALLION quilting pattern but the swatch has a BASKET WEAVE/HERRINGBONE pattern -> the output MUST show BASKET WEAVE/HERRINGBONE
-* If the original quilt has a GEOMETRIC pattern but the swatch has FLORAL -> the output MUST show FLORAL
-* Do NOT keep the original quilting stitch pattern — it must be REPLACED with the swatch's quilting stitch pattern
-* The quilting pattern is as important as the color — both must come from the swatch
+      final_check: `Verifica: ¿el quilt tiene el diseño de la imagen 2 y NO el patrón original? ¿Las fundas de almohada también coinciden con la imagen 2?`,
 
-The quilt and pillowcases share the same color tones. Apply them accordingly.
-
-DO NOT change:
-* The bed surface UNDERNEATH the quilt (mattress, fitted sheet, bed base) — keep as-is
-* Non-textile elements (walls, furniture, floor, props, headboard)
-* Persons, hands, or clothing`,
-
-      final_check: `Before outputting, verify:
-1. Does the QUILT/BED COVER COLOR match the swatch's quilt color?
-2. Does the QUILT/BED COVER QUILTING STITCH PATTERN match the swatch's quilting stitch pattern?
-3. Do the PILLOWCASES match the swatch's pillowcase color AND quilting pattern?
-4. Did I accidentally keep the original quilting pattern instead of replacing it? If yes -> FIX IT.
-5. Did I copy any part of the reference's SCENE instead of just the fabric? If yes -> FIX IT.
-6. Did I accidentally change the surface UNDERNEATH the quilt? It should be unchanged.`,
-
-      dark_swatch_note: `On dark fabrics, quilting/stitching patterns are naturally BARELY VISIBLE — this is correct and intentional.
-The output fabric color MUST be TRUE BLACK / very dark — match the swatch's darkness exactly.
-Do NOT lighten the fabric to make the pattern visible — dark fabric stays dark.
-The quilting texture should be EXTREMELY SUBTLE — only visible as slight shadows/highlights at fabric folds.`,
+      dark_swatch_note: `La muestra es MUY OSCURA — el quilt generado debe ser igual de oscuro. No lo aclares.`,
     },
     reference_instruction: `Image 1 shows a REFERENCE COMPOSITION — use its camera angle, scene layout, and overall arrangement as a GUIDE for generating a NEW image.
 Do NOT preserve Image 1's fabric texture or quilting pattern.
@@ -723,13 +700,13 @@ export function buildEditPrompt(
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = isDarkSwatch
-    ? `\n\nThe swatch "${swatchName}" is VERY DARK — the output textile MUST be equally dark. Do NOT lighten.`
+    ? `\nLa muestra es MUY OSCURA — el textil generado debe ser igual de oscuro, no lo aclares.`
     : '';
   const qaNote = qaFeedback
-    ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
+    ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}" — corrige este problema específico.`
     : '';
   const colorNote = colorDescription
-    ? `\nThe target color is "${colorDescription}" — the output MUST match this exact color, not a neutral/muted version.`
+    ? `\nEl color objetivo es "${colorDescription}" — debe coincidir exactamente.`
     : '';
 
   return `Necesito la imagen 1 pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}). Solo cambia la tela/textil del producto (${strategy.label}), todo lo demás debe quedar exactamente igual — misma persona, muebles, ángulo de cámara, iluminación, textos, íconos y decoración.
