@@ -706,81 +706,10 @@ function getShotComposition(strategy: CategoryStrategy, shotType: string): strin
     || 'a professional product photograph. Soft, natural lighting.';
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dark swatch note builder
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildDarkNote(
-  strategy: CategoryStrategy,
-  swatchName: string,
-  colorDescription: string | null,
-  isDark: boolean
-): string {
-  if (!isDark) return '';
-
-  const colorInfo = colorDescription ? ` (${colorDescription})` : '';
-
-  return `
-
-===================================================
-CRITICAL — DARK FABRIC HANDLING
-===================================================
-The swatch "${swatchName}"${colorInfo} is a VERY DARK fabric.
-${strategy.prompt.dark_swatch_note}
-`;
-}
+// (Dark note, color emphasis, and QA feedback are now inline in the prompt builders)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Color emphasis builder — ensures Gemini matches the swatch color precisely
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildColorEmphasis(colorDescription: string | null): string {
-  if (colorDescription) {
-    return `
-
-===================================================
-COLOR MATCHING — CRITICAL PRIORITY
-===================================================
-The target color for this product is: "${colorDescription}"
-The generated product MUST have this EXACT color.
-COMMON ERROR: Generating neutral beige/cream/white tones when the swatch is actually a specific color.
-If the swatch is "${colorDescription}", your output MUST be "${colorDescription}" — NOT beige, NOT cream, NOT a muted version.
-Before finalizing, compare your output's color against the swatch — they must match in hue, saturation, and brightness.`;
-  }
-
-  return `
-
-===================================================
-COLOR MATCHING — CRITICAL PRIORITY
-===================================================
-BEFORE generating, carefully analyze the swatch image to identify its EXACT dominant color.
-The generated product MUST match this color precisely — same hue, same saturation, same brightness.
-COMMON ERROR: Defaulting to neutral beige/cream/white tones when the swatch actually shows a distinct color (green, blue, pink, etc.).
-If the swatch shows a colored fabric, your output MUST show that SAME color — NOT a neutral tone.
-Before finalizing, compare your output's color against the swatch — they must match.`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// QA feedback builder — injects previous attempt feedback into retry prompts
-// ─────────────────────────────────────────────────────────────────────────────
-
-function buildQAFeedbackNote(qaFeedback: string | null | undefined): string {
-  if (!qaFeedback) return '';
-
-  return `
-
-===================================================
-⚠️ PREVIOUS ATTEMPT FAILED — FIX THESE ISSUES
-===================================================
-This is a RETRY. The previous generation was REJECTED for the following reason:
-"${qaFeedback}"
-You MUST fix this specific issue. Pay extra attention to the problem described above.
-If the feedback mentions wrong COLOR → double-check the swatch color and match it precisely.
-If the feedback mentions wrong PATTERN → look more carefully at the swatch pattern details.`;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Prompt builder: EDIT mode (hero + swatch, "edit Image 1")
+// Prompt builder: EDIT mode (hero + swatch — surgical swap)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function buildEditPrompt(
@@ -793,71 +722,21 @@ export function buildEditPrompt(
   resolution: string = '1024x1024'
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
-  const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
-  const colorEmphasis = buildColorEmphasis(colorDescription);
-  const qaNote = buildQAFeedbackNote(qaFeedback);
+  const darkNote = isDarkSwatch
+    ? `\n\nThe swatch "${swatchName}" is VERY DARK — the output textile MUST be equally dark. Do NOT lighten.`
+    : '';
+  const qaNote = qaFeedback
+    ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
+    : '';
+  const colorNote = colorDescription
+    ? `\nThe target color is "${colorDescription}" — the output MUST match this exact color, not a neutral/muted version.`
+    : '';
 
-  return `You are a photo editor specializing in textile product photography for e-commerce.
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}). Solo cambia la tela/textil del producto (${strategy.label}), todo lo demás debe quedar exactamente igual — misma persona, muebles, ángulo de cámara, iluminación, textos, íconos y decoración.
 
-IMAGE 1 (Hero Shot): The BASE photograph that you must EDIT. This is a ${strategy.label} product shown in a ${shotType} shot.
-IMAGE 2 (Swatch Reference): Shows the target color/pattern/design called "${swatchName}"${colorInfo}.
-CRITICAL: Image 2 may be a FULL PRODUCT PHOTO (complete scene with furniture, props, people) — NOT just a fabric closeup.
-You must EXTRACT ONLY the fabric's color, pattern, and surface texture from the TEXTILE PRODUCT visible in Image 2.
-COMPLETELY IGNORE Image 2's: composition, camera angle, scene, room, furniture, lighting setup, text overlays, props.
-You are using Image 2 ONLY as a color/pattern reference — nothing else.${colorEmphasis}${darkNote}${qaNote}
+${strategy.prompt.what_to_change}${colorNote}${darkNote}${qaNote}
 
-===================================================
-RULE #1 — COMPOSITION LOCK (HIGHEST PRIORITY)
-===================================================
-You are EDITING Image 1, not generating a new image. The output MUST be a faithful reproduction of Image 1 with ONLY the fabric patterns/colors changed.
-
-MANDATORY — preserve ALL of these EXACTLY from Image 1:
-* Camera angle (if top-down, output must be top-down; if angled, output must match the angle)
-* Framing and crop (same zoom level, same edges)
-* Product placement and arrangement (same position, rotation, overlap of items)
-* Number of items (if 2 pillows, output has exactly 2 pillows — not 1, not 3)
-* Lighting direction, shadows, and highlights
-* Any text, icons, infographic overlays
-* Any persons, furniture, props
-
-FORBIDDEN — do NOT do any of these:
-X Change camera angle
-X Add elements not in Image 1 (headboard, wall, extra items)
-X Remove elements that ARE in Image 1
-X Change the framing (wider/tighter crop)
-X Rearrange or reposition the products
-X Copy Image 2's SCENE or COMPOSITION — Image 2 is ONLY a color/pattern reference
-X If Image 1 is a close-up/detail shot, the output MUST remain a close-up/detail shot
-
-===================================================
-RULE #2 — WHAT TO CHANGE
-===================================================
-PRODUCT CONTEXT: ${strategy.prompt.product_context}
-
-${strategy.prompt.what_to_change}
-
-===================================================
-RULE #3 — PATTERN FIDELITY (from Image 2)
-===================================================
-Extract the fabric designs from Image 2 and apply them faithfully:
-* Copy the EXACT colors — do not shift hues or saturate differently
-* Copy the EXACT pattern type — if Image 2 has flowers only on borders, put flowers only on borders
-* Copy the EXACT quilting/stitching pattern — if Image 2 has a specific stitch, match it exactly
-* Copy the EXACT density — if the pattern is sparse, keep it sparse; if dense, keep it dense
-* Copy the EXACT motifs — do not simplify or invent new motifs
-* Do NOT keep Image 1's fabric pattern/texture — it must be FULLY REPLACED by Image 2's
-* Do NOT invent any design element not present in Image 2
-
-===================================================
-FINAL CHECK
-===================================================
-Before outputting, verify:
-1. Is the camera angle IDENTICAL to Image 1? (NOT Image 2's angle!)
-2. Are the products in the SAME position as Image 1?
-3. Did I add any elements that weren't in Image 1? If yes -> REMOVE IT.
-${strategy.prompt.final_check}
-
-Generate at ${resolution} resolution.`;
+Genera una imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -874,71 +753,23 @@ export function buildReferencePrompt(
   resolution: string = '1024x1024'
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
-  const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
-  const colorEmphasis = buildColorEmphasis(colorDescription);
-  const qaNote = buildQAFeedbackNote(qaFeedback);
+  const darkNote = isDarkSwatch
+    ? `\n\nThe swatch "${swatchName}" is VERY DARK — the output textile MUST be equally dark. Do NOT lighten.`
+    : '';
+  const qaNote = qaFeedback
+    ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
+    : '';
+  const colorNote = colorDescription
+    ? `\nThe target color is "${colorDescription}" — the output MUST match this exact color, not a neutral/muted version.`
+    : '';
 
-  const referenceInstruction = strategy.reference_instruction
-    || `Image 1 shows a REFERENCE COMPOSITION — use its camera angle, scene layout, and overall arrangement as a GUIDE for generating a NEW image.
-Do NOT preserve Image 1's textile patterns or colors. Generate new textiles using ONLY Image 2's fabric.`;
+  return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
 
-  return `You are a professional product photographer specializing in textile/bedding photography for e-commerce.
+Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
 
-IMAGE 1 (Reference Composition): A GUIDE for the scene composition — camera angle, layout, arrangement.
-IMAGE 2 (Swatch Reference): The target fabric called "${swatchName}"${colorInfo}. This defines the product's color, pattern, and texture.${colorEmphasis}${qaNote}
+${strategy.prompt.what_to_change}${colorNote}${darkNote}${qaNote}
 
-===================================================
-COMPOSITION REFERENCE (Image 1)
-===================================================
-${referenceInstruction}
-
-Use Image 1 as a GUIDE for:
-* Camera angle and perspective
-* Overall scene layout (bed arrangement, room setup, etc.)
-* Product placement and positioning
-* Number of items (pillows, layers, etc.)
-* General lighting mood
-
-===================================================
-PRODUCT — WHAT TO GENERATE
-===================================================
-PRODUCT CONTEXT: ${strategy.prompt.product_context}
-
-Generate a NEW photograph that:
-1. Matches Image 1's COMPOSITION (camera angle, layout, arrangement)
-2. Uses ONLY Image 2's fabric for ALL textile products (color, pattern, texture)
-
-${strategy.prompt.what_to_change}${darkNote}
-
-===================================================
-PATTERN FIDELITY (from Image 2) — HIGHEST PRIORITY
-===================================================
-The swatch IS the product. The generated image MUST be faithful to Image 2's fabric:
-* Copy the EXACT colors — same hue, same saturation, same brightness
-* Copy the EXACT pattern/design — every motif, every stitch, every detail
-* Copy the EXACT texture — if Image 2 shows a specific quilting pattern, match it exactly
-* Do NOT invent any design element not present in Image 2
-* Do NOT import any pattern from Image 1 — Image 1 is ONLY a composition guide
-
-===================================================
-FINAL CHECK
-===================================================
-Before outputting, verify:
-1. Does the composition roughly match Image 1's camera angle and layout?
-2. Does ALL textile product color/pattern come from Image 2 (NOT Image 1)?
-3. Did any of Image 1's original fabric pattern bleed into the output? If yes -> FIX IT.
-${strategy.prompt.final_check}
-
-===================================================
-QUALITY REQUIREMENTS
-===================================================
-* Professional e-commerce photography quality
-* Sharp focus on the product
-* Natural, consistent lighting
-* Realistic fabric texture
-* ${resolution} resolution
-
-Generate the image now.`;
+Genera una imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -956,39 +787,23 @@ export function buildFromScratchPrompt(
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const composition = getShotComposition(strategy, shotType);
-  const darkNote = buildDarkNote(strategy, swatchName, colorDescription, isDarkSwatch);
-  const colorEmphasis = buildColorEmphasis(colorDescription);
-  const qaNote = buildQAFeedbackNote(qaFeedback);
+  const darkNote = isDarkSwatch
+    ? `\nThe swatch is VERY DARK — the output textile MUST be equally dark. Do NOT lighten.`
+    : '';
+  const qaNote = qaFeedback
+    ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
+    : '';
+  const colorNote = colorDescription
+    ? `\nThe target color is "${colorDescription}" — match this exact color.`
+    : '';
 
-  return `You are a professional product photographer specializing in textile/bedding photography for e-commerce.
+  return `La imagen proporcionada es una muestra textil llamada "${swatchName}"${colorInfo}.
 
-TASK: Generate a high-quality product photograph of a ${strategy.label} product.
+Genera una foto profesional de producto e-commerce de un ${strategy.label}: ${composition}
 
-COMPOSITION: Create ${composition}
+El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues texto, marcas de agua ni logos.${colorNote}${darkNote}${qaNote}
 
-THE PROVIDED IMAGE is a fabric swatch reference called "${swatchName}"${colorInfo}.
-It shows the EXACT color and pattern that the product in your generated photo MUST have.${colorEmphasis}${qaNote}
-
-===================================================
-MANDATORY FABRIC REQUIREMENTS
-===================================================
-1. The product's COLOR must EXACTLY match the swatch image — same hue, same saturation, same brightness
-2. The product's PATTERN/DESIGN must EXACTLY match the swatch image — same motifs, same texture, same details
-3. ALL textile pieces in the scene must have the same color and pattern from the swatch
-4. Do NOT invent any pattern, color, or texture not present in the swatch
-5. Do NOT add any text, watermarks, or logos
-6. The fabric should look natural with realistic folds, shadows, and highlights${darkNote}
-
-===================================================
-QUALITY REQUIREMENTS
-===================================================
-* Professional e-commerce photography quality
-* Sharp focus on the product
-* Natural, consistent lighting
-* Realistic fabric texture — NOT plastic or silk unless the swatch shows that
-* ${resolution} resolution
-
-Generate the image now.`;
+Genera una imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
