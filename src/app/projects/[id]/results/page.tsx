@@ -18,6 +18,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 interface JobWithRelations {
   id: string;
   status: string;
+  attempt: number;
   output_storage_path: string | null;
   qa_score: number | null;
   qa_feedback: string | null;
@@ -40,8 +41,9 @@ interface SwatchGroup {
   jobs: JobWithRelations[];
 }
 
-function getStorageUrl(path: string): string {
-  return `${SUPABASE_URL}/storage/v1/object/public/images/${path}`;
+function getStorageUrl(path: string, attempt?: number): string {
+  const cacheBuster = attempt ? `?v=${attempt}` : '';
+  return `${SUPABASE_URL}/storage/v1/object/public/images/${path}${cacheBuster}`;
 }
 
 type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending';
@@ -243,7 +245,7 @@ export default function ResultsPage() {
         <div className="aspect-square bg-gray-100 relative">
           {job.output_storage_path ? (
             <img
-              src={getStorageUrl(job.output_storage_path)}
+              src={getStorageUrl(job.output_storage_path, job.attempt)}
               alt={job.swatch?.name || 'Generated image'}
               className="h-full w-full object-cover"
             />
