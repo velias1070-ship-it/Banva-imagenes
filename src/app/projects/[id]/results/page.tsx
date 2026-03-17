@@ -72,6 +72,31 @@ export default function ResultsPage() {
     fetchResults();
   }, [fetchResults]);
 
+  // ── AUTO-POLL + HEALTH CHECK: keeps chains alive while jobs are active ──
+  const hasActiveJobs = jobs.some((j) =>
+    ['pending', 'generating', 'qa_pending', 'qa_processing'].includes(j.status)
+  );
+
+  useEffect(() => {
+    if (!hasActiveJobs) return;
+
+    // Poll results every 10s
+    const pollInterval = setInterval(fetchResults, 10_000);
+
+    // Trigger health check every 30s to auto-recover stale chains
+    const healthInterval = setInterval(() => {
+      fetch(`/api/cron/health-check?project_id=${id}`).catch(() => {});
+    }, 30_000);
+
+    // Also trigger immediately on mount
+    fetch(`/api/cron/health-check?project_id=${id}`).catch(() => {});
+
+    return () => {
+      clearInterval(pollInterval);
+      clearInterval(healthInterval);
+    };
+  }, [hasActiveJobs, fetchResults, id]);
+
   const filtered = activeTab === 'all'
     ? jobs
     : activeTab === 'qa_pending'

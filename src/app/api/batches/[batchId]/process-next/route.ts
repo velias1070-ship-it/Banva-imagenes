@@ -107,6 +107,46 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     return { chain: false, triggerQA: false };
   }
 
+  // ── SELF-HEALING: Reset stale "generating" jobs (stuck > 90s) ──
+  const staleThreshold = new Date(Date.now() - 90_000).toISOString();
+  const { data: staleJobs } = await supabase
+    .from('generation_jobs')
+    .select('id')
+    .eq('batch_id', batchId)
+    .eq('status', 'generating')
+    .lt('updated_at', staleThreshold);
+
+  if (staleJobs?.length) {
+    for (const stale of staleJobs) {
+      await supabase
+        .from('generation_jobs')
+        .update({
+          status: 'pending',
+          error_message: 'Auto-recovered: stale generating job reset by process-next',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stale.id);
+    }
+    console.log(`[process-next] Self-healed: reset ${staleJobs.length} stale generating jobs`);
+  }
+
+  // ── SELF-HEALING: Trigger QA for stale qa_pending jobs (stuck > 90s) ──
+  const { count: staleQaCount } = await supabase
+    .from('generation_jobs')
+    .select('*', { count: 'exact', head: true })
+    .eq('batch_id', batchId)
+    .eq('status', 'qa_pending')
+    .lt('updated_at', staleThreshold);
+
+  if (staleQaCount && staleQaCount > 0) {
+    const baseUrlForQA = getBaseUrl();
+    fetch(`${baseUrlForQA}/api/batches/${batchId}/process-qa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => {});
+    console.log(`[process-next] Self-healed: triggered QA chain for ${staleQaCount} stale qa_pending jobs`);
+  }
+
   // Get ONE pending job with relations
   const { data: jobs } = await supabase
     .from('generation_jobs')
