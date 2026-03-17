@@ -46,6 +46,10 @@ function buildQAPrompt(
     ? `\nCATEGORY-SPECIFIC FOCUS AREAS:\n${strategy.qa_focus_areas.map((a) => `* ${a}`).join('\n')}`
     : '';
 
+  const learningsBlock = strategy.learnings?.length
+    ? `\n\nMANDATORY REJECTION RULES (learned from past failures — these are HARD REQUIREMENTS):\n${strategy.learnings.map((l) => `* REJECT IF: ${l}`).join('\n')}\nIf ANY of these rules are violated, set product_fidelity to 0.3 or lower.`
+    : '';
+
   return `You are a quality assurance expert for e-commerce product photography. Your job is to evaluate a generated image against its reference materials.
 
 You are given 3 images:
@@ -95,7 +99,7 @@ EVALUATE Image 1 across these 8 dimensions. Score each from 0.0 to 1.0:
    - 0.5 = PARTIAL — some elements from Image 3's fabric visible
    - 1.0 = FULL — Image 1 looks like Image 3 with no fabric change
    - This measures whether the generation FAILED to replace the original textile
-${focusAreas}
+${focusAreas}${learningsBlock}
 
 RESPOND WITH ONLY a valid JSON object (no markdown, no backticks, no explanation before or after):
 {

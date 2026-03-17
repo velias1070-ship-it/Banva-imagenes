@@ -25,6 +25,8 @@ export interface CategoryStrategy {
   shot_compositions: Record<string, string>;
   temperature?: number;
   qa_focus_areas?: string[];
+  /** Accumulated learnings from past failures — injected into BOTH generation prompts AND QA scoring */
+  learnings?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,6 +67,14 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       'quilting stitch pattern must match swatch exactly',
       'no pattern from hero bleeding into output',
       'pillowcases must also match swatch pattern and color',
+      'quilt MUST show visible quilted/stitched texture — if it looks like a smooth duvet/comforter, FAIL product_fidelity',
+      'any text in the image MUST be in Spanish — English text = ml_compliance 0.0',
+    ],
+    learnings: [
+      'El quilt DEBE mostrar textura acolchada visible (costuras en canales o diamante en la superficie de la tela). Si se ve como un edredón liso sin costuras, está MAL.',
+      'Todo texto visible en la imagen DEBE estar en español. Nunca generar texto en inglés.',
+      'El color base de la tela debe coincidir exactamente con el swatch — si el swatch es blanco, no generar crema/beige.',
+      'No conservar NINGÚN relieve, textura ni patrón acolchado del hero original (imagen 1). La textura viene 100% del swatch.',
     ],
   },
 
@@ -637,6 +647,11 @@ Do NOT lighten the fabric. Pattern/texture should be subtle on dark surfaces.`,
     },
     qa_focus_areas: [
       'all textile surfaces must match swatch',
+      'any visible text MUST be in Spanish — English text = ml_compliance 0.0',
+    ],
+    learnings: [
+      'Todo texto visible en la imagen DEBE estar en español. Este es un producto para MercadoLibre Chile. Nunca generar texto en inglés.',
+      'El color base de la tela debe coincidir exactamente con el swatch — no cambiar temperatura de color (blanco→crema, frío→cálido, etc.).',
     ],
   },
 };
@@ -647,16 +662,25 @@ Do NOT lighten the fabric. Pattern/texture should be subtle on dark surfaces.`,
 
 export function getCategoryStrategy(category: string): CategoryStrategy {
   const cat = category.toLowerCase();
+  const defaultLearnings = CATEGORY_STRATEGIES._default.learnings || [];
+
+  // Helper: merge default learnings into strategy
+  function withDefaultLearnings(strategy: CategoryStrategy): CategoryStrategy {
+    const combined = [...(strategy.learnings || []), ...defaultLearnings];
+    // Deduplicate
+    const unique = [...new Set(combined)];
+    return { ...strategy, learnings: unique };
+  }
 
   // Exact match first
   if (CATEGORY_STRATEGIES[cat]) {
-    return CATEGORY_STRATEGIES[cat];
+    return withDefaultLearnings(CATEGORY_STRATEGIES[cat]);
   }
 
   // Partial match (e.g., "quilts_roma" matches "quilts")
   for (const [key, strategy] of Object.entries(CATEGORY_STRATEGIES)) {
     if (key !== '_default' && (cat.includes(key) || key.includes(cat))) {
-      return strategy;
+      return withDefaultLearnings(strategy);
     }
   }
 
@@ -682,7 +706,14 @@ function getShotComposition(strategy: CategoryStrategy, shotType: string): strin
     || 'a professional product photograph. Soft, natural lighting.';
 }
 
-// (Dark note, color emphasis, and QA feedback are now inline in the prompt builders)
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: format learnings block for injection into prompts
+// ─────────────────────────────────────────────────────────────────────────────
+
+function formatLearnings(strategy: CategoryStrategy): string {
+  if (!strategy.learnings?.length) return '';
+  return `\n\nREGLAS OBLIGATORIAS (aprendidas de errores anteriores):\n${strategy.learnings.map((l) => `• ${l}`).join('\n')}`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Prompt builder: EDIT mode (hero + swatch — surgical swap)
@@ -701,7 +732,9 @@ export function buildEditPrompt(
     ? ` La muestra es muy oscura, no aclares el resultado.`
     : '';
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}`;
+  const learnings = formatLearnings(strategy);
+
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${learnings}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -728,11 +761,13 @@ export function buildReferencePrompt(
     ? `\nThe target color is "${colorDescription}" — the output MUST match this exact color, not a neutral/muted version.`
     : '';
 
+  const learnings = formatLearnings(strategy);
+
   return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
 
 Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
 
-${strategy.prompt.what_to_change}${colorNote}${darkNote}${qaNote}
+${strategy.prompt.what_to_change}${colorNote}${darkNote}${qaNote}${learnings}
 
 Genera una imagen fotorrealista de ${resolution}.`;
 }
@@ -762,11 +797,13 @@ export function buildFromScratchPrompt(
     ? `\nThe target color is "${colorDescription}" — match this exact color.`
     : '';
 
+  const learnings = formatLearnings(strategy);
+
   return `La imagen proporcionada es una muestra textil llamada "${swatchName}"${colorInfo}.
 
 Genera una foto profesional de producto e-commerce de un ${strategy.label}: ${composition}
 
-El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues texto, marcas de agua ni logos.${colorNote}${darkNote}${qaNote}
+El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues texto, marcas de agua ni logos.${colorNote}${darkNote}${qaNote}${learnings}
 
 Genera una imagen fotorrealista de ${resolution}.`;
 }
