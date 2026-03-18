@@ -313,7 +313,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatchBase64 = croppedSwatch.toString('base64');
     }
 
-    // ── Build prompt ──
+    // ── Build prompt (with hex color anchor for color fidelity) ──
+    const swatchHex = job.swatch.dominant_color_hex || null;
     const prompt = buildPromptForMode(
       effectiveMode,
       strategy,
@@ -322,7 +323,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       job.hero_shot.shot_type,
       darkSwatch,
       qaFeedback,
-      projectSettings.generation.resolution
+      projectSettings.generation.resolution,
+      swatchHex
     );
 
     const promptMetadata: Record<string, unknown> = {
@@ -334,6 +336,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       crop_swatch: strategy.preprocessing.crop_swatch,
       flatten_hero: strategy.preprocessing.flatten_hero,
       swatch_color: swatchColorDescription || null,
+      swatch_hex: swatchHex,
       qa_feedback_used: qaFeedback ? true : false,
     };
 

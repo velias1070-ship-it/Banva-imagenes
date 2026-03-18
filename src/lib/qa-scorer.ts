@@ -20,6 +20,7 @@ export interface ScoreImageRequest {
   heroMimeType?: string;
   category: string;
   swatchName: string;
+  swatchHex?: string | null; // Dominant swatch color hex for color accuracy anchoring
   strategy: CategoryStrategy;
   attempt: number;
   projectSettings?: ProjectSettings; // Per-project QA overrides
@@ -40,7 +41,8 @@ export interface ScoreImageResult {
 function buildQAPrompt(
   strategy: CategoryStrategy,
   swatchName: string,
-  generationMode: string
+  generationMode: string,
+  swatchHex?: string | null
 ): string {
   const focusAreas = strategy.qa_focus_areas?.length
     ? `\nCATEGORY-SPECIFIC FOCUS AREAS:\n${strategy.qa_focus_areas.map((a) => `* ${a}`).join('\n')}`
@@ -69,10 +71,17 @@ EVALUATE Image 1 across these 8 dimensions. Score each from 0.0 to 1.0:
    - If minor deviations → 0.6-0.8
    - If exact match → 0.9-1.0
 
-2. **color_accuracy** (0-1): How accurately does Image 1 reproduce Image 2's colors?
-   - Exact hue + saturation + brightness match → 1.0
-   - Slight shift → 0.7-0.9
-   - Wrong color → 0.0-0.3
+2. **color_accuracy** (0-1): How accurately does Image 1 reproduce Image 2's EXACT color temperature and hue?
+   ${swatchHex ? `REFERENCE HEX: The swatch dominant color is approximately ${swatchHex}. Use this as an anchor.` : ''}
+   - Exact hue + saturation + brightness + warmth/coolness match → 0.9-1.0
+   - Very minor, barely noticeable shift → 0.7-0.9
+   - COLOR TEMPERATURE SHIFT detected (white→cream, cool→warm, warm→cool) → 0.2-0.4
+   - Clearly wrong color → 0.0-0.2
+   CRITICAL COLOR RULES:
+   - White fabric that looks cream or beige = COLOR TEMPERATURE SHIFT → score 0.3 max
+   - Cool-toned fabric that looks warm = COLOR TEMPERATURE SHIFT → score 0.3 max
+   - Warm-toned fabric that looks cool = COLOR TEMPERATURE SHIFT → score 0.3 max
+   - Look CAREFULLY at the swatch (Image 2) base color vs the generated fabric (Image 1) base color
 
 3. **composition_match** (0-1): Does Image 1 match Image 3's composition?
    - Same camera angle? Same product placement? Same number of items?
@@ -177,7 +186,8 @@ export async function scoreImage(request: ScoreImageRequest): Promise<ScoreImage
   const prompt = buildQAPrompt(
     request.strategy,
     request.swatchName,
-    generationMode
+    generationMode,
+    request.swatchHex
   );
 
   // Send 3 images: generated + swatch + hero
@@ -207,6 +217,7 @@ export async function scoreImage(request: ScoreImageRequest): Promise<ScoreImage
   console.log(
     `[qa-scorer] Score: ${(score * 100).toFixed(0)}% | ` +
     `Fidelity: ${(parsed.detail.product_fidelity * 100).toFixed(0)}% | ` +
+    `Color: ${(parsed.detail.color_accuracy * 100).toFixed(0)}% | ` +
     `Contamination: ${(parsed.detail.hero_contamination * 100).toFixed(0)}% | ` +
     `Action: ${action.action}${action.escalate ? ' (ESCALATE)' : ''} | ` +
     `${action.reason}`

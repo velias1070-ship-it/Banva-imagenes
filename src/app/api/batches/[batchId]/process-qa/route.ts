@@ -163,7 +163,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     const swatchBase64 = Buffer.from(await swatchRes.data.arrayBuffer()).toString('base64');
     const heroBase64 = Buffer.from(await heroRes.data.arrayBuffer()).toString('base64');
 
-    // Score the image (with per-project QA settings)
+    // Score the image (with per-project QA settings + swatch hex for color accuracy)
     const scoreResult = await scoreImage({
       generatedBase64,
       generatedMimeType: 'image/png',
@@ -173,6 +173,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
       heroMimeType: job.hero_shot.mime_type || 'image/png',
       category,
       swatchName: job.swatch.name,
+      swatchHex: job.swatch.dominant_color_hex || null,
       strategy,
       attempt: job.attempt,
       projectSettings,

@@ -32,6 +32,9 @@ export interface QACriteria {
 
   product_fidelity_blocker: boolean; // If true, low fidelity → flag regardless of score
   product_fidelity_blocker_threshold: number; // Below this → flag
+
+  color_accuracy_blocker: boolean;    // If true, low color accuracy → flag regardless of score
+  color_accuracy_blocker_threshold: number; // Below this → flag (catches temperature shifts)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +61,9 @@ const DEFAULT_CRITERIA: QACriteria = {
 
   product_fidelity_blocker: true,
   product_fidelity_blocker_threshold: 0.40,
+
+  color_accuracy_blocker: true,
+  color_accuracy_blocker_threshold: 0.45,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +87,10 @@ export function getQACriteria(settings?: ProjectSettings): QACriteria {
 
     product_fidelity_blocker: settings.qa.product_fidelity_blocker,
     product_fidelity_blocker_threshold: settings.qa.product_fidelity_blocker_threshold,
+
+    // Color accuracy blocker — always use system defaults (not overridable per-project yet)
+    color_accuracy_blocker: DEFAULT_CRITERIA.color_accuracy_blocker,
+    color_accuracy_blocker_threshold: DEFAULT_CRITERIA.color_accuracy_blocker_threshold,
   };
 }
 
@@ -135,6 +145,18 @@ export function determineAction(
       action: 'flag',
       escalate: false,
       reason: `Product fidelity ${(detail.product_fidelity * 100).toFixed(0)}% below blocker threshold ${(criteria.product_fidelity_blocker_threshold * 100).toFixed(0)}%`,
+    };
+  }
+
+  // 1b. Color accuracy blocker — color temperature shift = flag immediately
+  if (
+    criteria.color_accuracy_blocker &&
+    detail.color_accuracy < criteria.color_accuracy_blocker_threshold
+  ) {
+    return {
+      action: 'flag',
+      escalate: false,
+      reason: `Color accuracy ${(detail.color_accuracy * 100).toFixed(0)}% below blocker threshold ${(criteria.color_accuracy_blocker_threshold * 100).toFixed(0)}% — likely color temperature shift`,
     };
   }
 

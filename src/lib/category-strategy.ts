@@ -716,6 +716,33 @@ function formatLearnings(strategy: CategoryStrategy): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper: build explicit color temperature anchoring block
+// ─────────────────────────────────────────────────────────────────────────────
+
+function formatColorAnchor(swatchHex?: string | null, colorDescription?: string | null): string {
+  if (!swatchHex && !colorDescription) return '';
+
+  const lines: string[] = ['\n\nFIDELIDAD DE COLOR (CRÍTICO — NO IGNORAR):'];
+
+  if (swatchHex && colorDescription) {
+    lines.push(`El color dominante del swatch es ${swatchHex} ("${colorDescription}").`);
+  } else if (swatchHex) {
+    lines.push(`El color dominante del swatch es ${swatchHex}.`);
+  } else if (colorDescription) {
+    lines.push(`El color del swatch es "${colorDescription}".`);
+  }
+
+  lines.push(
+    'La imagen generada DEBE reproducir EXACTAMENTE la temperatura de color del swatch.',
+    'PROHIBIDO calentar blancos: si el swatch es blanco/frío, el resultado NO puede ser crema/beige/cálido.',
+    'PROHIBIDO enfriar cálidos: si el swatch es cálido, el resultado NO puede ser gris/frío.',
+    'Copia el color TAL CUAL aparece en la imagen del swatch — sin interpretar ni embellecer.'
+  );
+
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompt builder: EDIT mode (hero + swatch — surgical swap)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -726,15 +753,17 @@ export function buildEditPrompt(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024'
+  resolution: string = '1024x1024',
+  swatchHex?: string | null
 ): string {
   const darkNote = isDarkSwatch
     ? ` La muestra es muy oscura, no aclares el resultado.`
     : '';
 
   const learnings = formatLearnings(strategy);
+  const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${learnings}`;
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -748,7 +777,8 @@ export function buildReferencePrompt(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024'
+  resolution: string = '1024x1024',
+  swatchHex?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const darkNote = isDarkSwatch
@@ -757,17 +787,15 @@ export function buildReferencePrompt(
   const qaNote = qaFeedback
     ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
     : '';
-  const colorNote = colorDescription
-    ? `\nThe target color is "${colorDescription}" — the output MUST match this exact color, not a neutral/muted version.`
-    : '';
 
   const learnings = formatLearnings(strategy);
+  const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
   return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
 
 Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
 
-${strategy.prompt.what_to_change}${colorNote}${darkNote}${qaNote}${learnings}
+${strategy.prompt.what_to_change}${colorAnchor}${darkNote}${qaNote}${learnings}
 
 Genera una imagen fotorrealista de ${resolution}.`;
 }
@@ -783,7 +811,8 @@ export function buildFromScratchPrompt(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024'
+  resolution: string = '1024x1024',
+  swatchHex?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const composition = getShotComposition(strategy, shotType);
@@ -793,17 +822,15 @@ export function buildFromScratchPrompt(
   const qaNote = qaFeedback
     ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
     : '';
-  const colorNote = colorDescription
-    ? `\nThe target color is "${colorDescription}" — match this exact color.`
-    : '';
 
   const learnings = formatLearnings(strategy);
+  const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
   return `La imagen proporcionada es una muestra textil llamada "${swatchName}"${colorInfo}.
 
 Genera una foto profesional de producto e-commerce de un ${strategy.label}: ${composition}
 
-El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues texto, marcas de agua ni logos.${colorNote}${darkNote}${qaNote}${learnings}
+El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues texto, marcas de agua ni logos.${colorAnchor}${darkNote}${qaNote}${learnings}
 
 Genera una imagen fotorrealista de ${resolution}.`;
 }
@@ -820,15 +847,16 @@ export function buildPromptForMode(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024'
+  resolution: string = '1024x1024',
+  swatchHex?: string | null
 ): string {
   switch (mode) {
     case 'edit':
-      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution);
+      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
     case 'reference':
-      return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution);
+      return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
     case 'from_scratch':
-      return buildFromScratchPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution);
+      return buildFromScratchPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
   }
 }
 
