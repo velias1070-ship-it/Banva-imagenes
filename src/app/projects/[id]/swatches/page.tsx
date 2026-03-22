@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dropzone } from '@/components/upload/dropzone';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, Trash2, Download, Loader2 } from 'lucide-react';
 import type { Swatch } from '@/types/database';
 import { toast } from 'sonner';
 
@@ -15,6 +15,7 @@ export default function SwatchesPage() {
   const { id } = useParams<{ id: string }>();
   const [swatches, setSwatches] = useState<Swatch[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [fetchingML, setFetchingML] = useState(false);
 
   const fetchSwatches = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/swatches`);
@@ -81,6 +82,32 @@ export default function SwatchesPage() {
     }
   }
 
+  async function handleFetchFromML() {
+    setFetchingML(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/fetch-ml-images`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.success > 0) {
+          toast.success(`${data.success} swatches traidos desde MercadoLibre`);
+          fetchSwatches();
+        }
+        if (data.skipped > 0) {
+          toast.info(`${data.skipped} omitidos (ya tienen imagen o sin SKU)`);
+        }
+        if (data.errors > 0) {
+          toast.error(`${data.errors} errores al traer imagenes`);
+        }
+      } else {
+        toast.error(data.error || 'Error trayendo imagenes de ML');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setFetchingML(false);
+    }
+  }
+
   async function handleRename(swatchId: string, newName: string) {
     const res = await fetch(`/api/projects/${id}/swatches/${swatchId}`, {
       method: 'PATCH',
@@ -101,9 +128,19 @@ export default function SwatchesPage() {
         Volver al Proyecto
       </Link>
 
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold">Swatches</h1>
-        <p className="text-muted-foreground">Sube las variantes de color/diseno del producto</p>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Swatches</h1>
+          <p className="text-muted-foreground">Sube las variantes de color/diseno del producto</p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={handleFetchFromML}
+          disabled={fetchingML}
+        >
+          {fetchingML ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+          Traer fotos de ML
+        </Button>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -139,14 +176,20 @@ export default function SwatchesPage() {
                   {swatches.map((swatch) => (
                     <div key={swatch.id} className="flex items-center gap-3 rounded-lg border p-2">
                       <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100">
-                        {swatch.dominant_color_hex ? (
+                        {swatch.storage_path ? (
+                          <img
+                            src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/${swatch.storage_path}`}
+                            alt={swatch.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : swatch.dominant_color_hex ? (
                           <div
                             className="h-full w-full"
                             style={{ backgroundColor: swatch.dominant_color_hex }}
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center text-xs text-gray-400">
-                            swatch
+                            sin foto
                           </div>
                         )}
                       </div>
