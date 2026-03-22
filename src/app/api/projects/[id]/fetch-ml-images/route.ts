@@ -29,8 +29,12 @@ interface MlItem {
  * 3. Download picture[0] (position 1)
  * 4. Upload to Supabase Storage as the swatch image
  */
-export async function POST(_request: NextRequest, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
   const { id: projectId } = await context.params;
+  const body = await request.json().catch(() => ({}));
+  const forceRefresh = body.force === true; // Re-download even if swatch already has image
+  const syncNew = body.sync_new !== false; // Also check for new variants in ML (default true)
+
   const supabase = createAdminClient();
   const inventoryDb = getInventorySupabase();
 
@@ -50,14 +54,57 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     .map((s) => s.sku_suffix)
     .filter(Boolean) as string[];
 
-  if (!skus.length) {
+  // Also get the project to find its catalog variantes
+  const { data: project } = await supabase
+    .from('projects')
+    .select('metadata')
+    .eq('id', projectId)
+    .single();
+
+  // Check if there are new variantes in metadata that don't have swatches yet
+  if (syncNew && project?.metadata) {
+    const catalogVariantes = (project.metadata as { variantes?: { sku: string; color: string }[] }).variantes || [];
+    const existingSkus = new Set(swatches.map((s) => s.sku_suffix).filter(Boolean));
+
+    const newVariantes = catalogVariantes.filter((v) => !existingSkus.has(v.sku));
+    if (newVariantes.length > 0) {
+      const newRows = newVariantes.map((v, i) => ({
+        project_id: projectId,
+        name: v.color,
+        sku_suffix: v.sku,
+        color_description: v.color,
+        display_order: swatches.length + i,
+      }));
+
+      await supabase.from('swatches').insert(newRows);
+
+      // Re-fetch swatches to include new ones
+      const { data: updatedSwatches } = await supabase
+        .from('swatches')
+        .select('id, name, sku_suffix, storage_path')
+        .eq('project_id', projectId)
+        .order('display_order');
+
+      if (updatedSwatches) {
+        swatches.length = 0;
+        swatches.push(...updatedSwatches);
+      }
+    }
+  }
+
+  // Recalculate SKUs after potential sync
+  const allSkus = swatches
+    .map((s) => s.sku_suffix)
+    .filter(Boolean) as string[];
+
+  if (!allSkus.length) {
     return NextResponse.json({ error: 'No swatches have sku_suffix. Create project from catalog first.' }, { status: 400 });
   }
 
   const { data: mlItems } = await inventoryDb
     .from('ml_items_map')
     .select('sku_venta, item_id, titulo')
-    .in('sku_venta', skus)
+    .in('sku_venta', allSkus)
     .eq('activo', true);
 
   const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
@@ -77,8 +124,8 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       continue;
     }
 
-    // Skip if swatch already has an image
-    if (swatch.storage_path) {
+    // Skip if swatch already has an image (unless force refresh)
+    if (swatch.storage_path && !forceRefresh) {
       results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: '', status: 'skipped', error: 'Already has image' });
       continue;
     }

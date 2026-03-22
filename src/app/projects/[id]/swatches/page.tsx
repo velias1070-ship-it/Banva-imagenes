@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dropzone } from '@/components/upload/dropzone';
-import { ArrowLeft, Trash2, Download, Loader2 } from 'lucide-react';
+import { ArrowLeft, Trash2, Download, RefreshCw, Loader2 } from 'lucide-react';
 import type { Swatch } from '@/types/database';
 import { toast } from 'sonner';
 
@@ -82,18 +82,21 @@ export default function SwatchesPage() {
     }
   }
 
-  async function handleFetchFromML() {
+  async function handleFetchFromML(force: boolean = false) {
     setFetchingML(true);
     try {
-      const res = await fetch(`/api/projects/${id}/fetch-ml-images`, { method: 'POST' });
+      const res = await fetch(`/api/projects/${id}/fetch-ml-images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force, sync_new: true }),
+      });
       const data = await res.json();
       if (res.ok) {
         if (data.success > 0) {
-          toast.success(`${data.success} swatches traidos desde MercadoLibre`);
+          toast.success(`${data.success} swatches ${force ? 'actualizados' : 'traidos'} desde MercadoLibre`);
           fetchSwatches();
-        }
-        if (data.skipped > 0) {
-          toast.info(`${data.skipped} omitidos (ya tienen imagen o sin SKU)`);
+        } else if (data.skipped > 0 && data.success === 0) {
+          toast.info('Todos los swatches ya tienen imagen. Usa "Actualizar" para re-descargar.');
         }
         if (data.errors > 0) {
           toast.error(`${data.errors} errores al traer imagenes`);
@@ -133,14 +136,27 @@ export default function SwatchesPage() {
           <h1 className="text-2xl font-bold">Swatches</h1>
           <p className="text-muted-foreground">Sube las variantes de color/diseno del producto</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={handleFetchFromML}
-          disabled={fetchingML}
-        >
-          {fetchingML ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-          Traer fotos de ML
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => handleFetchFromML(false)}
+            disabled={fetchingML}
+          >
+            {fetchingML ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            Traer fotos de ML
+          </Button>
+          {swatches.some((s) => s.storage_path) && (
+            <Button
+              variant="outline"
+              onClick={() => handleFetchFromML(true)}
+              disabled={fetchingML}
+              title="Re-descarga todas las fotos desde ML (actualiza si cambiaron)"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Actualizar todas
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
