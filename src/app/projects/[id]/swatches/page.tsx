@@ -16,6 +16,7 @@ export default function SwatchesPage() {
   const [swatches, setSwatches] = useState<Swatch[]>([]);
   const [uploading, setUploading] = useState(false);
   const [fetchingML, setFetchingML] = useState(false);
+  const [imgVersion, setImgVersion] = useState(0);
 
   const fetchSwatches = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/swatches`);
@@ -94,6 +95,7 @@ export default function SwatchesPage() {
       if (res.ok) {
         if (data.success > 0) {
           toast.success(`${data.success} swatches ${force ? 'actualizados' : 'traidos'} desde MercadoLibre`);
+          setImgVersion((v) => v + 1);
           fetchSwatches();
         } else if (data.skipped > 0 && data.success === 0) {
           toast.info('Todos los swatches ya tienen imagen. Usa "Actualizar" para re-descargar.');
@@ -194,7 +196,7 @@ export default function SwatchesPage() {
                       <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100">
                         {swatch.storage_path ? (
                           <img
-                            src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/${swatch.storage_path}`}
+                            src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/${swatch.storage_path}?v=${imgVersion}`}
                             alt={swatch.name}
                             className="h-full w-full object-cover"
                           />
