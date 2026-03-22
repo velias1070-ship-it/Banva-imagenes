@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createClient } from '@supabase/supabase-js';
 
 const CATEGORY_MAP: Record<string, string> = {
   sabana: 'sabanas',
@@ -70,7 +70,14 @@ interface ProductGroup {
 
 // GET /api/productos — returns products from Supabase grouped by base product
 export async function GET() {
-  const supabase = createAdminClient();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    return NextResponse.json({ error: 'Missing Supabase config' }, { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
   const { data, error } = await supabase
     .from('productos')
@@ -79,7 +86,7 @@ export async function GET() {
     .order('nombre');
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message, details: error }, { status: 500 });
   }
 
   // Group by base product (shared hero shots, differ in color)
