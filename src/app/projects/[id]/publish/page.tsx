@@ -24,25 +24,16 @@ interface EditorPicture {
 }
 
 interface Listing {
-  swatch_id: string;
-  swatch_name: string;
-  sku: string;
-  item_id: string;
-  titulo: string;
-  status: string;
-  permalink: string;
-  ml_pictures: MlPicture[];
-  generated_images: GeneratedImage[];
+  swatch_id: string; swatch_name: string; sku: string; item_id: string;
+  titulo: string; status: string; permalink: string;
+  ml_pictures: MlPicture[]; generated_images: GeneratedImage[];
 }
 
 interface ListingState {
-  listing: Listing;
-  pictures: EditorPicture[];
-  dirty: boolean;
-  saving: boolean;
+  listing: Listing; pictures: EditorPicture[];
+  dirty: boolean; saving: boolean;
 }
 
-// Drag data types
 type DragSource =
   | { kind: 'reorder'; listingIdx: number; picIdx: number }
   | { kind: 'add'; listingIdx: number; img: GeneratedImage };
@@ -51,7 +42,8 @@ export default function PublishPage() {
   const { id } = useParams<{ id: string }>();
   const [listings, setListings] = useState<ListingState[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dropTarget, setDropTarget] = useState<{ listingIdx: number; position: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dropPosition, setDropPosition] = useState<{ listingIdx: number; position: number } | null>(null);
   const dragRef = useRef<DragSource | null>(null);
 
   const fetchListings = useCallback(async () => {
@@ -63,8 +55,7 @@ export default function PublishPage() {
         setListings(data.map((l: Listing) => ({
           listing: l,
           pictures: l.ml_pictures.map((p) => ({ type: 'ml' as const, id: p.id, url: p.url })),
-          dirty: false,
-          saving: false,
+          dirty: false, saving: false,
         })));
       }
     } catch { toast.error('Error cargando publicaciones'); }
@@ -73,39 +64,54 @@ export default function PublishPage() {
 
   useEffect(() => { fetchListings(); }, [fetchListings]);
 
-  // --- Drag handlers ---
-  function onDragStartReorder(e: React.DragEvent, listingIdx: number, picIdx: number) {
-    dragRef.current = { kind: 'reorder', listingIdx, picIdx };
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', `reorder:${listingIdx}:${picIdx}`);
+  function handleDragStart(e: React.DragEvent, source: DragSource) {
+    dragRef.current = source;
+    setDragging(true);
+    e.dataTransfer.effectAllowed = source.kind === 'reorder' ? 'move' : 'copy';
+    // Use a transparent drag image for smoother feel
+    const el = e.currentTarget as HTMLElement;
+    if (el) {
+      e.dataTransfer.setDragImage(el, 30, 30);
+    }
   }
 
-  function onDragStartAdd(e: React.DragEvent, listingIdx: number, img: GeneratedImage) {
-    dragRef.current = { kind: 'add', listingIdx, img };
-    e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('text/plain', `add:${img.job_id}`);
-  }
-
-  function onDragOver(e: React.DragEvent, listingIdx: number, position: number) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = dragRef.current?.kind === 'reorder' ? 'move' : 'copy';
-    setDropTarget({ listingIdx, position });
-  }
-
-  function onDragLeave() {
-    setDropTarget(null);
-  }
-
-  function onDrop(e: React.DragEvent, listingIdx: number, position: number) {
-    e.preventDefault();
-    setDropTarget(null);
-
-    const drag = dragRef.current;
-    if (!drag) return;
+  function handleDragEnd() {
     dragRef.current = null;
+    setDragging(false);
+    setDropPosition(null);
+  }
 
-    if (drag.kind === 'reorder' && drag.listingIdx === listingIdx) {
-      // Reorder within same listing
+  function getDropPosition(e: React.DragEvent, listingIdx: number, container: HTMLElement): number {
+    const children = Array.from(container.querySelectorAll('[data-pic-idx]'));
+    const mouseY = e.clientY;
+
+    for (let i = 0; i < children.length; i++) {
+      const rect = children[i].getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (mouseY < midY) return i;
+    }
+    return children.length;
+  }
+
+  function handleContainerDragOver(e: React.DragEvent, listingIdx: number) {
+    e.preventDefault();
+    const drag = dragRef.current;
+    if (!drag || drag.listingIdx !== listingIdx) return;
+
+    const container = e.currentTarget as HTMLElement;
+    const pos = getDropPosition(e, listingIdx, container);
+    setDropPosition({ listingIdx, position: pos });
+  }
+
+  function handleContainerDrop(e: React.DragEvent, listingIdx: number) {
+    e.preventDefault();
+    const drag = dragRef.current;
+    if (!drag || drag.listingIdx !== listingIdx) return;
+
+    const container = e.currentTarget as HTMLElement;
+    const position = getDropPosition(e, listingIdx, container);
+
+    if (drag.kind === 'reorder') {
       setListings((prev) => prev.map((ls, i) => {
         if (i !== listingIdx) return ls;
         const pics = [...ls.pictures];
@@ -114,66 +120,44 @@ export default function PublishPage() {
         pics.splice(insertAt, 0, moved);
         return { ...ls, pictures: pics, dirty: true };
       }));
-    } else if (drag.kind === 'add' && drag.listingIdx === listingIdx) {
-      // Add generated image at position
+    } else if (drag.kind === 'add') {
       setListings((prev) => prev.map((ls, i) => {
         if (i !== listingIdx) return ls;
         if (ls.pictures.length >= 10) { toast.error('Maximo 10 fotos'); return ls; }
-        if (ls.pictures.some((p) => p.source_url === drag.img.url)) { toast.info('Ya esta agregada'); return ls; }
+        if (ls.pictures.some((p) => p.source_url === drag.img.url)) { toast.info('Ya agregada'); return ls; }
         const pics = [...ls.pictures];
         pics.splice(position, 0, {
-          type: 'generated',
-          url: drag.img.url,
-          source_url: drag.img.url,
-          shot_type: drag.img.shot_type,
+          type: 'generated', url: drag.img.url, source_url: drag.img.url, shot_type: drag.img.shot_type,
         });
         return { ...ls, pictures: pics, dirty: true };
       }));
     }
+
+    handleDragEnd();
   }
 
-  function onDragEnd() {
-    dragRef.current = null;
-    setDropTarget(null);
-  }
-
-  // --- Non-drag actions ---
   function removePicture(listingIdx: number, picIdx: number) {
-    setListings((prev) => prev.map((ls, i) => {
-      if (i !== listingIdx) return ls;
-      return { ...ls, pictures: ls.pictures.filter((_, pi) => pi !== picIdx), dirty: true };
-    }));
+    setListings((prev) => prev.map((ls, i) =>
+      i !== listingIdx ? ls : { ...ls, pictures: ls.pictures.filter((_, pi) => pi !== picIdx), dirty: true }
+    ));
   }
 
   function addAtEnd(listingIdx: number, img: GeneratedImage) {
     setListings((prev) => prev.map((ls, i) => {
       if (i !== listingIdx) return ls;
       if (ls.pictures.length >= 10) { toast.error('Maximo 10 fotos'); return ls; }
-      if (ls.pictures.some((p) => p.source_url === img.url)) { toast.info('Ya esta agregada'); return ls; }
-      return {
-        ...ls,
-        pictures: [...ls.pictures, { type: 'generated', url: img.url, source_url: img.url, shot_type: img.shot_type }],
-        dirty: true,
-      };
+      if (ls.pictures.some((p) => p.source_url === img.url)) { toast.info('Ya agregada'); return ls; }
+      return { ...ls, pictures: [...ls.pictures, { type: 'generated', url: img.url, source_url: img.url, shot_type: img.shot_type }], dirty: true };
     }));
   }
 
   async function saveListing(listingIdx: number) {
     const ls = listings[listingIdx];
-    if (!ls.listing.item_id) { toast.error('No hay item_id de ML'); return; }
+    if (!ls.listing.item_id) { toast.error('No hay item_id'); return; }
     setListings((prev) => prev.map((l, i) => i === listingIdx ? { ...l, saving: true } : l));
-
-    const pictures = ls.pictures.map((p) => {
-      if (p.type === 'ml' && p.id) return { id: p.id };
-      return { source: p.source_url || p.url };
-    });
-
+    const pictures = ls.pictures.map((p) => p.type === 'ml' && p.id ? { id: p.id } : { source: p.source_url || p.url });
     try {
-      const res = await fetch('/api/ml/update-pictures', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ item_id: ls.listing.item_id, pictures }),
-      });
+      const res = await fetch('/api/ml/update-pictures', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: ls.listing.item_id, pictures }) });
       const data = await res.json();
       if (data.success) {
         toast.success(`${ls.listing.swatch_name}: ${pictures.length} fotos guardadas`);
@@ -182,21 +166,16 @@ export default function PublishPage() {
         toast.error(`Error: ${data.error}`);
         setListings((prev) => prev.map((l, i) => i === listingIdx ? { ...l, saving: false } : l));
       }
-    } catch {
-      toast.error('Error de conexion');
-      setListings((prev) => prev.map((l, i) => i === listingIdx ? { ...l, saving: false } : l));
-    }
+    } catch { toast.error('Error de conexion'); setListings((prev) => prev.map((l, i) => i === listingIdx ? { ...l, saving: false } : l)); }
   }
 
   async function saveAll() {
-    const dirtyIdxs = listings.map((l, i) => l.dirty ? i : -1).filter((i) => i >= 0);
-    if (!dirtyIdxs.length) { toast.info('No hay cambios'); return; }
-    for (const idx of dirtyIdxs) { await saveListing(idx); }
+    const dirty = listings.map((l, i) => l.dirty ? i : -1).filter((i) => i >= 0);
+    if (!dirty.length) { toast.info('No hay cambios'); return; }
+    for (const idx of dirty) { await saveListing(idx); }
   }
 
-  if (loading) {
-    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
-  }
+  if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
 
   const dirtyCount = listings.filter((l) => l.dirty).length;
 
@@ -221,20 +200,14 @@ export default function PublishPage() {
           <Card key={ls.listing.swatch_id} className={ls.dirty ? 'ring-2 ring-blue-500' : ''}>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <CardTitle className="text-lg">{ls.listing.swatch_name}</CardTitle>
                   <Badge variant="outline" className="font-mono text-xs">{ls.listing.sku}</Badge>
                   {ls.listing.item_id && <Badge variant="secondary" className="text-xs">{ls.listing.item_id}</Badge>}
-                  {ls.listing.status && (
-                    <Badge variant={ls.listing.status === 'active' ? 'default' : 'secondary'} className="text-xs">{ls.listing.status}</Badge>
-                  )}
+                  {ls.listing.status && <Badge variant={ls.listing.status === 'active' ? 'default' : 'secondary'} className="text-xs">{ls.listing.status}</Badge>}
                 </div>
-                <div className="flex gap-2">
-                  {ls.listing.permalink && (
-                    <a href={ls.listing.permalink} target="_blank" rel="noopener noreferrer">
-                      <Button variant="ghost" size="sm"><ExternalLink className="h-4 w-4" /></Button>
-                    </a>
-                  )}
+                <div className="flex gap-2 flex-shrink-0">
+                  {ls.listing.permalink && <a href={ls.listing.permalink} target="_blank" rel="noopener noreferrer"><Button variant="ghost" size="sm"><ExternalLink className="h-4 w-4" /></Button></a>}
                   {ls.dirty && (
                     <Button size="sm" onClick={() => saveListing(listingIdx)} disabled={ls.saving}>
                       {ls.saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -245,114 +218,91 @@ export default function PublishPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-[1fr_auto_1fr] gap-4">
-                {/* LEFT: Publication images — drop zone */}
+              <div className="grid grid-cols-[1fr_auto_1fr] gap-6">
+                {/* LEFT: listing images with full-container drop zone */}
                 <div>
-                  <p className="text-sm font-medium mb-2">
-                    Publicacion ({ls.pictures.length}/10)
-                    {ls.dirty && <span className="text-blue-500 ml-2">modificado</span>}
-                  </p>
-                  <div className="space-y-0">
-                    {/* Drop zone before first item */}
-                    <DropSlot
-                      active={dropTarget?.listingIdx === listingIdx && dropTarget?.position === 0}
-                      onDragOver={(e) => onDragOver(e, listingIdx, 0)}
-                      onDragLeave={onDragLeave}
-                      onDrop={(e) => onDrop(e, listingIdx, 0)}
-                    />
+                  <p className="text-sm font-medium mb-2">Publicacion ({ls.pictures.length}/10){ls.dirty && <span className="text-blue-500 ml-2">modificado</span>}</p>
+                  <div
+                    className={`min-h-[80px] rounded-lg p-1 transition-colors ${dragging && dragRef.current?.listingIdx === listingIdx ? 'bg-blue-50/50' : ''}`}
+                    onDragOver={(e) => handleContainerDragOver(e, listingIdx)}
+                    onDragLeave={() => setDropPosition(null)}
+                    onDrop={(e) => handleContainerDrop(e, listingIdx)}
+                  >
+                    {ls.pictures.map((pic, picIdx) => {
+                      const isDropBefore = dropPosition?.listingIdx === listingIdx && dropPosition?.position === picIdx;
+                      const isDropAfter = dropPosition?.listingIdx === listingIdx && dropPosition?.position === picIdx + 1 && picIdx === ls.pictures.length - 1;
+                      const isDragSource = dragRef.current?.kind === 'reorder' && dragRef.current.listingIdx === listingIdx && dragRef.current.picIdx === picIdx;
 
-                    {ls.pictures.map((pic, picIdx) => (
-                      <div key={picIdx}>
-                        <div
-                          className="flex items-center gap-2 rounded-lg border p-1.5 group cursor-grab active:cursor-grabbing"
-                          draggable
-                          onDragStart={(e) => onDragStartReorder(e, listingIdx, picIdx)}
-                          onDragEnd={onDragEnd}
-                        >
-                          <GripVertical className="h-4 w-4 text-muted-foreground/50 flex-shrink-0" />
-                          <div className="w-5 text-center text-xs font-bold text-muted-foreground">{picIdx + 1}</div>
-                          <div className="h-14 w-14 flex-shrink-0 rounded overflow-hidden bg-gray-100">
-                            <img src={pic.url} alt={`Pos ${picIdx + 1}`} className="h-full w-full object-cover" />
+                      return (
+                        <div key={picIdx} data-pic-idx={picIdx}>
+                          {isDropBefore && <div className="h-1.5 bg-blue-500 rounded-full mx-2 my-1 animate-pulse" />}
+                          <div
+                            className={`flex items-center gap-2 rounded-lg border p-1.5 group transition-all mb-1
+                              ${isDragSource ? 'opacity-30 scale-95' : 'opacity-100'}
+                              ${isDropBefore || isDropAfter ? '' : ''}`}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, { kind: 'reorder', listingIdx, picIdx })}
+                            onDragEnd={handleDragEnd}
+                          >
+                            <GripVertical className="h-4 w-4 text-muted-foreground/40 flex-shrink-0 cursor-grab active:cursor-grabbing" />
+                            <div className="w-5 text-center text-xs font-bold text-muted-foreground">{picIdx + 1}</div>
+                            <div className="h-12 w-12 flex-shrink-0 rounded overflow-hidden bg-gray-100">
+                              <img src={pic.url} alt="" className="h-full w-full object-cover pointer-events-none" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              {pic.type === 'generated'
+                                ? <Badge variant="secondary" className="text-[10px] bg-green-100 text-green-800">nueva — {pic.shot_type}</Badge>
+                                : <span className="text-[10px] text-muted-foreground">ML</span>}
+                            </div>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removePicture(listingIdx, picIdx)}>
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            {pic.type === 'generated' && (
-                              <Badge variant="secondary" className="text-[10px] bg-green-100 text-green-800">nueva — {pic.shot_type}</Badge>
-                            )}
-                            {pic.type === 'ml' && (
-                              <span className="text-[10px] text-muted-foreground">{pic.id?.substring(0, 25)}</span>
-                            )}
-                          </div>
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 opacity-0 group-hover:opacity-100" onClick={() => removePicture(listingIdx, picIdx)}>
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
+                          {isDropAfter && <div className="h-1.5 bg-blue-500 rounded-full mx-2 my-1 animate-pulse" />}
                         </div>
-
-                        {/* Drop zone after each item */}
-                        <DropSlot
-                          active={dropTarget?.listingIdx === listingIdx && dropTarget?.position === picIdx + 1}
-                          onDragOver={(e) => onDragOver(e, listingIdx, picIdx + 1)}
-                          onDragLeave={onDragLeave}
-                          onDrop={(e) => onDrop(e, listingIdx, picIdx + 1)}
-                        />
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {ls.pictures.length === 0 && (
-                      <div
-                        className={`flex items-center justify-center h-24 text-sm border-2 border-dashed rounded transition-colors
-                          ${dropTarget?.listingIdx === listingIdx ? 'border-blue-400 bg-blue-50 text-blue-600' : 'border-gray-200 text-muted-foreground'}`}
-                        onDragOver={(e) => onDragOver(e, listingIdx, 0)}
-                        onDragLeave={onDragLeave}
-                        onDrop={(e) => onDrop(e, listingIdx, 0)}
-                      >
-                        Arrastra fotos aqui
+                      <div className={`flex items-center justify-center h-24 text-sm border-2 border-dashed rounded-lg transition-colors ${dragging ? 'border-blue-400 bg-blue-50 text-blue-600' : 'border-gray-200 text-muted-foreground'}`}>
+                        {dragging ? 'Soltar aqui' : 'Sin fotos — arrastra desde la derecha'}
                       </div>
+                    )}
+
+                    {/* Bottom drop indicator */}
+                    {dropPosition?.listingIdx === listingIdx && dropPosition.position === ls.pictures.length && ls.pictures.length > 0 && (
+                      <div className="h-1.5 bg-blue-500 rounded-full mx-2 my-1 animate-pulse" />
                     )}
                   </div>
                 </div>
 
-                {/* Divider */}
                 <div className="flex items-center"><div className="w-px h-full bg-border" /></div>
 
-                {/* RIGHT: Generated images — drag source */}
+                {/* RIGHT: generated images */}
                 <div>
-                  <p className="text-sm font-medium mb-2">
-                    <ImageIcon className="h-4 w-4 inline mr-1" />
-                    Generadas ({ls.listing.generated_images.length})
-                  </p>
+                  <p className="text-sm font-medium mb-2"><ImageIcon className="h-4 w-4 inline mr-1" />Generadas ({ls.listing.generated_images.length})</p>
                   <div className="grid grid-cols-3 gap-2">
                     {ls.listing.generated_images.map((img) => {
-                      const alreadyAdded = ls.pictures.some((p) => p.source_url === img.url);
-
+                      const added = ls.pictures.some((p) => p.source_url === img.url);
                       return (
                         <div
                           key={img.job_id}
-                          draggable={!alreadyAdded}
-                          onDragStart={(e) => onDragStartAdd(e, listingIdx, img)}
-                          onDragEnd={onDragEnd}
-                          className={`relative group aspect-square rounded overflow-hidden bg-gray-100 border-2 transition-all
-                            ${alreadyAdded ? 'border-gray-200 opacity-40 cursor-default' : 'border-gray-200 cursor-grab active:cursor-grabbing hover:border-blue-300'}`}
+                          draggable={!added}
+                          onDragStart={(e) => handleDragStart(e, { kind: 'add', listingIdx, img })}
+                          onDragEnd={handleDragEnd}
+                          className={`relative group aspect-square rounded-lg overflow-hidden bg-gray-100 border-2 transition-all
+                            ${added ? 'border-green-200 opacity-40 cursor-default' : 'border-gray-200 cursor-grab active:cursor-grabbing hover:border-blue-300 hover:shadow-md'}`}
                         >
                           <img src={img.url} alt={img.shot_type} className="h-full w-full object-cover pointer-events-none" />
-                          <div className="absolute top-0.5 left-0.5">
-                            <Badge variant="secondary" className="h-5 text-[10px] px-1">{img.shot_type}</Badge>
-                          </div>
-                          {img.qa_score != null && (
-                            <div className="absolute top-0.5 right-0.5">
-                              <Badge variant="outline" className="h-5 text-[10px] px-1 bg-white/80">{(img.qa_score * 100).toFixed(0)}%</Badge>
-                            </div>
-                          )}
-                          {alreadyAdded ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                              <Badge className="bg-green-600 text-[10px]">Agregada</Badge>
-                            </div>
+                          <div className="absolute top-1 left-1"><Badge variant="secondary" className="text-[10px] px-1 h-5">{img.shot_type}</Badge></div>
+                          {img.qa_score != null && <div className="absolute top-1 right-1"><Badge variant="outline" className="text-[10px] px-1 h-5 bg-white/80">{(img.qa_score * 100).toFixed(0)}%</Badge></div>}
+                          {added ? (
+                            <div className="absolute inset-0 flex items-center justify-center"><Badge className="bg-green-600 text-[10px]">Agregada</Badge></div>
                           ) : (
-                            <div className="absolute bottom-0 inset-x-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 py-1">
-                              <Button
-                                variant="ghost" size="sm" className="h-6 text-[10px] text-white hover:bg-white/20"
-                                onClick={(e) => { e.stopPropagation(); addAtEnd(listingIdx, img); }}
-                              >
-                                <Plus className="h-3 w-3 mr-0.5" /> Al final
+                            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 pt-6 flex items-end justify-center gap-1">
+                              <span className="text-[10px] text-white/90">Arrastra o</span>
+                              <Button variant="ghost" size="sm" className="h-5 text-[10px] text-white px-1.5 hover:bg-white/20" onClick={(e) => { e.stopPropagation(); addAtEnd(listingIdx, img); }}>
+                                <Plus className="h-2.5 w-2.5 mr-0.5" />al final
                               </Button>
                             </div>
                           )}
@@ -360,13 +310,11 @@ export default function PublishPage() {
                       );
                     })}
                     {ls.listing.generated_images.length === 0 && (
-                      <div className="col-span-3 flex items-center justify-center h-24 text-sm text-muted-foreground border rounded">Sin imagenes generadas</div>
+                      <div className="col-span-3 flex items-center justify-center h-24 text-sm text-muted-foreground border rounded-lg">Sin imagenes generadas</div>
                     )}
                   </div>
                   {ls.listing.generated_images.filter((img) => !ls.pictures.some((p) => p.source_url === img.url)).length > 1 && (
-                    <Button variant="outline" size="sm" className="mt-3 w-full text-xs"
-                      onClick={() => { for (const img of ls.listing.generated_images) { addAtEnd(listingIdx, img); } }}
-                    >
+                    <Button variant="outline" size="sm" className="mt-3 w-full text-xs" onClick={() => { for (const img of ls.listing.generated_images) addAtEnd(listingIdx, img); }}>
                       <Plus className="h-3 w-3 mr-1" /> Agregar todas al final
                     </Button>
                   )}
@@ -376,34 +324,6 @@ export default function PublishPage() {
           </Card>
         ))}
       </div>
-    </div>
-  );
-}
-
-// Drop target indicator between items
-function DropSlot({
-  active,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-}: {
-  active: boolean;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: () => void;
-  onDrop: (e: React.DragEvent) => void;
-}) {
-  return (
-    <div
-      className={`transition-all ${active ? 'h-10 my-1' : 'h-1 my-0'}`}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
-      {active && (
-        <div className="h-full border-2 border-dashed border-blue-400 bg-blue-50 rounded flex items-center justify-center text-xs text-blue-600">
-          Soltar aqui
-        </div>
-      )}
     </div>
   );
 }
