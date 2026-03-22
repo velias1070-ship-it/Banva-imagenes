@@ -114,12 +114,12 @@ export async function POST(request: NextRequest) {
     main: 0, lifestyle: 1, detail: 2, doblada: 3, flatlay: 4,
   };
 
-  // 4. Get swatches
+  // 4. Get swatches + project info for fallback matching
   const swatchIds = [...new Set(jobs.map((j) => j.swatch_id))];
-  const { data: swatches } = await supabase
-    .from('swatches')
-    .select('id, name, sku_suffix')
-    .in('id', swatchIds);
+  const [{ data: swatches }, { data: project }] = await Promise.all([
+    supabase.from('swatches').select('id, name, sku_suffix').in('id', swatchIds),
+    supabase.from('projects').select('name, category, sku_base').eq('id', project_id).single(),
+  ]);
 
   const swatchMap = new Map((swatches || []).map((s) => [s.id, s]));
 
@@ -148,13 +148,56 @@ export async function POST(request: NextRequest) {
     .map((s) => s.sku_suffix)
     .filter(Boolean) as string[];
 
-  const { data: mlItems } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
-    .in('sku_venta', allSkus.length > 0 ? allSkus : ['__none__'])
-    .eq('activo', true);
+  // Also get all swatch names for fallback matching by title
+  const swatchNames = (swatches || []).map((s) => s.name.toLowerCase());
 
-  const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
+  // Fetch ML items by SKU
+  let mlItems: { sku_venta: string; item_id: string; titulo: string }[] = [];
+  if (allSkus.length > 0) {
+    const { data } = await inventoryDb
+      .from('ml_items_map')
+      .select('sku_venta, item_id, titulo')
+      .in('sku_venta', allSkus)
+      .eq('activo', true);
+    mlItems = data || [];
+  }
+
+  // If some swatches have no sku_suffix, try matching by title search
+  const swatchesMissingSku = (swatches || []).filter((s) => !s.sku_suffix);
+  if (swatchesMissingSku.length > 0 && project) {
+    // Search ml_items_map by title containing project name + swatch color
+    for (const sw of swatchesMissingSku) {
+      const searchTerm = sw.name.toLowerCase();
+      const { data: matches } = await inventoryDb
+        .from('ml_items_map')
+        .select('sku_venta, item_id, titulo')
+        .ilike('titulo', `%${searchTerm}%`)
+        .eq('activo', true)
+        .limit(10);
+
+      if (matches?.length) {
+        // Try to find the best match: title should also contain something from the project name
+        const projectWords = project.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+        const bestMatch = matches.find((m) =>
+          projectWords.some((pw: string) => m.titulo.toLowerCase().includes(pw))
+        ) || matches[0];
+
+        if (bestMatch) {
+          // Update the swatch's sku_suffix for future use
+          await supabase
+            .from('swatches')
+            .update({ sku_suffix: bestMatch.sku_venta })
+            .eq('id', sw.id);
+
+          sw.sku_suffix = bestMatch.sku_venta;
+          swatchMap.set(sw.id, sw);
+          mlItems.push(bestMatch);
+        }
+      }
+    }
+  }
+
+  const skuToItem = new Map(mlItems.map((item) => [item.sku_venta, item]));
 
   // 7. Storage base URL
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/`;
