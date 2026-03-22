@@ -142,6 +142,7 @@ export async function GET() {
     const existingSkuSet = new Set(existingSkus);
 
     for (const ml of mlItems) {
+      if (!ml.sku_venta) continue;
       if (existingSkuSet.has(ml.sku_venta)) continue;
       if (!ml.sku_venta.startsWith(skuPrefix)) continue;
 
@@ -168,7 +169,7 @@ export async function GET() {
 
   // 3. Also find ML-only groups (products in ML but NOT in productos table)
   const allCatalogSkus = new Set(productos.map((p) => p.sku));
-  const mlOnlyItems = mlItems.filter((ml) => !allCatalogSkus.has(ml.sku_venta));
+  const mlOnlyItems = mlItems.filter((ml) => ml.sku_venta && !allCatalogSkus.has(ml.sku_venta));
 
   // Group ML-only items by title keywords
   const mlGroups = new Map<string, { titulo: string; items: typeof mlItems }>();
