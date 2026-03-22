@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { mlReplaceItemPicturesFromUrls } from '@/lib/ml';
+
+// Inventory Supabase (ml_items_map, ml_config, productos)
+function getInventorySupabase() {
+  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  return createClient(url, key);
+}
 
 export const maxDuration = 60;
 
@@ -83,12 +91,13 @@ export async function POST(request: NextRequest) {
     bySwatch.get(job.swatch_id)!.push(job);
   }
 
-  // 5. Get ML item mappings
+  // 5. Get ML item mappings (from inventory Supabase)
+  const inventoryDb = getInventorySupabase();
   const allSkus = (swatches || [])
     .map((s) => s.sku_suffix)
     .filter(Boolean) as string[];
 
-  const { data: mlItems } = await supabase
+  const { data: mlItems } = await inventoryDb
     .from('ml_items_map')
     .select('sku_venta, item_id, titulo')
     .in('sku_venta', allSkus.length > 0 ? allSkus : ['__none__'])

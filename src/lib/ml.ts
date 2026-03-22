@@ -14,11 +14,12 @@ interface MlConfig {
   token_expires_at: string;
 }
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+// Connects to the inventory Supabase (productos, ml_config, ml_items_map)
+// Falls back to the app's Supabase if inventory vars not set
+function getInventorySupabase() {
+  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  return createClient(url, key);
 }
 
 // Mutex to prevent concurrent refreshes
@@ -28,7 +29,7 @@ export async function ensureValidToken(): Promise<string> {
   // If a refresh is already in progress, wait for it
   if (_refreshPromise) return _refreshPromise;
 
-  const supabase = getSupabase();
+  const supabase = getInventorySupabase();
 
   const { data: config, error } = await supabase
     .from('ml_config')
@@ -58,7 +59,7 @@ export async function ensureValidToken(): Promise<string> {
 }
 
 async function refreshToken(config: MlConfig): Promise<string> {
-  const supabase = getSupabase();
+  const supabase = getInventorySupabase();
 
   // Re-read config in case another process already refreshed
   const { data: freshConfig } = await supabase
