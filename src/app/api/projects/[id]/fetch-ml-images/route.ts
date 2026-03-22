@@ -38,28 +38,49 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const supabase = createAdminClient();
   const inventoryDb = getInventorySupabase();
 
-  // 1. Get swatches for this project
-  const { data: swatches, error: swError } = await supabase
-    .from('swatches')
-    .select('id, name, sku_suffix, storage_path')
-    .eq('project_id', projectId)
-    .order('display_order');
-
-  if (swError || !swatches?.length) {
-    return NextResponse.json({ error: 'No swatches found' }, { status: 404 });
-  }
-
-  // 2. Get ML item mappings for all SKUs
-  const skus = swatches
-    .map((s) => s.sku_suffix)
-    .filter(Boolean) as string[];
-
-  // Also get the project for catalog sync + ML discovery
+  // 1. Get project metadata first (needed to bootstrap swatches if empty)
   const { data: project } = await supabase
     .from('projects')
     .select('name, metadata')
     .eq('id', projectId)
     .single();
+
+  // 2. Get existing swatches
+  let { data: swatches } = await supabase
+    .from('swatches')
+    .select('id, name, sku_suffix, storage_path')
+    .eq('project_id', projectId)
+    .order('display_order');
+
+  if (!swatches) swatches = [];
+
+  // 3. If no swatches exist but project has variantes in metadata, create them now
+  if (swatches.length === 0 && project?.metadata) {
+    const catalogVariantes = (project.metadata as { variantes?: { sku: string; color: string }[] }).variantes || [];
+    if (catalogVariantes.length > 0) {
+      const newRows = catalogVariantes.map((v, i) => ({
+        project_id: projectId,
+        name: v.color,
+        sku_suffix: v.sku,
+        color_description: v.color,
+        display_order: i,
+      }));
+
+      await supabase.from('swatches').insert(newRows);
+
+      const { data: created } = await supabase
+        .from('swatches')
+        .select('id, name, sku_suffix, storage_path')
+        .eq('project_id', projectId)
+        .order('display_order');
+
+      swatches = created || [];
+    }
+  }
+
+  if (!swatches.length) {
+    return NextResponse.json({ error: 'No swatches found and no variantes in project metadata' }, { status: 404 });
+  }
 
   if (syncNew) {
     const existingSkus = new Set(swatches.map((s) => s.sku_suffix).filter(Boolean));
