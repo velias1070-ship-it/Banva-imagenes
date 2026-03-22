@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Upload, Play, ImageIcon, Settings } from 'lucide-react';
+import { ArrowLeft, Upload, Play, ImageIcon, Settings, Globe } from 'lucide-react';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
 
@@ -111,6 +111,22 @@ export default async function ProjectDetailPage({ params }: Props) {
             <CardContent>
               <div className="text-3xl font-bold">{approved}</div>
               <p className="text-xs text-muted-foreground">aprobadas</p>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href={`/projects/${id}/publish`}>
+          <Card className="cursor-pointer transition-shadow hover:shadow-md border-blue-200">
+            <CardHeader className="flex flex-row items-center gap-3">
+              <Globe className="h-8 w-8 text-blue-500" />
+              <div>
+                <CardTitle className="text-base">Publicar en ML</CardTitle>
+                <p className="text-sm text-muted-foreground">Gestionar fotos de publicaciones</p>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{swatches}</div>
+              <p className="text-xs text-muted-foreground">publicaciones</p>
             </CardContent>
           </Card>
         </Link>
