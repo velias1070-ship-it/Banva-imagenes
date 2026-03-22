@@ -48,12 +48,11 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, '');
 }
 
-interface Producto {
+interface Variante {
   sku: string;
-  nombre: string;
-  categoria: string;
-  color: string | null;
-  tamano: string | null;
+  color: string;
+  color_slug: string;
+  source: 'catalogo' | 'ml';
 }
 
 interface ProductGroup {
@@ -61,14 +60,10 @@ interface ProductGroup {
   slug: string;
   tamano: string;
   categoria: string;
-  variantes: {
-    sku: string;
-    color: string;
-    color_slug: string;
-  }[];
+  variantes: Variante[];
 }
 
-// GET /api/productos — returns products from Supabase grouped by base product
+// GET /api/productos — returns products grouped by base, merging productos + ml_items_map
 export async function GET() {
   const supabaseUrl = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.INVENTORY_SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -79,43 +74,135 @@ export async function GET() {
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const { data, error } = await supabase
-    .from('productos')
-    .select('sku, nombre, categoria, color, tamano')
-    .order('nombre');
+  // Fetch both tables in parallel
+  const [productosRes, mlItemsRes] = await Promise.all([
+    supabase
+      .from('productos')
+      .select('sku, nombre, categoria, color, tamano')
+      .order('nombre'),
+    supabase
+      .from('ml_items_map')
+      .select('sku_venta, item_id, titulo')
+      .eq('activo', true)
+      .is('variation_id', null),
+  ]);
 
-  if (error) {
-    return NextResponse.json({ error: error.message, details: error }, { status: 500 });
+  if (productosRes.error) {
+    return NextResponse.json({ error: productosRes.error.message }, { status: 500 });
   }
 
-  // Group by base product (shared hero shots, differ in color)
-  const groups = new Map<string, Producto[]>();
+  const productos = productosRes.data || [];
+  const mlItems = mlItemsRes.data || [];
 
-  for (const row of data as Producto[]) {
+  // 1. Group productos by base product
+  const groups = new Map<string, { base: string; tamano: string; variantes: Map<string, Variante> }>();
+
+  for (const row of productos) {
     if (!row.color || !row.tamano) continue;
     const base = extractBaseName(row.nombre, row.color);
     const key = `${base}|||${row.tamano.trim().toLowerCase()}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(row);
+    if (!groups.has(key)) {
+      groups.set(key, { base, tamano: row.tamano, variantes: new Map() });
+    }
+    groups.get(key)!.variantes.set(row.sku, {
+      sku: row.sku,
+      color: row.color,
+      color_slug: slugify(row.color),
+      source: 'catalogo',
+    });
   }
 
-  // Build response: only groups with 2+ variants
+  // 2. Enrich with ml_items_map — find ML listings that match existing groups
+  // Build a lookup: for each group, extract keywords to match ML titles
+  for (const [, group] of groups) {
+    const keywords = group.base.split(/\s+/).filter((w) => w.length > 3);
+    if (keywords.length === 0) continue;
+
+    const existingSkus = new Set(group.variantes.keys());
+
+    for (const ml of mlItems) {
+      if (existingSkus.has(ml.sku_venta)) continue;
+
+      // Check if ML title matches ALL keywords of this group
+      const titleLower = ml.titulo.toLowerCase();
+      const allMatch = keywords.every((kw) => titleLower.includes(kw.toLowerCase()));
+      if (!allMatch) continue;
+
+      // Extract color from the ML title — last meaningful word
+      const titleWords = ml.titulo.split(/\s+/);
+      // Skip size-like words at the end (numbers, "Cm", "M", etc.)
+      let colorGuess = ml.sku_venta;
+      for (let i = titleWords.length - 1; i >= 0; i--) {
+        const w = titleWords[i];
+        if (w && !/^\d/.test(w) && w.length > 1 && !['Cm', 'M', 'Plazas', 'Plaza', 'King', 'Super'].includes(w)) {
+          colorGuess = w;
+          break;
+        }
+      }
+
+      existingSkus.add(ml.sku_venta);
+      group.variantes.set(ml.sku_venta, {
+        sku: ml.sku_venta,
+        color: colorGuess,
+        color_slug: slugify(colorGuess),
+        source: 'ml',
+      });
+    }
+  }
+
+  // 3. Also find ML-only groups (products in ML but NOT in productos table)
+  const allCatalogSkus = new Set(productos.map((p) => p.sku));
+  const mlOnlyItems = mlItems.filter((ml) => !allCatalogSkus.has(ml.sku_venta));
+
+  // Group ML-only items by title keywords
+  const mlGroups = new Map<string, { titulo: string; items: typeof mlItems }>();
+  for (const ml of mlOnlyItems) {
+    // Use first N words of title as group key (strip color at end)
+    const words = ml.titulo.split(/\s+/);
+    // Try to find a good grouping — use all words except the last one (usually color)
+    const baseWords = words.slice(0, -1).join(' ');
+    const key = slugify(baseWords);
+    if (!mlGroups.has(key)) mlGroups.set(key, { titulo: baseWords, items: [] });
+    mlGroups.get(key)!.items.push(ml);
+  }
+
+  // Add ML-only groups with 2+ variants
+  for (const [key, mlGroup] of mlGroups) {
+    if (mlGroup.items.length < 2) continue;
+    if (groups.has(key)) continue; // Already covered
+
+    const variantes = new Map<string, Variante>();
+    for (const ml of mlGroup.items) {
+      const titleWords = ml.titulo.split(/\s+/);
+      const colorGuess = titleWords[titleWords.length - 1] || ml.sku_venta;
+      variantes.set(ml.sku_venta, {
+        sku: ml.sku_venta,
+        color: colorGuess,
+        color_slug: slugify(colorGuess),
+        source: 'ml',
+      });
+    }
+
+    groups.set(key, {
+      base: mlGroup.titulo,
+      tamano: '',
+      variantes,
+    });
+  }
+
+  // 4. Build response — only groups with 2+ variants
   const result: ProductGroup[] = [];
 
-  for (const [, items] of groups) {
-    if (items.length < 2) continue;
+  for (const [, group] of groups) {
+    if (group.variantes.size < 2) continue;
 
-    const base = extractBaseName(items[0].nombre, items[0].color!);
+    const variantesArr = Array.from(group.variantes.values());
     result.push({
-      base_name: base,
-      slug: slugify(base),
-      tamano: items[0].tamano!,
-      categoria: inferCategory(items[0].nombre),
-      variantes: items.map((item) => ({
-        sku: item.sku,
-        color: item.color!,
-        color_slug: slugify(item.color!),
-      })),
+      base_name: group.base,
+      slug: slugify(group.base),
+      tamano: group.tamano,
+      categoria: inferCategory(group.base),
+      variantes: variantesArr,
     });
   }
 
