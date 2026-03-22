@@ -79,6 +79,7 @@ interface ProductGroup {
 
 // GET /api/productos — returns products grouped by base, merging productos + ml_items_map
 export async function GET() {
+  try {
   const supabaseUrl = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.INVENTORY_SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -93,12 +94,14 @@ export async function GET() {
     supabase
       .from('productos')
       .select('sku, nombre, categoria, color, tamano')
-      .order('nombre'),
+      .order('nombre')
+      .limit(2000),
     supabase
       .from('ml_items_map')
       .select('sku_venta, item_id, titulo')
       .eq('activo', true)
-      .is('variation_id', null),
+      .is('variation_id', null)
+      .limit(2000),
   ]);
 
   if (productosRes.error) {
@@ -222,4 +225,9 @@ export async function GET() {
   result.sort((a, b) => a.base_name.localeCompare(b.base_name));
 
   return NextResponse.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[GET /api/productos] error:', message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
