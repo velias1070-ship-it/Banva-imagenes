@@ -90,7 +90,10 @@ export async function POST(request: NextRequest) {
   // 3. Get ML item mappings for all SKUs
   const skuSuffixes = [...new Set(
     jobs
-      .map((j) => (j.swatch as { sku_suffix: string | null })?.sku_suffix)
+      .map((j) => {
+        const sw = j.swatch as unknown as { sku_suffix: string | null };
+        return sw?.sku_suffix;
+      })
       .filter(Boolean) as string[]
   )];
 
@@ -111,7 +114,7 @@ export async function POST(request: NextRequest) {
   const results: PublishResult[] = [];
 
   for (const [swatchId, swatchJobs] of bySwatch) {
-    const swatch = swatchJobs[0].swatch as { id: string; name: string; sku_suffix: string | null };
+    const swatch = swatchJobs[0].swatch as unknown as { id: string; name: string; sku_suffix: string | null };
     const sku = swatch?.sku_suffix;
 
     if (!sku) {
