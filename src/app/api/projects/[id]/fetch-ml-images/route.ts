@@ -67,6 +67,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         name: v.color,
         sku_suffix: v.sku,
         color_description: v.color,
+        storage_path: '',
         display_order: i,
       }));
 
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   if (syncNew) {
     const existingSkus = new Set(swatches.map((s) => s.sku_suffix).filter(Boolean));
-    let newRows: { project_id: string; name: string; sku_suffix: string; color_description: string; display_order: number }[] = [];
+    let newRows: { project_id: string; name: string; sku_suffix: string; color_description: string; storage_path: string; display_order: number }[] = [];
 
     // Source 1: catalog variantes from project metadata
     if (project?.metadata) {
@@ -112,6 +113,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           name: v.color,
           sku_suffix: v.sku,
           color_description: v.color,
+          storage_path: '',
           display_order: swatches.length + newRows.length,
         });
       }
@@ -159,6 +161,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               name: colorGuess,
               sku_suffix: ml.sku_venta,
               color_description: colorGuess,
+              storage_path: '',
               display_order: swatches.length + newRows.length,
             });
           }

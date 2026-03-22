@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
       name: v.color,
       sku_suffix: v.sku,
       color_description: v.color,
+      storage_path: '',
       display_order: i,
     }));
 
