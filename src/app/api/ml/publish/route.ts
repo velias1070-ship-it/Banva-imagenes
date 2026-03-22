@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlUploadImageFromUrl, mlReplaceItemPicturesFromUrls } from '@/lib/ml';
+import { mlReplaceItemPicturesFromUrls } from '@/lib/ml';
 
 export const maxDuration = 60;
 
 interface PublishRequest {
   project_id: string;
-  job_ids?: string[];  // Optional: specific jobs. If omitted, all approved jobs.
-  dry_run?: boolean;   // Preview what would be published without actually doing it
+  job_ids?: string[];
+  dry_run?: boolean;
 }
 
 interface PublishResult {
@@ -23,12 +23,7 @@ interface PublishResult {
  * POST /api/ml/publish
  *
  * Publishes approved generated images to MercadoLibre listings.
- *
- * Flow per SKU:
- * 1. Find approved jobs for the project
- * 2. Match each swatch's sku_suffix → ml_items_map.sku_venta → item_id
- * 3. Get public URLs for the generated images from Supabase Storage
- * 4. PUT /items/{item_id} with the new picture source URLs
+ * Matches swatch.sku_suffix -> ml_items_map.sku_venta -> item_id
  */
 export async function POST(request: NextRequest) {
   const body: PublishRequest = await request.json();
@@ -40,81 +35,75 @@ export async function POST(request: NextRequest) {
 
   const supabase = createAdminClient();
 
-  // 1. Get approved jobs with their swatch info
-  let query = supabase
-    .from('generation_jobs')
-    .select(`
-      id,
-      output_storage_path,
-      hero_shot_id,
-      swatch_id,
-      swatch:swatches!inner(id, name, sku_suffix),
-      hero_shot:hero_shots!inner(id, filename, shot_type)
-    `)
-    .eq('status', 'approved');
+  // 1. Get batch IDs for this project
+  const { data: batches } = await supabase
+    .from('generation_batches')
+    .select('id')
+    .eq('project_id', project_id);
 
-  if (job_ids?.length) {
-    query = query.in('id', job_ids);
-  } else {
-    // Get all approved jobs for this project via batch
-    const { data: batches } = await supabase
-      .from('generation_batches')
-      .select('id')
-      .eq('project_id', project_id);
-
-    if (!batches?.length) {
-      return NextResponse.json({ error: 'No batches found for project' }, { status: 404 });
-    }
-
-    query = query.in('batch_id', batches.map((b) => b.id));
+  if (!batches?.length) {
+    return NextResponse.json({ error: 'No batches found for project' }, { status: 404 });
   }
 
-  const { data: jobs, error: jobsError } = await query;
+  const batchIds = batches.map((b) => b.id);
+
+  // 2. Get approved jobs
+  let jobQuery = supabase
+    .from('generation_jobs')
+    .select('id, output_storage_path, swatch_id')
+    .eq('status', 'approved')
+    .in('batch_id', batchIds);
+
+  if (job_ids?.length) {
+    jobQuery = jobQuery.in('id', job_ids);
+  }
+
+  const { data: jobs, error: jobsError } = await jobQuery;
 
   if (jobsError) {
     return NextResponse.json({ error: jobsError.message }, { status: 500 });
   }
-
   if (!jobs?.length) {
     return NextResponse.json({ error: 'No approved jobs found' }, { status: 404 });
   }
 
-  // 2. Group jobs by swatch (each swatch = one SKU = one ML listing)
+  // 3. Get swatches for these jobs
+  const swatchIds = [...new Set(jobs.map((j) => j.swatch_id))];
+  const { data: swatches } = await supabase
+    .from('swatches')
+    .select('id, name, sku_suffix')
+    .in('id', swatchIds);
+
+  const swatchMap = new Map((swatches || []).map((s) => [s.id, s]));
+
+  // 4. Group jobs by swatch
   const bySwatch = new Map<string, typeof jobs>();
   for (const job of jobs) {
-    const swatchId = job.swatch_id;
-    if (!bySwatch.has(swatchId)) bySwatch.set(swatchId, []);
-    bySwatch.get(swatchId)!.push(job);
+    if (!bySwatch.has(job.swatch_id)) bySwatch.set(job.swatch_id, []);
+    bySwatch.get(job.swatch_id)!.push(job);
   }
 
-  // 3. Get ML item mappings for all SKUs
-  const skuSuffixes = [...new Set(
-    jobs
-      .map((j) => {
-        const sw = j.swatch as unknown as { sku_suffix: string | null };
-        return sw?.sku_suffix;
-      })
-      .filter(Boolean) as string[]
-  )];
+  // 5. Get ML item mappings
+  const allSkus = (swatches || [])
+    .map((s) => s.sku_suffix)
+    .filter(Boolean) as string[];
 
   const { data: mlItems } = await supabase
     .from('ml_items_map')
     .select('sku_venta, item_id, titulo')
-    .in('sku_venta', skuSuffixes)
+    .in('sku_venta', allSkus.length > 0 ? allSkus : ['__none__'])
     .eq('activo', true);
 
-  const skuToItem = new Map(
-    (mlItems || []).map((item) => [item.sku_venta, item])
-  );
+  const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
 
-  // 4. Get Supabase storage public URL base
+  // 6. Storage base URL
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/`;
 
-  // 5. Process each SKU
+  // 7. Process each SKU
   const results: PublishResult[] = [];
 
   for (const [swatchId, swatchJobs] of bySwatch) {
-    const swatch = swatchJobs[0].swatch as unknown as { id: string; name: string; sku_suffix: string | null };
+    const swatch = swatchMap.get(swatchId);
     const sku = swatch?.sku_suffix;
 
     if (!sku) {
@@ -142,7 +131,6 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Build public URLs for approved images
     const imageUrls = swatchJobs
       .filter((j) => j.output_storage_path)
       .map((j) => `${storageBase}${j.output_storage_path}`);
@@ -170,10 +158,8 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Actually publish to ML
     try {
       await mlReplaceItemPicturesFromUrls(mlItem.item_id, imageUrls);
-
       results.push({
         sku,
         item_id: mlItem.item_id,
@@ -194,7 +180,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const summary = {
+  return NextResponse.json({
     project_id,
     dry_run,
     total_skus: results.length,
@@ -203,7 +189,5 @@ export async function POST(request: NextRequest) {
     skipped: results.filter((r) => r.status === 'skipped').length,
     total_images: results.reduce((sum, r) => sum + r.pictures_uploaded, 0),
     details: results,
-  };
-
-  return NextResponse.json(summary);
+  });
 }
