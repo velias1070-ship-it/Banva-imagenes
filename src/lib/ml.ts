@@ -199,7 +199,7 @@ export async function mlUploadImageBuffer(buffer: Buffer, filename: string): Pro
   const token = await ensureValidToken();
 
   const formData = new FormData();
-  formData.append('file', new Blob([buffer]), filename);
+  formData.append('file', new Blob([buffer as BlobPart]), filename);
 
   const res = await fetch(`${ML_API_BASE}/pictures/items/upload`, {
     method: 'POST',
