@@ -3,6 +3,25 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3-pro-image-preview';
 const GEMINI_ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-2.0-flash';
 const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta/models';
 
+const MAX_RETRIES = 3;
+
+function isRateLimitError(error: string): boolean {
+  const lower = error.toLowerCase();
+  return lower.includes('quota') || lower.includes('rate') || lower.includes('429') || lower.includes('resource_exhausted');
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function getRetryDelay(error: string, attempt: number): number {
+  // Try to extract the suggested wait time from the error message
+  const match = error.match(/retry in (\d+\.?\d*)/i);
+  if (match) return Math.ceil(parseFloat(match[1]) * 1000) + 500;
+  // Exponential backoff: 5s, 10s, 20s
+  return 5000 * Math.pow(2, attempt);
+}
+
 export interface GeminiGenerateRequest {
   heroImageBase64?: string;   // Optional for Tier 2 (generation from scratch)
   heroMimeType?: string;      // Optional for Tier 2 (generation from scratch)
@@ -59,65 +78,94 @@ export async function generateImage(request: GeminiGenerateRequest): Promise<Gem
     },
   };
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
 
-    const durationMs = Date.now() - start;
+      const durationMs = Date.now() - start;
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return {
-        success: false,
-        error: errorData?.error?.message || `HTTP ${response.status}`,
-        errorCode: String(response.status),
-        durationMs,
-      };
-    }
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData?.error?.message || `HTTP ${response.status}`;
 
-    const data = await response.json();
-    const parts = data?.candidates?.[0]?.content?.parts || [];
+        // Retry on rate limit errors
+        if (isRateLimitError(errorMsg) && attempt < MAX_RETRIES) {
+          const delay = getRetryDelay(errorMsg, attempt);
+          console.log(`[gemini] Rate limited (attempt ${attempt + 1}/${MAX_RETRIES}), waiting ${delay}ms...`);
+          await sleep(delay);
+          continue;
+        }
 
-    let imageBase64: string | undefined;
-    let imageMimeType: string | undefined;
-    let textResponse: string | undefined;
-
-    for (const part of parts) {
-      if (part.inlineData) {
-        imageBase64 = part.inlineData.data;
-        imageMimeType = part.inlineData.mimeType;
-      } else if (part.text) {
-        textResponse = part.text;
+        return {
+          success: false,
+          error: errorMsg,
+          errorCode: String(response.status),
+          durationMs,
+        };
       }
-    }
 
-    if (!imageBase64) {
+      const data = await response.json();
+      const responseParts = data?.candidates?.[0]?.content?.parts || [];
+
+      let imageBase64: string | undefined;
+      let imageMimeType: string | undefined;
+      let textResponse: string | undefined;
+
+      for (const part of responseParts) {
+        if (part.inlineData) {
+          imageBase64 = part.inlineData.data;
+          imageMimeType = part.inlineData.mimeType;
+        } else if (part.text) {
+          textResponse = part.text;
+        }
+      }
+
+      if (!imageBase64) {
+        return {
+          success: false,
+          error: 'No image in Gemini response',
+          textResponse,
+          durationMs,
+        };
+      }
+
       return {
-        success: false,
-        error: 'No image in Gemini response',
+        success: true,
+        imageBase64,
+        imageMimeType,
         textResponse,
         durationMs,
       };
-    }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
 
-    return {
-      success: true,
-      imageBase64,
-      imageMimeType,
-      textResponse,
-      durationMs,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
-      errorCode: 'NETWORK_ERROR',
-      durationMs: Date.now() - start,
-    };
+      // Retry on network errors
+      if (attempt < MAX_RETRIES) {
+        const delay = getRetryDelay(errorMsg, attempt);
+        console.log(`[gemini] Error (attempt ${attempt + 1}/${MAX_RETRIES}): ${errorMsg}, retrying in ${delay}ms...`);
+        await sleep(delay);
+        continue;
+      }
+
+      return {
+        success: false,
+        error: errorMsg,
+        errorCode: 'NETWORK_ERROR',
+        durationMs: Date.now() - start,
+      };
+    }
   }
+
+  return {
+    success: false,
+    error: 'Max retries exceeded',
+    errorCode: 'MAX_RETRIES',
+    durationMs: Date.now() - start,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,54 +211,81 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
     },
   };
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
 
-    const durationMs = Date.now() - start;
+      const durationMs = Date.now() - start;
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return {
-        success: false,
-        error: errorData?.error?.message || `HTTP ${response.status}`,
-        errorCode: String(response.status),
-        durationMs,
-      };
-    }
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData?.error?.message || `HTTP ${response.status}`;
 
-    const data = await response.json();
-    const responseParts = data?.candidates?.[0]?.content?.parts || [];
+        if (isRateLimitError(errorMsg) && attempt < MAX_RETRIES) {
+          const delay = getRetryDelay(errorMsg, attempt);
+          console.log(`[gemini-analysis] Rate limited (attempt ${attempt + 1}/${MAX_RETRIES}), waiting ${delay}ms...`);
+          await sleep(delay);
+          continue;
+        }
 
-    let textResponse: string | undefined;
-    for (const part of responseParts) {
-      if (part.text) {
-        textResponse = (textResponse || '') + part.text;
+        return {
+          success: false,
+          error: errorMsg,
+          errorCode: String(response.status),
+          durationMs,
+        };
       }
-    }
 
-    if (!textResponse) {
+      const data = await response.json();
+      const responseParts = data?.candidates?.[0]?.content?.parts || [];
+
+      let textResponse: string | undefined;
+      for (const part of responseParts) {
+        if (part.text) {
+          textResponse = (textResponse || '') + part.text;
+        }
+      }
+
+      if (!textResponse) {
+        return {
+          success: false,
+          error: 'No text in Gemini analysis response',
+          durationMs,
+        };
+      }
+
       return {
-        success: false,
-        error: 'No text in Gemini analysis response',
+        success: true,
+        textResponse,
         durationMs,
       };
-    }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
 
-    return {
-      success: true,
-      textResponse,
-      durationMs,
-    };
-  } catch (err) {
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
-      errorCode: 'NETWORK_ERROR',
-      durationMs: Date.now() - start,
-    };
+      if (attempt < MAX_RETRIES) {
+        const delay = getRetryDelay(errorMsg, attempt);
+        console.log(`[gemini-analysis] Error (attempt ${attempt + 1}/${MAX_RETRIES}): ${errorMsg}, retrying in ${delay}ms...`);
+        await sleep(delay);
+        continue;
+      }
+
+      return {
+        success: false,
+        error: errorMsg,
+        errorCode: 'NETWORK_ERROR',
+        durationMs: Date.now() - start,
+      };
+    }
   }
+
+  return {
+    success: false,
+    error: 'Max retries exceeded',
+    errorCode: 'MAX_RETRIES',
+    durationMs: Date.now() - start,
+  };
 }
