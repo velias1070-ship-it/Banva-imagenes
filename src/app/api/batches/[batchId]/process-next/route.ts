@@ -382,8 +382,13 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     const imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Upload result
-    const outputPath = `projects/${project.id}/generated/${job.id}.png`;
+    // Upload result — name includes SKU + color + shot type for searchability
+    const sku = job.swatch?.sku_suffix || '';
+    const color = (job.swatch?.name || '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+    const shotType = (job.hero_shot?.shot_type || 'gen').replace(/[^a-zA-Z0-9]+/g, '-');
+    const attempt = job.attempt + 1;
+    const slug = [sku, color, shotType, `v${attempt}`].filter(Boolean).join('_');
+    const outputPath = `projects/${project.id}/generated/${slug}_${job.id.substring(0, 8)}.png`;
 
     await supabase.storage
       .from('images')

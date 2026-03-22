@@ -3,11 +3,12 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, FolderOpen, Settings, ImageIcon } from 'lucide-react';
+import { LayoutDashboard, FolderOpen, Search, Settings, ImageIcon } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/projects', label: 'Proyectos', icon: FolderOpen },
+  { href: '/search', label: 'Buscar Imagenes', icon: Search },
 ];
 
 export function Sidebar() {
