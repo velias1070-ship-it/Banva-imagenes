@@ -54,31 +54,78 @@ export async function POST(request: NextRequest, context: RouteContext) {
     .map((s) => s.sku_suffix)
     .filter(Boolean) as string[];
 
-  // Also get the project to find its catalog variantes
+  // Also get the project for catalog sync + ML discovery
   const { data: project } = await supabase
     .from('projects')
-    .select('metadata')
+    .select('name, metadata')
     .eq('id', projectId)
     .single();
 
-  // Check if there are new variantes in metadata that don't have swatches yet
-  if (syncNew && project?.metadata) {
-    const catalogVariantes = (project.metadata as { variantes?: { sku: string; color: string }[] }).variantes || [];
+  if (syncNew) {
     const existingSkus = new Set(swatches.map((s) => s.sku_suffix).filter(Boolean));
+    let newRows: { project_id: string; name: string; sku_suffix: string; color_description: string; display_order: number }[] = [];
 
-    const newVariantes = catalogVariantes.filter((v) => !existingSkus.has(v.sku));
-    if (newVariantes.length > 0) {
-      const newRows = newVariantes.map((v, i) => ({
-        project_id: projectId,
-        name: v.color,
-        sku_suffix: v.sku,
-        color_description: v.color,
-        display_order: swatches.length + i,
-      }));
+    // Source 1: catalog variantes from project metadata
+    if (project?.metadata) {
+      const catalogVariantes = (project.metadata as { variantes?: { sku: string; color: string }[] }).variantes || [];
+      const newFromCatalog = catalogVariantes.filter((v) => !existingSkus.has(v.sku));
+      for (const v of newFromCatalog) {
+        existingSkus.add(v.sku);
+        newRows.push({
+          project_id: projectId,
+          name: v.color,
+          sku_suffix: v.sku,
+          color_description: v.color,
+          display_order: swatches.length + newRows.length,
+        });
+      }
+    }
 
+    // Source 2: discover new SKUs from ml_items_map that share the product name
+    // e.g. if project is "Quilt Atenas 30P", find all individual ML listings with "Atenas" in the title
+    if (project?.name) {
+      // Extract key words from project name (words > 3 chars)
+      const keywords = project.name.split(/\s+/).filter((w: string) => w.length > 3);
+      if (keywords.length > 0) {
+        // Search ml_items_map for listings matching the product name
+        let mlQuery = inventoryDb
+          .from('ml_items_map')
+          .select('sku_venta, item_id, titulo')
+          .eq('activo', true)
+          .is('variation_id', null);
+
+        // Match on the most distinctive keyword (usually the product line name)
+        for (const kw of keywords) {
+          mlQuery = mlQuery.ilike('titulo', `%${kw}%`);
+        }
+
+        const { data: mlMatches } = await mlQuery.limit(50);
+
+        if (mlMatches) {
+          for (const ml of mlMatches) {
+            if (existingSkus.has(ml.sku_venta)) continue;
+
+            // Extract color from the ML title (last word usually)
+            const titleWords = ml.titulo.split(/\s+/);
+            const colorGuess = titleWords[titleWords.length - 1] || ml.sku_venta;
+
+            existingSkus.add(ml.sku_venta);
+            newRows.push({
+              project_id: projectId,
+              name: colorGuess,
+              sku_suffix: ml.sku_venta,
+              color_description: colorGuess,
+              display_order: swatches.length + newRows.length,
+            });
+          }
+        }
+      }
+    }
+
+    // Insert new swatches
+    if (newRows.length > 0) {
       await supabase.from('swatches').insert(newRows);
 
-      // Re-fetch swatches to include new ones
       const { data: updatedSwatches } = await supabase
         .from('swatches')
         .select('id, name, sku_suffix, storage_path')
