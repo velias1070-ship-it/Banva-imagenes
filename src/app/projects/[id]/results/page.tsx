@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
   ImageIcon, RotateCcw, LayoutGrid, Layers, ChevronDown, ChevronRight,
+  Upload, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -60,6 +61,11 @@ export default function ResultsPage() {
     return 'grouped';
   });
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string>>(new Set());
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<{
+    success: number; errors: number; skipped: number; total_images: number;
+    details?: { sku: string; item_id: string; titulo: string; status: string; error?: string }[];
+  } | null>(null);
 
   const fetchResults = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/results`);
@@ -243,6 +249,37 @@ export default function ResultsPage() {
     }
   }
 
+  async function handlePublishToML(dryRun: boolean) {
+    setPublishing(true);
+    setPublishResult(null);
+    try {
+      const res = await fetch('/api/ml/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: id, dry_run: dryRun }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPublishResult(data);
+        if (dryRun) {
+          toast.info(`Preview: ${data.total_images} imagenes a ${data.success} publicaciones`);
+        } else {
+          if (data.errors > 0) {
+            toast.error(`Publicado con ${data.errors} errores. ${data.success} exitosos.`);
+          } else {
+            toast.success(`${data.total_images} imagenes publicadas en ${data.success} publicaciones de ML`);
+          }
+        }
+      } else {
+        toast.error(data.error || 'Error publicando');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   function statusIcon(status: string) {
     switch (status) {
       case 'approved':
@@ -406,12 +443,71 @@ export default function ResultsPage() {
           </p>
         </div>
         {approvedCount > 0 && (
-          <Button onClick={handleDownloadAll}>
-            <Download className="mr-2 h-4 w-4" />
-            Descargar Aprobadas ({approvedCount})
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleDownloadAll}>
+              <Download className="mr-2 h-4 w-4" />
+              Descargar ZIP ({approvedCount})
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handlePublishToML(true)}
+              disabled={publishing}
+            >
+              {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              Preview ML
+            </Button>
+            <Button
+              onClick={() => handlePublishToML(false)}
+              disabled={publishing}
+            >
+              {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              Publicar en ML
+            </Button>
+          </div>
         )}
       </div>
+
+      {/* Publish result panel */}
+      {publishResult && (
+        <Card className="mb-6">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-sm">
+                {publishResult.details?.[0]?.status === 'success' && !publishing
+                  ? 'Resultado de publicacion'
+                  : 'Preview de publicacion'}
+              </h3>
+              <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setPublishResult(null)}>
+                Cerrar
+              </Button>
+            </div>
+            <div className="flex gap-4 text-sm mb-3">
+              <span className="text-green-600">{publishResult.success} exitosos</span>
+              {publishResult.errors > 0 && <span className="text-red-600">{publishResult.errors} errores</span>}
+              {publishResult.skipped > 0 && <span className="text-yellow-600">{publishResult.skipped} omitidos</span>}
+              <span className="text-muted-foreground">{publishResult.total_images} imagenes total</span>
+            </div>
+            {publishResult.details && (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {publishResult.details.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs py-1 border-t">
+                    {d.status === 'success' ? (
+                      <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
+                    ) : d.status === 'error' ? (
+                      <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
+                    ) : (
+                      <AlertTriangle className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                    )}
+                    <span className="font-mono">{d.sku}</span>
+                    <span className="text-muted-foreground truncate">{d.titulo || d.item_id}</span>
+                    {d.error && <span className="text-red-500 truncate ml-auto">{d.error}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)}>
         {/* View toggle + Tabs */}
