@@ -82,7 +82,6 @@ export async function GET() {
   const { data, error } = await supabase
     .from('productos')
     .select('sku, nombre, categoria, color, tamano')
-    .eq('estado_sku', 'activo')
     .order('nombre');
 
   if (error) {
