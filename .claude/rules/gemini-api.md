@@ -9,7 +9,7 @@
 | API Key | (secret) | `GEMINI_API_KEY` |
 | Temperatura | 0.2 | Hardcoded en client.ts |
 | Response Modalities | `['IMAGE', 'TEXT']` | Hardcoded |
-| Output Resolution | 1024x1024 | Especificado en prompt |
+| Output Resolution | 1200x1200 | Especificado en prompt + post-process |
 
 ## Request Format
 

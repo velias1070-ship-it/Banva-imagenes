@@ -36,7 +36,10 @@ Cada prompt tiene 3 capas:
 `buildPrompt()` en `src/app/api/projects/[id]/generate/route.ts`
 Parametros: `(category, swatchName, colorDescription, shotType, isDarkSwatch)`
 Temperatura: **0.2** (determinista, NO subir)
-Resolucion: 1024x1024
+Resolucion: 1200x1200 (obligatorio MercadoLibre — zoom requiere >800px, 1200 evita degradacion)
+Color space: RGB (NO CMYK)
+Idioma del texto en imagen: ESPAÑOL (mercado Chile)
+Cobertura del producto: >= 95% del area de la imagen
 
 ## Categorias con Reglas Especializadas
 

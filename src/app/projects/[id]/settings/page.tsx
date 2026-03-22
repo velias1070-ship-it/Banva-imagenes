@@ -249,6 +249,7 @@ export default function SettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="1200x1200">1200 x 1200 (MercadoLibre)</SelectItem>
                     <SelectItem value="1024x1024">1024 x 1024</SelectItem>
                     <SelectItem value="768x768">768 x 768</SelectItem>
                     <SelectItem value="512x512">512 x 512</SelectItem>

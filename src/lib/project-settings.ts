@@ -6,7 +6,7 @@
 // Projects without custom settings use system defaults transparently.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ImageResolution = '1024x1024' | '768x768' | '512x512';
+export type ImageResolution = '1200x1200' | '1024x1024' | '768x768' | '512x512';
 export type GenerationModeOverride = 'auto' | 'edit' | 'reference' | 'from_scratch';
 
 export interface ProjectSettings {
@@ -43,7 +43,7 @@ export interface ProjectSettings {
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   generation: {
-    resolution: '1024x1024',
+    resolution: '1200x1200',
     temperature: 0.2,
     mode: 'auto',
   },
@@ -94,7 +94,7 @@ export function getProjectSettings(
 
   // ── Generation ──
   const gen = (s.generation || {}) as Record<string, unknown>;
-  const resolution = ['1024x1024', '768x768', '512x512'].includes(gen.resolution as string)
+  const resolution = ['1200x1200', '1024x1024', '768x768', '512x512'].includes(gen.resolution as string)
     ? (gen.resolution as ImageResolution)
     : defaults.generation.resolution;
   const temperature = isNumber(gen.temperature)

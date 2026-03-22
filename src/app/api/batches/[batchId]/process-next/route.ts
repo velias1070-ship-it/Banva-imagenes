@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -378,9 +378,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       throw new Error(result.error || 'Generation failed');
     }
 
+    // Post-process: ensure 1200x1200 RGB
+    const rawBuffer = Buffer.from(result.imageBase64, 'base64');
+    const imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
+
     // Upload result
     const outputPath = `projects/${project.id}/generated/${job.id}.png`;
-    const imageBuffer = Buffer.from(result.imageBase64, 'base64');
 
     await supabase.storage
       .from('images')

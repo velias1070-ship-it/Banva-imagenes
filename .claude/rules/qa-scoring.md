@@ -36,7 +36,9 @@ Se ejecuta PRIMERO. Si falla cualquiera -> FLAGGED inmediato sin calcular score.
 
 ## Checks Tecnicos
 
-- Resolucion: >= 1024x1024
+- Resolucion: EXACTAMENTE 1200x1200 (requerido por MercadoLibre para zoom >800px)
+- Color space: RGB obligatorio (NO CMYK — flaggear inmediato si CMYK)
+- Producto debe ocupar >= 95% del area de la imagen
 - Tamano archivo: 100KB - 5MB (< 100KB = corrupta)
 - Aspect ratio: tolerancia 0.05 de 1:1
 - Formato: JPG/PNG valido
@@ -103,6 +105,8 @@ Se ejecuta PRIMERO. Si falla cualquiera -> FLAGGED inmediato sin calcular score.
 Para imagen principal:
 - Fondo blanco puro (RGB > 240 en esquinas)
 - Sin texto ni watermarks generados por IA
-- Producto centrado y prominente
-- Minimo recomendado: 1200px
-- Formato: JPG, max 2MB
+- Producto centrado y prominente, ocupando >= 95% del espacio
+- Resolucion EXACTA: 1200x1200 px (no redimensionar despues, genera degradacion)
+- Color space: RGB (NO CMYK)
+- Formato: JPG o PNG, max 2MB
+- Si la imagen tiene texto visible: DEBE estar en espanol (mercado Chile). Texto en ingles → FLAGGED

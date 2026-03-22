@@ -753,7 +753,7 @@ export function buildEditPrompt(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024',
+  resolution: string = '1200x1200',
   swatchHex?: string | null
 ): string {
   const darkNote = isDarkSwatch
@@ -777,7 +777,7 @@ export function buildReferencePrompt(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024',
+  resolution: string = '1200x1200',
   swatchHex?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
@@ -811,7 +811,7 @@ export function buildFromScratchPrompt(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024',
+  resolution: string = '1200x1200',
   swatchHex?: string | null
 ): string {
   const colorInfo = colorDescription ? ` (${colorDescription})` : '';
@@ -847,7 +847,7 @@ export function buildPromptForMode(
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
-  resolution: string = '1024x1024',
+  resolution: string = '1200x1200',
   swatchHex?: string | null
 ): string {
   switch (mode) {

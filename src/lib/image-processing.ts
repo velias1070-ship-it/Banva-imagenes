@@ -129,3 +129,20 @@ export async function flattenHeroEmboss(imageBuffer: Buffer): Promise<Buffer> {
   console.log('[image-processing] Flattened hero emboss V3: lift 0->80 + blur 5.0 + contrast 0.50 + re-sharpen');
   return sharpened;
 }
+
+/**
+ * Post-process generated image to meet MercadoLibre specs:
+ * - Exact resolution: sizePx x sizePx (default 1200x1200)
+ * - Color space: sRGB (converts from CMYK if needed)
+ * - Format: PNG buffer
+ */
+export async function ensureOutputSpec(imageBuffer: Buffer, sizePx: number = 1200): Promise<Buffer> {
+  const processed = await sharp(imageBuffer)
+    .toColorspace('srgb')
+    .resize(sizePx, sizePx, { fit: 'cover' })
+    .png()
+    .toBuffer();
+
+  console.log(`[image-processing] Post-processed to ${sizePx}x${sizePx} sRGB PNG`);
+  return processed;
+}
