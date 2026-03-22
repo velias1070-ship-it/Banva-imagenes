@@ -151,14 +151,15 @@ export async function POST(request: NextRequest) {
   // Also get all swatch names for fallback matching by title
   const swatchNames = (swatches || []).map((s) => s.name.toLowerCase());
 
-  // Fetch ML items by SKU
+  // Fetch ML items by SKU — only individual listings (no variations)
   let mlItems: { sku_venta: string; item_id: string; titulo: string }[] = [];
   if (allSkus.length > 0) {
     const { data } = await inventoryDb
       .from('ml_items_map')
       .select('sku_venta, item_id, titulo')
       .in('sku_venta', allSkus)
-      .eq('activo', true);
+      .eq('activo', true)
+      .is('variation_id', null);
     mlItems = data || [];
   }
 
@@ -173,6 +174,7 @@ export async function POST(request: NextRequest) {
         .select('sku_venta, item_id, titulo')
         .ilike('titulo', `%${searchTerm}%`)
         .eq('activo', true)
+        .is('variation_id', null)
         .limit(10);
 
       if (matches?.length) {

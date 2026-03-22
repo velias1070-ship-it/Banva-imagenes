@@ -105,7 +105,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     .from('ml_items_map')
     .select('sku_venta, item_id, titulo')
     .in('sku_venta', allSkus)
-    .eq('activo', true);
+    .eq('activo', true)
+    .is('variation_id', null);
 
   const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
 
