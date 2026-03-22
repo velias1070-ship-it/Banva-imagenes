@@ -190,23 +190,13 @@ export async function mlPost<T = unknown>(path: string, body: unknown): Promise<
   return res.json();
 }
 
-// Upload image to ML from a URL
-// First tries source URL upload. If ML can't reach it, downloads and re-uploads as buffer.
+// Upload image to ML from a URL — downloads it first then uploads as buffer
 export async function mlUploadImageFromUrl(sourceUrl: string): Promise<{ id: string }> {
-  try {
-    return await mlPost('/pictures/items/upload', { source: sourceUrl });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : '';
-    // If ML couldn't download the image, fetch it ourselves and upload as buffer
-    if (msg.includes('403') || msg.includes('400') || msg.includes('connection') || msg.includes('timeout')) {
-      console.log(`[ml] Source upload failed, falling back to buffer upload: ${sourceUrl.substring(0, 80)}`);
-      const imgRes = await fetch(sourceUrl);
-      if (!imgRes.ok) throw new Error(`Failed to download image: ${imgRes.status}`);
-      const buffer = Buffer.from(await imgRes.arrayBuffer());
-      return mlUploadImageBuffer(buffer, 'image.png');
-    }
-    throw err;
-  }
+  const imgRes = await fetch(sourceUrl);
+  if (!imgRes.ok) throw new Error(`Failed to download image from ${sourceUrl.substring(0, 80)}: ${imgRes.status}`);
+  const buffer = Buffer.from(await imgRes.arrayBuffer());
+  const ext = sourceUrl.includes('.png') ? 'png' : 'jpg';
+  return mlUploadImageBuffer(buffer, `image.${ext}`);
 }
 
 // Upload image to ML from binary buffer
