@@ -55,6 +55,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) {
+    console.error('[POST /api/projects] project insert error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
@@ -65,11 +66,13 @@ export async function POST(request: NextRequest) {
       name: v.color,
       sku_suffix: v.sku,
       color_description: v.color,
-      storage_path: '',
       display_order: i,
     }));
 
-    await supabase.from('swatches').insert(swatchRows);
+    const { error: swatchError } = await supabase.from('swatches').insert(swatchRows);
+    if (swatchError) {
+      console.error('[POST /api/projects] swatch insert error:', swatchError);
+    }
   }
 
   return NextResponse.json(project, { status: 201 });
