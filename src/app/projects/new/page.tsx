@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,27 +12,70 @@ import { PRODUCT_CATEGORIES } from '@/lib/constants';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
+interface ProductGroup {
+  base_name: string;
+  slug: string;
+  tamano: string;
+  categoria: string;
+  variantes: {
+    sku: string;
+    color: string;
+    color_slug: string;
+  }[];
+}
+
 export default function NewProjectPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<'catalog' | 'manual'>('catalog');
+  const [productos, setProductos] = useState<ProductGroup[]>([]);
+  const [loadingProductos, setLoadingProductos] = useState(true);
+  const [selectedProducto, setSelectedProducto] = useState<string>('');
+
+  // Form fields
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('');
+  const [skuBase, setSkuBase] = useState('');
+  const [description, setDescription] = useState('');
+
+  useEffect(() => {
+    fetch('/api/productos')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setProductos(data);
+      })
+      .finally(() => setLoadingProductos(false));
+  }, []);
+
+  function handleProductoSelect(slug: string) {
+    setSelectedProducto(slug);
+    const prod = productos.find((p) => p.slug === slug);
+    if (prod) {
+      setName(prod.base_name);
+      setCategory(prod.categoria);
+      setSkuBase(prod.slug);
+      const varList = prod.variantes.map((v) => `${v.sku} (${v.color})`).join(', ');
+      setDescription(`${prod.tamano} — ${prod.variantes.length} variantes: ${varList}`);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
 
-    const formData = new FormData(e.currentTarget);
-    const data = {
-      name: formData.get('name') as string,
-      category: formData.get('category') as string,
-      sku_base: formData.get('sku_base') as string,
-      description: formData.get('description') as string,
-    };
+    const prod = productos.find((p) => p.slug === selectedProducto);
 
     try {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          name,
+          category,
+          sku_base: skuBase,
+          description,
+          variantes: mode === 'catalog' && prod ? prod.variantes : undefined,
+        }),
       });
 
       if (res.ok) {
@@ -54,9 +97,62 @@ export default function NewProjectPage() {
       <Card className="mx-auto max-w-lg">
         <CardHeader>
           <CardTitle>Nuevo Proyecto</CardTitle>
+          <CardDescription>
+            Selecciona un producto del catalogo o crea uno manual.
+          </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Mode toggle */}
+          <div className="mb-6 flex gap-2">
+            <Button
+              type="button"
+              variant={mode === 'catalog' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setMode('catalog')}
+            >
+              Desde catalogo
+            </Button>
+            <Button
+              type="button"
+              variant={mode === 'manual' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setMode('manual')}
+            >
+              Manual
+            </Button>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
+            {mode === 'catalog' && (
+              <div className="space-y-2">
+                <Label>Producto del catalogo</Label>
+                <Select
+                  value={selectedProducto}
+                  onValueChange={handleProductoSelect}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={loadingProductos ? 'Cargando...' : 'Selecciona un producto'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {productos.map((p) => (
+                      <SelectItem key={p.slug} value={p.slug}>
+                        {p.base_name} — {p.tamano} ({p.variantes.length} vars)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedProducto && (
+                  <div className="mt-2 rounded-md bg-muted p-3 text-sm">
+                    {productos.find((p) => p.slug === selectedProducto)?.variantes.map((v) => (
+                      <span key={v.sku} className="mr-2 inline-block rounded bg-background px-2 py-0.5 text-xs">
+                        {v.color} <span className="text-muted-foreground">({v.sku})</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="name">Nombre del producto</Label>
               <Input
@@ -64,12 +160,14 @@ export default function NewProjectPage() {
                 name="name"
                 placeholder="Ej: Sabana Lisa 1.5 Plazas"
                 required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="category">Categoria</Label>
-              <Select name="category" required>
+              <Select name="category" required value={category} onValueChange={setCategory}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona una categoria" />
                 </SelectTrigger>
@@ -89,6 +187,8 @@ export default function NewProjectPage() {
                 id="sku_base"
                 name="sku_base"
                 placeholder="Ej: SAB-001"
+                value={skuBase}
+                onChange={(e) => setSkuBase(e.target.value)}
               />
             </div>
 
@@ -99,6 +199,8 @@ export default function NewProjectPage() {
                 name="description"
                 placeholder="Notas sobre el producto..."
                 rows={3}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
               />
             </div>
 

@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   const supabase = await createServerSupabase();
   const body = await request.json();
 
-  const { name, category, sku_base, description } = body;
+  const { name, category, sku_base, description, variantes } = body;
 
   if (!name || !category) {
     return NextResponse.json(
@@ -49,13 +49,27 @@ export async function POST(request: NextRequest) {
       sku_base: sku_base || null,
       description: description || null,
       status: 'draft',
-      metadata: {},
+      metadata: variantes ? { variantes } : {},
     })
     .select()
     .single();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // If variantes came from the catalog, create swatch placeholders
+  if (variantes && Array.isArray(variantes) && project) {
+    const swatchRows = variantes.map((v: { sku: string; color: string; color_slug: string }, i: number) => ({
+      project_id: project.id,
+      name: v.color,
+      sku_suffix: v.sku,
+      color_description: v.color,
+      storage_path: '',
+      display_order: i,
+    }));
+
+    await supabase.from('swatches').insert(swatchRows);
   }
 
   return NextResponse.json(project, { status: 201 });
