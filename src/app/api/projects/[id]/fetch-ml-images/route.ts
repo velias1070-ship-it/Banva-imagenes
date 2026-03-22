@@ -81,33 +81,41 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
-    // Source 2: discover new SKUs from ml_items_map that share the product name
-    // e.g. if project is "Quilt Atenas 30P", find all individual ML listings with "Atenas" in the title
-    if (project?.name) {
-      // Extract key words from project name (words > 3 chars)
-      const keywords = project.name.split(/\s+/).filter((w: string) => w.length > 3);
-      if (keywords.length > 0) {
-        // Search ml_items_map for listings matching the product name
-        let mlQuery = inventoryDb
+    // Source 2: discover new SKUs from ml_items_map that share the SKU prefix
+    // e.g. if existing SKUs are TXV23QLAT25BE, TXV23QLAT25BC → prefix = TXV23QLAT25
+    // This ensures we only find variants of the SAME size, not 15P/20P/30P mixed in
+    const currentSkus = Array.from(existingSkus);
+    if (currentSkus.length > 0) {
+      let skuPrefix = currentSkus[0];
+      for (let i = 1; i < currentSkus.length; i++) {
+        while (!currentSkus[i].startsWith(skuPrefix)) {
+          skuPrefix = skuPrefix.slice(0, -1);
+          if (skuPrefix.length === 0) break;
+        }
+      }
+
+      if (skuPrefix.length >= 6) {
+        const { data: mlMatches } = await inventoryDb
           .from('ml_items_map')
           .select('sku_venta, item_id, titulo')
+          .like('sku_venta', `${skuPrefix}%`)
           .eq('activo', true)
-          .is('variation_id', null);
-
-        // Match on the most distinctive keyword (usually the product line name)
-        for (const kw of keywords) {
-          mlQuery = mlQuery.ilike('titulo', `%${kw}%`);
-        }
-
-        const { data: mlMatches } = await mlQuery.limit(50);
+          .is('variation_id', null)
+          .limit(50);
 
         if (mlMatches) {
           for (const ml of mlMatches) {
             if (existingSkus.has(ml.sku_venta)) continue;
 
-            // Extract color from the ML title (last word usually)
             const titleWords = ml.titulo.split(/\s+/);
-            const colorGuess = titleWords[titleWords.length - 1] || ml.sku_venta;
+            let colorGuess = ml.sku_venta;
+            for (let i = titleWords.length - 1; i >= 0; i--) {
+              const w = titleWords[i];
+              if (w && !/^\d/.test(w) && w.length > 1 && !['Cm', 'M', 'Plazas', 'Plaza', 'King', 'Super'].includes(w)) {
+                colorGuess = w;
+                break;
+              }
+            }
 
             existingSkus.add(ml.sku_venta);
             newRows.push({

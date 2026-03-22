@@ -48,6 +48,20 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, '');
 }
 
+function findCommonPrefix(strings: string[]): string {
+  if (strings.length === 0) return '';
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length; i++) {
+    while (!strings[i].startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+      if (prefix.length === 0) return '';
+    }
+  }
+  // Remove trailing color chars — keep only the size-encoded part
+  // e.g. "TXV23QLAT25" from "TXV23QLAT25BE" and "TXV23QLAT25BC"
+  return prefix;
+}
+
 interface Variante {
   sku: string;
   color: string;
@@ -112,25 +126,24 @@ export async function GET() {
     });
   }
 
-  // 2. Enrich with ml_items_map — find ML listings that match existing groups
-  // Build a lookup: for each group, extract keywords to match ML titles
+  // 2. Enrich with ml_items_map — find ML listings that share SKU prefix with existing groups
   for (const [, group] of groups) {
-    const keywords = group.base.split(/\s+/).filter((w) => w.length > 3);
-    if (keywords.length === 0) continue;
+    const existingSkus = Array.from(group.variantes.keys());
+    if (existingSkus.length === 0) continue;
 
-    const existingSkus = new Set(group.variantes.keys());
+    // Find common SKU prefix from existing variants
+    // e.g. TXV23QLAT25BE, TXV23QLAT25BC → prefix = "TXV23QLAT25"
+    const skuPrefix = findCommonPrefix(existingSkus);
+    if (skuPrefix.length < 6) continue; // Too short, would match too broadly
+
+    const existingSkuSet = new Set(existingSkus);
 
     for (const ml of mlItems) {
-      if (existingSkus.has(ml.sku_venta)) continue;
-
-      // Check if ML title matches ALL keywords of this group
-      const titleLower = ml.titulo.toLowerCase();
-      const allMatch = keywords.every((kw) => titleLower.includes(kw.toLowerCase()));
-      if (!allMatch) continue;
+      if (existingSkuSet.has(ml.sku_venta)) continue;
+      if (!ml.sku_venta.startsWith(skuPrefix)) continue;
 
       // Extract color from the ML title — last meaningful word
       const titleWords = ml.titulo.split(/\s+/);
-      // Skip size-like words at the end (numbers, "Cm", "M", etc.)
       let colorGuess = ml.sku_venta;
       for (let i = titleWords.length - 1; i >= 0; i--) {
         const w = titleWords[i];
@@ -140,7 +153,7 @@ export async function GET() {
         }
       }
 
-      existingSkus.add(ml.sku_venta);
+      existingSkuSet.add(ml.sku_venta);
       group.variantes.set(ml.sku_venta, {
         sku: ml.sku_venta,
         color: colorGuess,
