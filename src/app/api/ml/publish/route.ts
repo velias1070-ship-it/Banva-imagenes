@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlReplaceItemPicturesFromUrls } from '@/lib/ml';
+import { mlGet, mlPut } from '@/lib/ml';
 
 // Inventory Supabase (ml_items_map, ml_config, productos)
 function getInventorySupabase() {
@@ -12,30 +12,55 @@ function getInventorySupabase() {
 
 export const maxDuration = 60;
 
+type InsertMode = 'prepend' | 'append' | 'replace';
+
 interface PublishRequest {
   project_id: string;
   job_ids?: string[];
   dry_run?: boolean;
+  mode?: InsertMode;        // default: 'prepend'
+  max_pictures?: number;    // default: 10 (ML max varies by category)
 }
 
 interface PublishResult {
   sku: string;
   item_id: string;
   titulo: string;
-  pictures_uploaded: number;
+  pictures_new: number;
+  pictures_kept: number;
+  pictures_total: number;
   status: 'success' | 'error' | 'skipped';
   error?: string;
+}
+
+interface MlPicture {
+  id: string;
+  url?: string;
+  secure_url?: string;
+  size?: string;
 }
 
 /**
  * POST /api/ml/publish
  *
- * Publishes approved generated images to MercadoLibre listings.
- * Matches swatch.sku_suffix -> ml_items_map.sku_venta -> item_id
+ * Smart publish: fetches existing pictures from ML, merges with new ones.
+ *
+ * Modes:
+ * - prepend (default): new images first, then existing. Best for main/lifestyle shots.
+ * - append: existing images first, then new ones at the end.
+ * - replace: remove all existing, only use new images.
+ *
+ * Respects max_pictures limit (default 10) — trims from the end.
  */
 export async function POST(request: NextRequest) {
   const body: PublishRequest = await request.json();
-  const { project_id, job_ids, dry_run = false } = body;
+  const {
+    project_id,
+    job_ids,
+    dry_run = false,
+    mode = 'prepend',
+    max_pictures = 10,
+  } = body;
 
   if (!project_id) {
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
@@ -55,10 +80,10 @@ export async function POST(request: NextRequest) {
 
   const batchIds = batches.map((b) => b.id);
 
-  // 2. Get approved jobs
+  // 2. Get approved jobs with hero shot info for ordering
   let jobQuery = supabase
     .from('generation_jobs')
-    .select('id, output_storage_path, swatch_id')
+    .select('id, output_storage_path, swatch_id, hero_shot_id')
     .eq('status', 'approved')
     .in('batch_id', batchIds);
 
@@ -75,7 +100,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'No approved jobs found' }, { status: 404 });
   }
 
-  // 3. Get swatches for these jobs
+  // 3. Get hero shots for ordering (main first, then lifestyle, etc.)
+  const heroIds = [...new Set(jobs.map((j) => j.hero_shot_id))];
+  const { data: heroes } = await supabase
+    .from('hero_shots')
+    .select('id, shot_type, display_order')
+    .in('id', heroIds);
+
+  const heroMap = new Map((heroes || []).map((h) => [h.id, h]));
+
+  // Shot type priority: main first, then lifestyle, detail, etc.
+  const SHOT_ORDER: Record<string, number> = {
+    main: 0, lifestyle: 1, detail: 2, doblada: 3, flatlay: 4,
+  };
+
+  // 4. Get swatches
   const swatchIds = [...new Set(jobs.map((j) => j.swatch_id))];
   const { data: swatches } = await supabase
     .from('swatches')
@@ -84,14 +123,26 @@ export async function POST(request: NextRequest) {
 
   const swatchMap = new Map((swatches || []).map((s) => [s.id, s]));
 
-  // 4. Group jobs by swatch
+  // 5. Group jobs by swatch, sorted by shot type
   const bySwatch = new Map<string, typeof jobs>();
   for (const job of jobs) {
     if (!bySwatch.has(job.swatch_id)) bySwatch.set(job.swatch_id, []);
     bySwatch.get(job.swatch_id)!.push(job);
   }
 
-  // 5. Get ML item mappings (from inventory Supabase)
+  // Sort each group by shot type priority
+  for (const [, swatchJobs] of bySwatch) {
+    swatchJobs.sort((a, b) => {
+      const heroA = heroMap.get(a.hero_shot_id);
+      const heroB = heroMap.get(b.hero_shot_id);
+      const orderA = SHOT_ORDER[heroA?.shot_type || ''] ?? 99;
+      const orderB = SHOT_ORDER[heroB?.shot_type || ''] ?? 99;
+      if (orderA !== orderB) return orderA - orderB;
+      return (heroA?.display_order ?? 99) - (heroB?.display_order ?? 99);
+    });
+  }
+
+  // 6. Get ML item mappings
   const inventoryDb = getInventorySupabase();
   const allSkus = (swatches || [])
     .map((s) => s.sku_suffix)
@@ -105,10 +156,10 @@ export async function POST(request: NextRequest) {
 
   const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
 
-  // 6. Storage base URL
+  // 7. Storage base URL
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/`;
 
-  // 7. Process each SKU
+  // 8. Process each SKU
   const results: PublishResult[] = [];
 
   for (const [swatchId, swatchJobs] of bySwatch) {
@@ -117,12 +168,9 @@ export async function POST(request: NextRequest) {
 
     if (!sku) {
       results.push({
-        sku: swatch?.name || swatchId,
-        item_id: '',
-        titulo: '',
-        pictures_uploaded: 0,
-        status: 'skipped',
-        error: 'No sku_suffix on swatch',
+        sku: swatch?.name || swatchId, item_id: '', titulo: '',
+        pictures_new: 0, pictures_kept: 0, pictures_total: 0,
+        status: 'skipped', error: 'No sku_suffix on swatch',
       });
       continue;
     }
@@ -130,61 +178,87 @@ export async function POST(request: NextRequest) {
     const mlItem = skuToItem.get(sku);
     if (!mlItem) {
       results.push({
-        sku,
-        item_id: '',
-        titulo: '',
-        pictures_uploaded: 0,
-        status: 'skipped',
-        error: `SKU ${sku} not found in ml_items_map`,
+        sku, item_id: '', titulo: '',
+        pictures_new: 0, pictures_kept: 0, pictures_total: 0,
+        status: 'skipped', error: `SKU ${sku} not found in ml_items_map`,
       });
       continue;
     }
 
-    const imageUrls = swatchJobs
+    const newImageUrls = swatchJobs
       .filter((j) => j.output_storage_path)
       .map((j) => `${storageBase}${j.output_storage_path}`);
 
-    if (!imageUrls.length) {
+    if (!newImageUrls.length) {
       results.push({
-        sku,
-        item_id: mlItem.item_id,
-        titulo: mlItem.titulo,
-        pictures_uploaded: 0,
-        status: 'skipped',
-        error: 'No images with storage paths',
-      });
-      continue;
-    }
-
-    if (dry_run) {
-      results.push({
-        sku,
-        item_id: mlItem.item_id,
-        titulo: mlItem.titulo,
-        pictures_uploaded: imageUrls.length,
-        status: 'success',
+        sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
+        pictures_new: 0, pictures_kept: 0, pictures_total: 0,
+        status: 'skipped', error: 'No images with storage paths',
       });
       continue;
     }
 
     try {
-      await mlReplaceItemPicturesFromUrls(mlItem.item_id, imageUrls);
+      // Fetch current pictures from ML
+      const itemData = await mlGet<{ pictures?: MlPicture[] }>(
+        `/items/${mlItem.item_id}?attributes=pictures`
+      );
+      const existingPics = itemData.pictures || [];
+
+      // Build the merged pictures array
+      const newEntries = newImageUrls.map((url) => ({ source: url }));
+      const existingEntries = existingPics.map((p) => ({ id: p.id }));
+
+      let mergedPictures: ({ source: string } | { id: string })[];
+      let keptCount: number;
+
+      if (mode === 'replace') {
+        mergedPictures = newEntries;
+        keptCount = 0;
+      } else if (mode === 'append') {
+        // Existing first, new at the end
+        const available = max_pictures - existingEntries.length;
+        const newToAdd = newEntries.slice(0, Math.max(0, available));
+        mergedPictures = [...existingEntries, ...newToAdd];
+        keptCount = existingEntries.length;
+      } else {
+        // prepend (default): new first, then fill with existing
+        const available = max_pictures - newEntries.length;
+        const existingToKeep = existingEntries.slice(0, Math.max(0, available));
+        mergedPictures = [...newEntries, ...existingToKeep];
+        keptCount = existingToKeep.length;
+      }
+
+      // Enforce max
+      mergedPictures = mergedPictures.slice(0, max_pictures);
+
+      if (dry_run) {
+        results.push({
+          sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
+          pictures_new: newImageUrls.length,
+          pictures_kept: keptCount,
+          pictures_total: mergedPictures.length,
+          status: 'success',
+        });
+        continue;
+      }
+
+      // PUT to ML
+      await mlPut(`/items/${mlItem.item_id}`, { pictures: mergedPictures });
+
       results.push({
-        sku,
-        item_id: mlItem.item_id,
-        titulo: mlItem.titulo,
-        pictures_uploaded: imageUrls.length,
+        sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
+        pictures_new: newImageUrls.length,
+        pictures_kept: keptCount,
+        pictures_total: mergedPictures.length,
         status: 'success',
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       results.push({
-        sku,
-        item_id: mlItem.item_id,
-        titulo: mlItem.titulo,
-        pictures_uploaded: 0,
-        status: 'error',
-        error: message,
+        sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
+        pictures_new: 0, pictures_kept: 0, pictures_total: 0,
+        status: 'error', error: message,
       });
     }
   }
@@ -192,11 +266,13 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     project_id,
     dry_run,
+    mode,
     total_skus: results.length,
     success: results.filter((r) => r.status === 'success').length,
     errors: results.filter((r) => r.status === 'error').length,
     skipped: results.filter((r) => r.status === 'skipped').length,
-    total_images: results.reduce((sum, r) => sum + r.pictures_uploaded, 0),
+    total_new_images: results.reduce((sum, r) => sum + r.pictures_new, 0),
+    total_kept_images: results.reduce((sum, r) => sum + r.pictures_kept, 0),
     details: results,
   });
 }

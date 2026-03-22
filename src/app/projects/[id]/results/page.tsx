@@ -64,7 +64,8 @@ export default function ResultsPage() {
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
-    details?: { sku: string; item_id: string; titulo: string; status: string; error?: string }[];
+    total_new_images?: number; total_kept_images?: number;
+    details?: { sku: string; item_id: string; titulo: string; status: string; error?: string; pictures_new?: number; pictures_kept?: number; pictures_total?: number }[];
   } | null>(null);
 
   const fetchResults = useCallback(async () => {
@@ -249,25 +250,25 @@ export default function ResultsPage() {
     }
   }
 
-  async function handlePublishToML(dryRun: boolean) {
+  async function handlePublishToML(dryRun: boolean, mode: 'prepend' | 'append' | 'replace' = 'prepend') {
     setPublishing(true);
     setPublishResult(null);
     try {
       const res = await fetch('/api/ml/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: id, dry_run: dryRun }),
+        body: JSON.stringify({ project_id: id, dry_run: dryRun, mode }),
       });
       const data = await res.json();
       if (res.ok) {
         setPublishResult(data);
         if (dryRun) {
-          toast.info(`Preview: ${data.total_images} imagenes a ${data.success} publicaciones`);
+          toast.info(`Preview: ${data.total_new_images} nuevas + ${data.total_kept_images} existentes en ${data.success} publicaciones`);
         } else {
           if (data.errors > 0) {
             toast.error(`Publicado con ${data.errors} errores. ${data.success} exitosos.`);
           } else {
-            toast.success(`${data.total_images} imagenes publicadas en ${data.success} publicaciones de ML`);
+            toast.success(`${data.total_new_images} imagenes nuevas publicadas en ${data.success} publicaciones de ML (${data.total_kept_images} existentes mantenidas)`);
           }
         }
       } else {
@@ -443,25 +444,34 @@ export default function ResultsPage() {
           </p>
         </div>
         {approvedCount > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button variant="outline" onClick={handleDownloadAll}>
               <Download className="mr-2 h-4 w-4" />
-              Descargar ZIP ({approvedCount})
+              ZIP ({approvedCount})
             </Button>
             <Button
               variant="outline"
-              onClick={() => handlePublishToML(true)}
+              onClick={() => handlePublishToML(true, 'prepend')}
               disabled={publishing}
             >
               {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
               Preview ML
             </Button>
             <Button
-              onClick={() => handlePublishToML(false)}
+              onClick={() => handlePublishToML(false, 'prepend')}
               disabled={publishing}
+              title="Agrega las nuevas al inicio, mantiene las existentes despues"
             >
               {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-              Publicar en ML
+              Publicar (nuevas primero)
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handlePublishToML(false, 'append')}
+              disabled={publishing}
+              title="Mantiene las existentes, agrega las nuevas al final"
+            >
+              Agregar al final
             </Button>
           </div>
         )}
@@ -481,7 +491,7 @@ export default function ResultsPage() {
                 Cerrar
               </Button>
             </div>
-            <div className="flex gap-4 text-sm mb-3">
+            <div className="flex gap-4 text-sm mb-3 flex-wrap">
               <span className="text-green-600">{publishResult.success} exitosos</span>
               {publishResult.errors > 0 && <span className="text-red-600">{publishResult.errors} errores</span>}
               {publishResult.skipped > 0 && <span className="text-yellow-600">{publishResult.skipped} omitidos</span>}
