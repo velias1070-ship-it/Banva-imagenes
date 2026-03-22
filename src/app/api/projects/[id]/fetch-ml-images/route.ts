@@ -54,9 +54,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   if (!swatches) swatches = [];
 
-  // 3. If no swatches exist but project has variantes in metadata, create them now
-  if (swatches.length === 0 && project?.metadata) {
-    const catalogVariantes = (project.metadata as { variantes?: { sku: string; color: string }[] }).variantes || [];
+  // 3. If no swatches exist, bootstrap from project metadata or return detailed error
+  if (swatches.length === 0) {
+    const meta = project?.metadata as Record<string, unknown> | null;
+    const catalogVariantes = (meta?.variantes as { sku: string; color: string }[] | undefined) || [];
+
+    console.log(`[fetch-ml-images] No swatches for ${projectId}. metadata variantes: ${catalogVariantes.length}`);
+
     if (catalogVariantes.length > 0) {
       const newRows = catalogVariantes.map((v, i) => ({
         project_id: projectId,
@@ -66,7 +70,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
         display_order: i,
       }));
 
-      await supabase.from('swatches').insert(newRows);
+      const { error: insertErr } = await supabase.from('swatches').insert(newRows);
+      if (insertErr) {
+        console.error('[fetch-ml-images] swatch insert error:', insertErr);
+        return NextResponse.json({
+          error: `Failed to create swatches: ${insertErr.message}`,
+          detail: insertErr,
+        }, { status: 500 });
+      }
 
       const { data: created } = await supabase
         .from('swatches')
@@ -79,7 +90,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   if (!swatches.length) {
-    return NextResponse.json({ error: 'No swatches found and no variantes in project metadata' }, { status: 404 });
+    return NextResponse.json({
+      error: 'No swatches found and could not create from metadata',
+      project_has_metadata: !!project?.metadata,
+      metadata_keys: project?.metadata ? Object.keys(project.metadata as Record<string, unknown>) : [],
+    }, { status: 404 });
   }
 
   if (syncNew) {
