@@ -17,9 +17,9 @@ interface MLConfig {
 }
 
 function getInventarioSupabase() {
-  const url = process.env.INVENTARIO_SUPABASE_URL;
-  const key = process.env.INVENTARIO_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error('Missing INVENTARIO_SUPABASE_URL or INVENTARIO_SUPABASE_ANON_KEY');
+  const url = process.env.INVENTORY_SUPABASE_URL;
+  const key = process.env.INVENTORY_SUPABASE_KEY;
+  if (!url || !key) throw new Error('Missing INVENTORY_SUPABASE_URL or INVENTORY_SUPABASE_KEY');
   return createClient(url, key);
 }
 
