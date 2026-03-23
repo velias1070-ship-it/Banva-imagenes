@@ -177,14 +177,9 @@ export default function PublishPage() {
     for (const idx of dirty) { await saveListing(idx); }
   }
 
-  async function replicatePictures(sourceIdx: number, targetIdxs: number[], dryRun: boolean = false) {
+  async function replicatePictures(sourceIdx: number, targetSkus: string[]) {
     const source = listings[sourceIdx];
     if (!source.listing.sku) return;
-
-    const targetSkus = targetIdxs
-      .map((i) => listings[i]?.listing.sku)
-      .filter(Boolean);
-
     if (!targetSkus.length) { toast.error('No hay destinos validos'); return; }
 
     setReplicating(true);
@@ -192,17 +187,13 @@ export default function PublishPage() {
       const res = await fetch('/api/ml/replicate-pictures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, dry_run: dryRun }),
+        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus }),
       });
       const data = await res.json();
       if (res.ok) {
-        if (dryRun) {
-          toast.info(`Preview: ${data.source.pictures} fotos se copiarian a ${data.success} publicaciones`);
-        } else {
-          toast.success(`${data.source.pictures} fotos replicadas a ${data.success} publicaciones`);
-          fetchListings(); // Refresh to show updated pictures
-        }
+        toast.success(`${data.source.pictures} fotos replicadas a ${data.success} publicaciones`);
         if (data.errors > 0) toast.error(`${data.errors} errores al replicar`);
+        fetchListings();
       } else {
         toast.error(data.error || 'Error al replicar');
       }
@@ -264,10 +255,11 @@ export default function PublishPage() {
               {/* Replicate panel */}
               {replicateSource === listingIdx && (
                 <ReplicatePanel
-                  sourceIdx={listingIdx}
-                  listings={listings}
+                  sourceSku={ls.listing.sku}
+                  sourceName={ls.listing.swatch_name}
+                  pictureCount={ls.listing.ml_pictures.length}
                   replicating={replicating}
-                  onReplicate={(targets) => replicatePictures(listingIdx, targets)}
+                  onReplicate={(targetSkus) => replicatePictures(listingIdx, targetSkus)}
                   onCancel={() => setReplicateSource(null)}
                 />
               )}
@@ -384,87 +376,159 @@ export default function PublishPage() {
 }
 
 // --- Replicate Panel ---
+interface RelatedItem { sku_venta: string; titulo: string; group: string }
+
 function ReplicatePanel({
-  sourceIdx, listings, replicating, onReplicate, onCancel,
+  sourceSku, sourceName, pictureCount, replicating, onReplicate, onCancel,
 }: {
-  sourceIdx: number;
-  listings: ListingState[];
+  sourceSku: string;
+  sourceName: string;
+  pictureCount: number;
   replicating: boolean;
-  onReplicate: (targetIdxs: number[]) => void;
+  onReplicate: (targetSkus: string[]) => void;
   onCancel: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const source = listings[sourceIdx];
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [related, setRelated] = useState<RelatedItem[]>([]);
+  const [loadingRelated, setLoadingRelated] = useState(true);
 
-  function toggle(idx: number) {
+  // Fetch related listings from ml_items_map via the debug endpoint
+  useEffect(() => {
+    async function fetchRelated() {
+      setLoadingRelated(true);
+      try {
+        // Get SKU prefix — strip last 2 chars (color code) to find same product line
+        // e.g. TXV23QLAT25BE → TXV23QLAT (all Atenas sizes + colors)
+        // Try progressively shorter prefixes to find related items
+        const prefixes: string[] = [];
+        // Remove color suffix (usually 2 chars)
+        const withoutColor = sourceSku.replace(/[A-Z]{2}$/, '');
+        prefixes.push(withoutColor); // Same product+size, different color
+        // Remove size (usually 2 digits before color)
+        const withoutSize = withoutColor.replace(/\d{2}$/, '');
+        if (withoutSize.length >= 6) prefixes.push(withoutSize); // Same product, all sizes
+
+        const allItems: RelatedItem[] = [];
+        const seen = new Set<string>();
+        seen.add(sourceSku);
+
+        for (const prefix of prefixes) {
+          const res = await fetch(`/api/ml/debug?path=/users/1953806321/items/search?seller_sku=${prefix}*%26limit=50`);
+          // Fallback: search via our productos API or directly in ml_items_map
+        }
+
+        // Use a simpler approach: call a search on ml_items_map
+        const searchRes = await fetch(`/api/productos`);
+        const productos = await searchRes.json();
+
+        if (Array.isArray(productos)) {
+          // Find all groups that contain the source SKU
+          for (const group of productos) {
+            const hasSource = group.variantes.some((v: { sku: string }) => v.sku === sourceSku);
+            if (!hasSource) continue;
+
+            // This group contains the source — all other variants are related
+            for (const v of group.variantes) {
+              if (v.sku === sourceSku || seen.has(v.sku)) continue;
+              seen.add(v.sku);
+              allItems.push({ sku_venta: v.sku, titulo: `${group.base_name} ${v.color} (${group.tamano})`, group: group.tamano || 'mismo tamano' });
+            }
+          }
+
+          // Also find same color in OTHER sizes (different groups with same base product)
+          const sourceGroup = productos.find((g: { variantes: { sku: string }[] }) => g.variantes.some((v: { sku: string }) => v.sku === sourceSku));
+          if (sourceGroup) {
+            const baseWords = sourceGroup.base_name.split(/\s+/).filter((w: string) => w.length > 3);
+            for (const group of productos) {
+              if (group.tamano === sourceGroup.tamano) continue; // Already covered above
+              const nameMatches = baseWords.every((w: string) => group.base_name.toLowerCase().includes(w.toLowerCase()));
+              if (!nameMatches) continue;
+
+              for (const v of group.variantes) {
+                if (seen.has(v.sku)) continue;
+                seen.add(v.sku);
+                allItems.push({ sku_venta: v.sku, titulo: `${group.base_name} ${v.color} (${group.tamano})`, group: group.tamano || 'otro tamano' });
+              }
+            }
+          }
+        }
+
+        setRelated(allItems);
+      } catch { /* ignore */ }
+      finally { setLoadingRelated(false); }
+    }
+    fetchRelated();
+  }, [sourceSku]);
+
+  function toggle(sku: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      if (next.has(sku)) next.delete(sku); else next.add(sku);
+      return next;
+    });
+  }
+
+  function selectGroup(group: string) {
+    const skus = related.filter((r) => r.group === group).map((r) => r.sku_venta);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allSelected = skus.every((s) => next.has(s));
+      if (allSelected) { skus.forEach((s) => next.delete(s)); }
+      else { skus.forEach((s) => next.add(s)); }
       return next;
     });
   }
 
   function selectAll() {
-    const all = new Set<number>();
-    listings.forEach((ls, i) => { if (i !== sourceIdx && ls.listing.sku) all.add(i); });
-    setSelected(all);
+    setSelected(new Set(related.map((r) => r.sku_venta)));
   }
 
-  // Group other listings by shared SKU prefix (same color, different sizes)
-  const sourcePrefix = source.listing.sku.replace(/\d{2}[A-Z]{2}$/, ''); // e.g. TXV23QLAT → matches 15BE, 20BE, 25BE, 30BE
-
-  const sameColor = listings
-    .map((ls, i) => ({ ls, i }))
-    .filter(({ ls, i }) => i !== sourceIdx && ls.listing.sku && ls.listing.swatch_name === source.listing.swatch_name);
-
-  const otherVariants = listings
-    .map((ls, i) => ({ ls, i }))
-    .filter(({ ls, i }) => i !== sourceIdx && ls.listing.sku && ls.listing.swatch_name !== source.listing.swatch_name);
+  // Group by tamano/size
+  const groups = new Map<string, RelatedItem[]>();
+  for (const item of related) {
+    if (!groups.has(item.group)) groups.set(item.group, []);
+    groups.get(item.group)!.push(item);
+  }
 
   return (
     <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
       <div className="flex items-center justify-between mb-2">
         <p className="text-sm font-medium text-purple-800">
-          Replicar {source.listing.ml_pictures.length} fotos de <span className="font-bold">{source.listing.swatch_name}</span> a:
+          Replicar {pictureCount} fotos de <span className="font-bold">{sourceName} ({sourceSku})</span> a:
         </p>
         <div className="flex gap-2">
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll}>Seleccionar todas</Button>
+          {related.length > 0 && <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll}>Seleccionar todas ({related.length})</Button>}
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onCancel}>Cancelar</Button>
         </div>
       </div>
 
-      {sameColor.length > 0 && (
-        <div className="mb-2">
-          <p className="text-xs text-purple-600 mb-1">Mismo color, otro tamano:</p>
-          <div className="flex flex-wrap gap-1.5">
-            {sameColor.map(({ ls, i }) => (
-              <button
-                key={i}
-                onClick={() => toggle(i)}
-                className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${selected.has(i) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-100'}`}
-              >
-                {ls.listing.swatch_name} <span className="opacity-70">{ls.listing.sku}</span>
-              </button>
-            ))}
-          </div>
+      {loadingRelated ? (
+        <div className="flex items-center gap-2 text-sm text-purple-600 py-2">
+          <Loader2 className="h-4 w-4 animate-spin" /> Buscando publicaciones relacionadas...
         </div>
-      )}
-
-      {otherVariants.length > 0 && (
-        <div className="mb-2">
-          <p className="text-xs text-purple-600 mb-1">Otros colores:</p>
-          <div className="flex flex-wrap gap-1.5">
-            {otherVariants.map(({ ls, i }) => (
-              <button
-                key={i}
-                onClick={() => toggle(i)}
-                className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${selected.has(i) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-100'}`}
-              >
-                {ls.listing.swatch_name} <span className="opacity-70">{ls.listing.sku}</span>
+      ) : related.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-2">No se encontraron publicaciones relacionadas</p>
+      ) : (
+        <>
+          {Array.from(groups.entries()).map(([group, items]) => (
+            <div key={group} className="mb-2">
+              <button className="text-xs text-purple-600 mb-1 hover:underline" onClick={() => selectGroup(group)}>
+                {group} ({items.length})
               </button>
-            ))}
-          </div>
-        </div>
+              <div className="flex flex-wrap gap-1.5">
+                {items.map((item) => (
+                  <button
+                    key={item.sku_venta}
+                    onClick={() => toggle(item.sku_venta)}
+                    className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${selected.has(item.sku_venta) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-100'}`}
+                  >
+                    {item.titulo}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
       )}
 
       {selected.size > 0 && (
