@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   ArrowLeft, ExternalLink, Save, Loader2, Plus, X,
-  RefreshCw, Image as ImageIcon, GripVertical, Copy,
+  RefreshCw, Image as ImageIcon, GripVertical, Copy, RotateCcw,
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -45,8 +45,9 @@ export default function PublishPage() {
   const [dragging, setDragging] = useState(false);
   const [dropPosition, setDropPosition] = useState<{ listingIdx: number; position: number } | null>(null);
   const dragRef = useRef<DragSource | null>(null);
-  const [replicateSource, setReplicateSource] = useState<number | null>(null); // listingIdx being replicated from
+  const [replicateSource, setReplicateSource] = useState<number | null>(null);
   const [replicating, setReplicating] = useState(false);
+  const [regeneratingJobs, setRegeneratingJobs] = useState<Set<string>>(new Set());
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -169,6 +170,40 @@ export default function PublishPage() {
         setListings((prev) => prev.map((l, i) => i === listingIdx ? { ...l, saving: false } : l));
       }
     } catch { toast.error('Error de conexion'); setListings((prev) => prev.map((l, i) => i === listingIdx ? { ...l, saving: false } : l)); }
+  }
+
+  async function handleRegenerate(jobId: string) {
+    setRegeneratingJobs((prev) => new Set(prev).add(jobId));
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}`, { method: 'POST' });
+      if (res.ok) {
+        toast.success('Regenerando imagen — se actualizara automaticamente');
+        // Poll until done
+        const poll = setInterval(async () => {
+          const updated = await fetch(`/api/projects/${id}/results`);
+          if (updated.ok) {
+            const allJobs = await updated.json();
+            const job = allJobs.find((j: { id: string }) => j.id === jobId);
+            if (job && !['generating', 'qa_pending', 'qa_processing', 'pending'].includes(job.status)) {
+              clearInterval(poll);
+              setRegeneratingJobs((prev) => { const next = new Set(prev); next.delete(jobId); return next; });
+              if (job.status === 'approved') {
+                toast.success('Imagen regenerada y aprobada');
+              } else {
+                toast.error(`Regeneracion termino con estado: ${job.status}`);
+              }
+              fetchListings(); // Refresh all data
+            }
+          }
+        }, 5000);
+      } else {
+        toast.error('Error iniciando regeneracion');
+        setRegeneratingJobs((prev) => { const next = new Set(prev); next.delete(jobId); return next; });
+      }
+    } catch {
+      toast.error('Error de conexion');
+      setRegeneratingJobs((prev) => { const next = new Set(prev); next.delete(jobId); return next; });
+    }
   }
 
   async function saveAll() {
@@ -343,13 +378,24 @@ export default function PublishPage() {
                           <img src={img.url} alt={img.shot_type} className="h-full w-full object-cover pointer-events-none" />
                           <div className="absolute top-1 left-1"><Badge variant="secondary" className="text-[10px] px-1 h-5">{img.shot_type}</Badge></div>
                           {img.qa_score != null && <div className="absolute top-1 right-1"><Badge variant="outline" className="text-[10px] px-1 h-5 bg-white/80">{(img.qa_score * 100).toFixed(0)}%</Badge></div>}
-                          {added ? (
-                            <div className="absolute inset-0 flex items-center justify-center"><Badge className="bg-green-600 text-[10px]">Agregada</Badge></div>
+                          {regeneratingJobs.has(img.job_id) ? (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                              <div className="flex items-center gap-1 text-white text-[10px]"><RotateCcw className="h-3 w-3 animate-spin" /> Regenerando...</div>
+                            </div>
+                          ) : added ? (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 gap-1">
+                              <Badge className="bg-green-600 text-[10px]">Agregada</Badge>
+                              <Button variant="ghost" size="sm" className="h-5 text-[10px] text-white hover:bg-white/20" onClick={(e) => { e.stopPropagation(); handleRegenerate(img.job_id); }}>
+                                <RotateCcw className="h-2.5 w-2.5 mr-0.5" /> Regenerar
+                              </Button>
+                            </div>
                           ) : (
                             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 pt-6 flex items-end justify-center gap-1">
-                              <span className="text-[10px] text-white/90">Arrastra o</span>
                               <Button variant="ghost" size="sm" className="h-5 text-[10px] text-white px-1.5 hover:bg-white/20" onClick={(e) => { e.stopPropagation(); addAtEnd(listingIdx, img); }}>
                                 <Plus className="h-2.5 w-2.5 mr-0.5" />al final
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-5 text-[10px] text-white px-1.5 hover:bg-white/20" onClick={(e) => { e.stopPropagation(); handleRegenerate(img.job_id); }}>
+                                <RotateCcw className="h-2.5 w-2.5 mr-0.5" />regenerar
                               </Button>
                             </div>
                           )}
