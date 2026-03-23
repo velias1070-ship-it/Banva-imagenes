@@ -48,6 +48,7 @@ export default function PublishPage() {
   const [replicateSource, setReplicateSource] = useState<number | null>(null);
   const [replicating, setReplicating] = useState(false);
   const [regeneratingJobs, setRegeneratingJobs] = useState<Set<string>>(new Set());
+  const [cacheBuster, setCacheBuster] = useState(Date.now());
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -192,6 +193,7 @@ export default function PublishPage() {
               } else {
                 toast.error(`Regeneracion termino con estado: ${job.status}`);
               }
+              setCacheBuster(Date.now());
               fetchListings(); // Refresh all data
             }
           }
@@ -329,7 +331,7 @@ export default function PublishPage() {
                             <GripVertical className="h-4 w-4 text-muted-foreground/40 flex-shrink-0 cursor-grab active:cursor-grabbing" />
                             <div className="w-5 text-center text-xs font-bold text-muted-foreground">{picIdx + 1}</div>
                             <div className="h-12 w-12 flex-shrink-0 rounded overflow-hidden bg-gray-100">
-                              <img src={pic.url} alt="" className="h-full w-full object-cover pointer-events-none" />
+                              <img src={`${pic.url}${pic.url.includes('?') ? '&' : '?'}v=${cacheBuster}`} alt="" className="h-full w-full object-cover pointer-events-none" />
                             </div>
                             <div className="flex-1 min-w-0">
                               {pic.type === 'generated'
@@ -375,7 +377,7 @@ export default function PublishPage() {
                           className={`relative group aspect-square rounded-lg overflow-hidden bg-gray-100 border-2 transition-all
                             ${added ? 'border-green-200 opacity-40 cursor-default' : 'border-gray-200 cursor-grab active:cursor-grabbing hover:border-blue-300 hover:shadow-md'}`}
                         >
-                          <img src={img.url} alt={img.shot_type} className="h-full w-full object-cover pointer-events-none" />
+                          <img src={`${img.url}${img.url.includes('?') ? '&' : '?'}v=${cacheBuster}`} alt={img.shot_type} className="h-full w-full object-cover pointer-events-none" />
                           <div className="absolute top-1 left-1"><Badge variant="secondary" className="text-[10px] px-1 h-5">{img.shot_type}</Badge></div>
                           {img.qa_score != null && <div className="absolute top-1 right-1"><Badge variant="outline" className="text-[10px] px-1 h-5 bg-white/80">{(img.qa_score * 100).toFixed(0)}%</Badge></div>}
                           {regeneratingJobs.has(img.job_id) ? (
