@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   ArrowLeft, ExternalLink, Save, Loader2, Plus, X,
-  RefreshCw, Image as ImageIcon, GripVertical,
+  RefreshCw, Image as ImageIcon, GripVertical, Copy,
 } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -45,6 +45,8 @@ export default function PublishPage() {
   const [dragging, setDragging] = useState(false);
   const [dropPosition, setDropPosition] = useState<{ listingIdx: number; position: number } | null>(null);
   const dragRef = useRef<DragSource | null>(null);
+  const [replicateSource, setReplicateSource] = useState<number | null>(null); // listingIdx being replicated from
+  const [replicating, setReplicating] = useState(false);
 
   const fetchListings = useCallback(async () => {
     setLoading(true);
@@ -175,6 +177,39 @@ export default function PublishPage() {
     for (const idx of dirty) { await saveListing(idx); }
   }
 
+  async function replicatePictures(sourceIdx: number, targetIdxs: number[], dryRun: boolean = false) {
+    const source = listings[sourceIdx];
+    if (!source.listing.sku) return;
+
+    const targetSkus = targetIdxs
+      .map((i) => listings[i]?.listing.sku)
+      .filter(Boolean);
+
+    if (!targetSkus.length) { toast.error('No hay destinos validos'); return; }
+
+    setReplicating(true);
+    try {
+      const res = await fetch('/api/ml/replicate-pictures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, dry_run: dryRun }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (dryRun) {
+          toast.info(`Preview: ${data.source.pictures} fotos se copiarian a ${data.success} publicaciones`);
+        } else {
+          toast.success(`${data.source.pictures} fotos replicadas a ${data.success} publicaciones`);
+          fetchListings(); // Refresh to show updated pictures
+        }
+        if (data.errors > 0) toast.error(`${data.errors} errores al replicar`);
+      } else {
+        toast.error(data.error || 'Error al replicar');
+      }
+    } catch { toast.error('Error de conexion'); }
+    finally { setReplicating(false); setReplicateSource(null); }
+  }
+
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
 
   const dirtyCount = listings.filter((l) => l.dirty).length;
@@ -208,6 +243,16 @@ export default function PublishPage() {
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
                   {ls.listing.permalink && <a href={ls.listing.permalink} target="_blank" rel="noopener noreferrer"><Button variant="ghost" size="sm"><ExternalLink className="h-4 w-4" /></Button></a>}
+                  {ls.listing.ml_pictures.length > 0 && (
+                    <Button
+                      variant="outline" size="sm"
+                      onClick={() => setReplicateSource(replicateSource === listingIdx ? null : listingIdx)}
+                      disabled={replicating}
+                      className={replicateSource === listingIdx ? 'border-purple-500 text-purple-700' : ''}
+                    >
+                      <Copy className="mr-1 h-3.5 w-3.5" /> Replicar
+                    </Button>
+                  )}
                   {ls.dirty && (
                     <Button size="sm" onClick={() => saveListing(listingIdx)} disabled={ls.saving}>
                       {ls.saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -216,6 +261,16 @@ export default function PublishPage() {
                   )}
                 </div>
               </div>
+              {/* Replicate panel */}
+              {replicateSource === listingIdx && (
+                <ReplicatePanel
+                  sourceIdx={listingIdx}
+                  listings={listings}
+                  replicating={replicating}
+                  onReplicate={(targets) => replicatePictures(listingIdx, targets)}
+                  onCancel={() => setReplicateSource(null)}
+                />
+              )}
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-[1fr_auto_1fr] gap-6">
@@ -324,6 +379,107 @@ export default function PublishPage() {
           </Card>
         ))}
       </div>
+    </div>
+  );
+}
+
+// --- Replicate Panel ---
+function ReplicatePanel({
+  sourceIdx, listings, replicating, onReplicate, onCancel,
+}: {
+  sourceIdx: number;
+  listings: ListingState[];
+  replicating: boolean;
+  onReplicate: (targetIdxs: number[]) => void;
+  onCancel: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const source = listings[sourceIdx];
+
+  function toggle(idx: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    const all = new Set<number>();
+    listings.forEach((ls, i) => { if (i !== sourceIdx && ls.listing.sku) all.add(i); });
+    setSelected(all);
+  }
+
+  // Group other listings by shared SKU prefix (same color, different sizes)
+  const sourcePrefix = source.listing.sku.replace(/\d{2}[A-Z]{2}$/, ''); // e.g. TXV23QLAT → matches 15BE, 20BE, 25BE, 30BE
+
+  const sameColor = listings
+    .map((ls, i) => ({ ls, i }))
+    .filter(({ ls, i }) => i !== sourceIdx && ls.listing.sku && ls.listing.swatch_name === source.listing.swatch_name);
+
+  const otherVariants = listings
+    .map((ls, i) => ({ ls, i }))
+    .filter(({ ls, i }) => i !== sourceIdx && ls.listing.sku && ls.listing.swatch_name !== source.listing.swatch_name);
+
+  return (
+    <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-medium text-purple-800">
+          Replicar {source.listing.ml_pictures.length} fotos de <span className="font-bold">{source.listing.swatch_name}</span> a:
+        </p>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll}>Seleccionar todas</Button>
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onCancel}>Cancelar</Button>
+        </div>
+      </div>
+
+      {sameColor.length > 0 && (
+        <div className="mb-2">
+          <p className="text-xs text-purple-600 mb-1">Mismo color, otro tamano:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {sameColor.map(({ ls, i }) => (
+              <button
+                key={i}
+                onClick={() => toggle(i)}
+                className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${selected.has(i) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-100'}`}
+              >
+                {ls.listing.swatch_name} <span className="opacity-70">{ls.listing.sku}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {otherVariants.length > 0 && (
+        <div className="mb-2">
+          <p className="text-xs text-purple-600 mb-1">Otros colores:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {otherVariants.map(({ ls, i }) => (
+              <button
+                key={i}
+                onClick={() => toggle(i)}
+                className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${selected.has(i) ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-100'}`}
+              >
+                {ls.listing.swatch_name} <span className="opacity-70">{ls.listing.sku}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="flex gap-2 mt-3">
+          <Button
+            size="sm"
+            disabled={replicating}
+            onClick={() => onReplicate(Array.from(selected))}
+            className="bg-purple-600 hover:bg-purple-700"
+          >
+            {replicating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Copy className="mr-2 h-4 w-4" />}
+            Replicar a {selected.size} publicacion{selected.size > 1 ? 'es' : ''}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
