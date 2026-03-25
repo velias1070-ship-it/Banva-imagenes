@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dropzone } from '@/components/upload/dropzone';
-import { ArrowLeft, Trash2, Download, RefreshCw, Loader2 } from 'lucide-react';
+import { ArrowLeft, Trash2, Download, RefreshCw, Loader2, ImagePlus } from 'lucide-react';
 import type { Swatch } from '@/types/database';
 import { toast } from 'sonner';
 
@@ -140,6 +140,35 @@ export default function SwatchesPage() {
     }
   }
 
+  async function handleReplaceImage(swatchId: string) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch(`/api/projects/${id}/swatches/${swatchId}/image`, {
+          method: 'PUT',
+          body: formData,
+        });
+        if (res.ok) {
+          toast.success('Imagen del swatch actualizada');
+          setImgVersion((v) => v + 1);
+          fetchSwatches();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          toast.error(err.error || 'Error subiendo imagen');
+        }
+      } catch {
+        toast.error('Error de conexion');
+      }
+    };
+    input.click();
+  }
+
   async function handleUpdateSwatch(swatchId: string, updates: Partial<Swatch>) {
     const res = await fetch(`/api/projects/${id}/swatches/${swatchId}`, {
       method: 'PATCH',
@@ -248,7 +277,11 @@ export default function SwatchesPage() {
                 <div className="space-y-3">
                   {swatches.map((swatch) => (
                     <div key={swatch.id} className="flex items-center gap-3 rounded-lg border p-2">
-                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100">
+                      <button
+                        onClick={() => handleReplaceImage(swatch.id)}
+                        className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100 relative group cursor-pointer"
+                        title="Cambiar imagen"
+                      >
                         {swatch.storage_path ? (
                           <img
                             src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/${swatch.storage_path}?v=${imgVersion}`}
@@ -265,7 +298,10 @@ export default function SwatchesPage() {
                             sin foto
                           </div>
                         )}
-                      </div>
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <ImagePlus className="h-5 w-5 text-white" />
+                        </div>
+                      </button>
                       <div className="flex-1 min-w-0">
                         <Input
                           defaultValue={swatch.name}
