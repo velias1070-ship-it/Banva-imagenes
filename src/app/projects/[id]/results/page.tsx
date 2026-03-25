@@ -243,7 +243,8 @@ export default function ResultsPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success('Generando 1.5P — se agregara automaticamente');
+        const skuMsg = data.target_sku ? ` (SKU: ${data.target_sku})` : '';
+        toast.success(`Generando 1.5P${skuMsg} — se agregara automaticamente`);
         // Poll for the new job
         const poll = setInterval(async () => {
           const updated = await fetch(`/api/projects/${id}/results`);

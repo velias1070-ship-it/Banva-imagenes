@@ -10,10 +10,51 @@ interface RouteContext {
   params: Promise<{ id: string; jobId: string }>;
 }
 
+// Size codes used in BANVA SKUs
+const SIZE_CODES: Record<string, string> = {
+  '15': '1.5 Plazas',
+  '20': '2.0 Plazas',
+  '25': '2.5 Plazas',
+  '30': '3.0 Plazas',
+};
+
 /**
- * POST — Generate a 1.5 plaza variant from an approved 2-plaza image.
- * Uses the approved image as reference + swatch, and instructs Gemini
- * to recreate the scene with a narrower bed and 1 pillow.
+ * Derive the 1.5P SKU from the original SKU by replacing the size code.
+ * Examples:
+ *   TXV23QLAT25BE → TXV23QLAT15BE  (25 → 15)
+ *   JSAFAB381P20X → JSAFAB381P15X  (P20 → P15)
+ *   TXV24QLBRCN20 → TXV24QLBRCN15 (20 at end → 15)
+ */
+function deriveSku15P(originalSku: string): string | null {
+  if (!originalSku) return null;
+
+  // Pattern 1: "P20", "P25", "P30" → "P15"
+  const pMatch = originalSku.match(/P(20|25|30)/);
+  if (pMatch) {
+    return originalSku.replace(pMatch[0], 'P15');
+  }
+
+  // Pattern 2: "20", "25", "30" as standalone size codes in SKU
+  // Find the size code — typically 2 digits surrounded by non-digit or at boundaries
+  for (const code of ['30', '25', '20']) {
+    const idx = originalSku.indexOf(code);
+    if (idx >= 0) {
+      // Verify it's likely a size code (not part of a longer number context)
+      const before = idx > 0 ? originalSku[idx - 1] : '';
+      const after = idx + 2 < originalSku.length ? originalSku[idx + 2] : '';
+      // Size code is usually preceded by letters and followed by letters or end
+      if ((/[A-Za-z]/.test(before) || idx === 0) && (/[A-Za-z]/.test(after) || after === '')) {
+        return originalSku.substring(0, idx) + '15' + originalSku.substring(idx + 2);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * POST — Generate a 1.5 plaza variant from an approved image.
+ * Automatically derives the target SKU for ML publishing.
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id, jobId } = await context.params;
@@ -45,6 +86,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     .eq('id', id)
     .single();
 
+  // Derive target SKU for 1.5P
+  const swatch = originalJob.swatch as Record<string, string>;
+  const originalSku = swatch.sku_suffix || '';
+  const targetSku = deriveSku15P(originalSku);
+
+  console.log(`[resize] SKU mapping: ${originalSku} → ${targetSku || '(could not derive)'}`);
+
   // Create a new job for the 1.5P variant
   const { data: newJob, error: insertError } = await supabase
     .from('generation_jobs')
@@ -58,6 +106,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         strategy: 'resize_bed',
         source_job_id: jobId,
         target_size: '1.5_plaza',
+        original_sku: originalSku,
+        target_sku: targetSku,
       },
     })
     .select()
@@ -74,21 +124,28 @@ export async function POST(request: NextRequest, context: RouteContext) {
         newJob.id,
         originalJob,
         id,
-        project?.metadata as Record<string, unknown> | null
+        project?.metadata as Record<string, unknown> | null,
+        targetSku
       );
     } catch (err) {
       console.error('[resize] Error:', err);
     }
   });
 
-  return NextResponse.json({ status: 'generating', new_job_id: newJob.id });
+  return NextResponse.json({
+    status: 'generating',
+    new_job_id: newJob.id,
+    original_sku: originalSku,
+    target_sku: targetSku,
+  });
 }
 
 async function generateResizedVariant(
   newJobId: string,
   originalJob: Record<string, unknown>,
   projectId: string,
-  projectMetadata?: Record<string, unknown> | null
+  projectMetadata: Record<string, unknown> | null | undefined,
+  targetSku: string | null
 ) {
   const supabase = createAdminClient();
   const swatch = originalJob.swatch as Record<string, string>;
@@ -170,7 +227,7 @@ Genera una imagen fotorrealista de ${projectSettings.generation.resolution} pixe
         upsert: true,
       });
 
-    // Update job
+    // Update job with target SKU info
     await supabase
       .from('generation_jobs')
       .update({
@@ -182,6 +239,8 @@ Genera una imagen fotorrealista de ${projectSettings.generation.resolution} pixe
           strategy: 'resize_bed',
           source_job_id: originalJob.id,
           target_size: '1.5_plaza',
+          original_sku: swatch.sku_suffix || null,
+          target_sku: targetSku,
           shot_type: heroShot.shot_type,
         },
         updated_at: new Date().toISOString(),
@@ -200,7 +259,7 @@ Genera una imagen fotorrealista de ${projectSettings.generation.resolution} pixe
       }).catch(() => {});
     }
 
-    console.log(`[resize] Generated 1.5P variant for job ${newJobId}`);
+    console.log(`[resize] Generated 1.5P variant: ${newJobId} (target_sku: ${targetSku})`);
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
