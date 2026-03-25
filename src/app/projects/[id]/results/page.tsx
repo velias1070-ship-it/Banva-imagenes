@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
   ImageIcon, RotateCcw, LayoutGrid, Layers, ChevronDown, ChevronRight,
-  Upload, Loader2,
+  Upload, Loader2, BedSingle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -235,6 +235,41 @@ export default function ResultsPage() {
     }
   }
 
+  async function handleGenerate15P(jobId: string) {
+    toast.info('Generando variante 1.5 plaza...');
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}/resize`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success('Generando 1.5P — se agregara automaticamente');
+        // Poll for the new job
+        const poll = setInterval(async () => {
+          const updated = await fetch(`/api/projects/${id}/results`);
+          if (updated.ok) {
+            const allJobs = await updated.json();
+            setJobs(allJobs);
+            const newJob = allJobs.find((j: JobWithRelations) => j.id === data.new_job_id);
+            if (newJob && !['generating', 'qa_pending', 'qa_processing'].includes(newJob.status)) {
+              clearInterval(poll);
+              if (newJob.status === 'approved') {
+                toast.success('Variante 1.5P generada y aprobada');
+              } else {
+                toast.info(`Variante 1.5P terminada con estado: ${newJob.status}`);
+              }
+            }
+          }
+        }, 5000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error generando variante 1.5P');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    }
+  }
+
   async function handleOverride(jobId: string, newStatus: 'approved' | 'flagged') {
     const res = await fetch(`/api/projects/${id}/results/${jobId}`, {
       method: 'PATCH',
@@ -388,6 +423,18 @@ export default function ResultsPage() {
                   onClick={() => handleDownloadOne(job.id)}
                 >
                   <Download className="h-3 w-3" />
+                </Button>
+              )}
+              {job.status === 'approved' && job.output_storage_path && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-purple-600"
+                  onClick={() => handleGenerate15P(job.id)}
+                  title="Generar variante para cama 1.5 plaza (1 almohada)"
+                >
+                  <BedSingle className="h-3 w-3 mr-1" />
+                  1.5P
                 </Button>
               )}
               {(job.status === 'flagged' || job.status === 'error') && (
