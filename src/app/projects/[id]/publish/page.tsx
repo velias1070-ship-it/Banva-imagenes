@@ -214,7 +214,7 @@ export default function PublishPage() {
     for (const idx of dirty) { await saveListing(idx); }
   }
 
-  async function replicatePictures(sourceIdx: number, targetSkus: string[]) {
+  async function replicatePictures(sourceIdx: number, targetSkus: string[], coverIndex?: number) {
     const source = listings[sourceIdx];
     if (!source.listing.sku) return;
     if (!targetSkus.length) { toast.error('No hay destinos validos'); return; }
@@ -224,7 +224,7 @@ export default function PublishPage() {
       const res = await fetch('/api/ml/replicate-pictures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus }),
+        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, cover_index: coverIndex }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -295,8 +295,9 @@ export default function PublishPage() {
                   sourceSku={ls.listing.sku}
                   sourceName={ls.listing.swatch_name}
                   pictureCount={ls.listing.ml_pictures.length}
+                  sourcePictures={ls.listing.ml_pictures}
                   replicating={replicating}
-                  onReplicate={(targetSkus) => replicatePictures(listingIdx, targetSkus)}
+                  onReplicate={(targetSkus, coverIndex) => replicatePictures(listingIdx, targetSkus, coverIndex)}
                   onCancel={() => setReplicateSource(null)}
                 />
               )}
@@ -427,18 +428,20 @@ export default function PublishPage() {
 interface RelatedItem { sku_venta: string; titulo: string; group: string }
 
 function ReplicatePanel({
-  sourceSku, sourceName, pictureCount, replicating, onReplicate, onCancel,
+  sourceSku, sourceName, pictureCount, sourcePictures, replicating, onReplicate, onCancel,
 }: {
   sourceSku: string;
   sourceName: string;
   pictureCount: number;
+  sourcePictures: MlPicture[];
   replicating: boolean;
-  onReplicate: (targetSkus: string[]) => void;
+  onReplicate: (targetSkus: string[], coverIndex?: number) => void;
   onCancel: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [related, setRelated] = useState<RelatedItem[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(true);
+  const [coverIndex, setCoverIndex] = useState<number | undefined>(undefined);
 
   // Fetch related listings from ml_items_map via the debug endpoint
   useEffect(() => {
@@ -550,6 +553,31 @@ function ReplicatePanel({
         </div>
       </div>
 
+      {/* Cover picker */}
+      {sourcePictures.length > 1 && (
+        <div className="mb-3">
+          <p className="text-xs font-medium text-purple-700 mb-1.5">
+            Portada para la replica {coverIndex != null ? `(foto ${coverIndex + 1})` : '(misma que el original)'}:
+          </p>
+          <div className="flex gap-1.5 overflow-x-auto pb-1">
+            {sourcePictures.map((pic, idx) => (
+              <button
+                key={pic.id}
+                onClick={() => setCoverIndex(idx === coverIndex ? undefined : idx)}
+                className={`relative h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all
+                  ${coverIndex === idx ? 'border-purple-600 ring-2 ring-purple-300' : idx === 0 && coverIndex == null ? 'border-purple-300' : 'border-gray-200 hover:border-purple-300'}`}
+              >
+                <img src={pic.url} alt="" className="h-full w-full object-cover" />
+                <div className="absolute top-0.5 left-0.5 bg-black/60 text-white text-[9px] px-1 rounded">
+                  {coverIndex === idx ? '★' : idx + 1}
+                </div>
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] text-purple-600 mt-1">Click en una foto para usarla como portada en las replicas</p>
+        </div>
+      )}
+
       {loadingRelated ? (
         <div className="flex items-center gap-2 text-sm text-purple-600 py-2">
           <Loader2 className="h-4 w-4 animate-spin" /> Buscando publicaciones relacionadas...
@@ -584,7 +612,7 @@ function ReplicatePanel({
           <Button
             size="sm"
             disabled={replicating}
-            onClick={() => onReplicate(Array.from(selected))}
+            onClick={() => onReplicate(Array.from(selected), coverIndex)}
             className="bg-purple-600 hover:bg-purple-700"
           >
             {replicating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Copy className="mr-2 h-4 w-4" />}

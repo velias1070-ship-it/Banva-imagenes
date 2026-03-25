@@ -19,6 +19,7 @@ interface MlPicture {
 interface ReplicateRequest {
   source_sku: string;          // SKU to copy FROM (e.g. TXV23QLAT25BE)
   target_skus: string[];       // SKUs to copy TO (e.g. [TXV23QLAT20BE, TXV23QLAT30BE])
+  cover_index?: number;        // Index of picture to use as cover in targets (0-based, default: same order as source)
   dry_run?: boolean;
 }
 
@@ -35,7 +36,7 @@ interface ReplicateRequest {
  */
 export async function POST(request: NextRequest) {
   const body: ReplicateRequest = await request.json();
-  const { source_sku, target_skus, dry_run = false } = body;
+  const { source_sku, target_skus, cover_index, dry_run = false } = body;
 
   if (!source_sku || !target_skus?.length) {
     return NextResponse.json({ error: 'source_sku and target_skus[] are required' }, { status: 400 });
@@ -67,6 +68,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Source listing ${sourceItem.item_id} has no pictures` }, { status: 400 });
   }
 
+  // Reorder pictures if cover_index is specified
+  let orderedPictures = [...sourcePictures];
+  if (cover_index != null && cover_index >= 0 && cover_index < sourcePictures.length && cover_index !== 0) {
+    const [cover] = orderedPictures.splice(cover_index, 1);
+    orderedPictures.unshift(cover);
+  }
+
   // 3. Process each target
   const results: {
     sku: string;
@@ -92,7 +100,7 @@ export async function POST(request: NextRequest) {
     try {
       // Upload each source picture to ML and collect new picture IDs
       const newPictureIds: { id: string }[] = [];
-      for (const pic of sourcePictures) {
+      for (const pic of orderedPictures) {
         const uploaded = await mlUploadImageFromUrl(pic.secure_url);
         newPictureIds.push({ id: uploaded.id });
       }
