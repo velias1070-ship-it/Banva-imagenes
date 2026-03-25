@@ -179,20 +179,34 @@ async function generateResizedVariant(
     const swatchBase64 = swatchBuffer.toString('base64');
 
     // Build prompt for 1.5 plaza adaptation
-    const prompt = `Imagen 1 muestra un producto textil en una cama de 2 plazas con 2 almohadas. Imagen 2 muestra el color/patron exacto del producto.
+    const prompt = `Imagen 1 muestra un producto textil para un set de 2 plazas. Imagen 2 muestra el color/patron exacto del producto.
 
-TAREA: Recrea esta MISMA escena pero adaptada a una cama de 1.5 plaza (cama individual/twin):
+TAREA: Recrea la Imagen 1 EXACTAMENTE pero adaptada a un set de 1.5 plaza.
 
-CAMBIOS OBLIGATORIOS:
-- Cama mas angosta (proporciones de cama de 1 plaza y media / twin)
-- Solo 1 almohada (centrada en la cama), con 1 sola funda de almohada
-- El producto textil se ve mas pequeno, acorde al tamano de la cama
-- Si la imagen tiene texto que menciona cantidades del set (ej: "2 fundas de almohada", "2 pillow cases", "1 Quilt + 2 Fundas"), CAMBIAR las cantidades para reflejar el set de 1.5 plaza:
-  * "2 fundas de almohada" → "1 funda de almohada"
-  * "2 pillow cases" → "1 funda de almohada" (traducir a espanol)
-  * Cualquier referencia a "2 plazas" → "1.5 plazas"
-  * El quilt/sabana sigue siendo 1, solo cambian las fundas (de 2 a 1)
-- Si la imagen muestra visualmente 2 almohadas/fundas (ej: en una infografia o composicion), mostrar solo 1
+ANALIZA PRIMERO el tipo de imagen:
+
+A) Si es LIFESTYLE (cama tendida con almohadas):
+   - Cama mas angosta (proporciones de 1.5 plaza / twin)
+   - Solo 1 almohada centrada en la cama
+   - Producto mas pequeno acorde al tamano
+
+B) Si es PACKAGING / DOBLADA (productos doblados, empaquetados, con moños):
+   - Mantener la MISMA composicion, fondo, props (cajas, moños, adornos)
+   - Mantener el MISMO angulo de camara y estilo fotografico
+   - Reducir de 3 piezas a 2 piezas: 1 quilt/sabana doblada + 1 funda de almohada doblada
+   - Si hay 2 fundas dobladas apiladas, mostrar solo 1
+   - NO cambiar a una escena de cama tendida — mantener el formato de productos doblados/empaquetados
+
+C) Si es INFOGRAFIA (con texto, iconos, features):
+   - Mantener el MISMO layout grafico y estilo visual
+   - Adaptar las cantidades visualmente (2 piezas → 1 pieza donde corresponda)
+
+CAMBIOS DE TEXTO OBLIGATORIOS (aplica a todos los tipos):
+- "2 fundas de almohada" → "1 funda de almohada"
+- "2 Fundas de Almohada" → "1 Funda de Almohada"
+- "2 pillow cases" → "1 Funda de Almohada" (traducir a espanol)
+- Cualquier referencia a "2 plazas" → "1.5 plazas"
+- El quilt/sabana sigue siendo 1, solo cambian las fundas (de 2 a 1)
 
 PRESERVAR EXACTAMENTE:
 - El MISMO color, patron y textura del producto — debe coincidir con la Imagen 2 (swatch)
@@ -201,6 +215,9 @@ PRESERVAR EXACTAMENTE:
 - Los MISMOS props y elementos decorativos del entorno
 - La MISMA calidad fotografica
 - Los MISMOS iconos, sellos de certificacion (ej: OEKO-TEX) y elementos graficos
+- El MISMO fondo y ambientacion
+
+CRITICO: NO cambies el tipo de escena. Si la imagen original muestra productos doblados, la nueva DEBE mostrar productos doblados. Si muestra una cama, DEBE mostrar una cama.
 
 NO inventar colores, patrones o texturas que no esten en la Imagen 2.
 Todo texto visible DEBE estar en espanol.
