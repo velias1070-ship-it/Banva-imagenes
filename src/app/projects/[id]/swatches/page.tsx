@@ -113,16 +113,19 @@ export default function SwatchesPage() {
     }
   }
 
-  async function handleRename(swatchId: string, newName: string) {
+  async function handleUpdateSwatch(swatchId: string, updates: Partial<Swatch>) {
     const res = await fetch(`/api/projects/${id}/swatches/${swatchId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName }),
+      body: JSON.stringify(updates),
     });
     if (res.ok) {
       setSwatches((prev) =>
-        prev.map((s) => (s.id === swatchId ? { ...s, name: newName } : s))
+        prev.map((s) => (s.id === swatchId ? { ...s, ...updates } : s))
       );
+      if (updates.sku_suffix !== undefined) {
+        toast.success(`SKU actualizado: ${updates.sku_suffix || '(vacío)'}`);
+      }
     }
   }
 
@@ -216,14 +219,24 @@ export default function SwatchesPage() {
                           defaultValue={swatch.name}
                           onBlur={(e) => {
                             if (e.target.value !== swatch.name) {
-                              handleRename(swatch.id, e.target.value);
+                              handleUpdateSwatch(swatch.id, { name: e.target.value });
                             }
                           }}
                           className="h-7 text-sm font-medium border-none px-1 hover:bg-gray-50 focus:bg-white"
                         />
+                        <Input
+                          defaultValue={swatch.sku_suffix || ''}
+                          placeholder="SKU (ej: TXV23QLAT25BE)"
+                          onBlur={(e) => {
+                            const val = e.target.value.trim();
+                            if (val !== (swatch.sku_suffix || '')) {
+                              handleUpdateSwatch(swatch.id, { sku_suffix: val || null });
+                            }
+                          }}
+                          className="h-6 text-xs font-mono border-none px-1 text-muted-foreground hover:bg-gray-50 focus:bg-white"
+                        />
                         <p className="px-1 text-xs text-muted-foreground">
                           {swatch.file_size_kb}KB
-                          {swatch.sku_suffix && ` · ${swatch.sku_suffix}`}
                         </p>
                       </div>
                       <Button
