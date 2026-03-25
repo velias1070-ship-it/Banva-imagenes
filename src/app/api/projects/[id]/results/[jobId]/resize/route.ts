@@ -247,16 +247,29 @@ Genera una imagen fotorrealista de ${projectSettings.generation.resolution} pixe
       })
       .eq('id', newJobId);
 
+    // Re-activate batch so health check and QA chain can find it
+    const batchId = originalJob.batch_id as string;
+    if (batchId) {
+      await supabase
+        .from('generation_batches')
+        .update({ status: 'generating', updated_at: new Date().toISOString() })
+        .eq('id', batchId);
+    }
+
     // Trigger QA
     const baseUrl = process.env.APP_URL
       || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
       || 'http://localhost:3000';
 
-    const batchId = originalJob.batch_id as string;
     if (batchId) {
-      fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
-        method: 'POST',
-      }).catch(() => {});
+      try {
+        await fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
+          method: 'POST',
+        });
+        console.log(`[resize] Triggered QA for batch ${batchId}`);
+      } catch (err) {
+        console.error('[resize] Failed to trigger QA:', err);
+      }
     }
 
     console.log(`[resize] Generated 1.5P variant: ${newJobId} (target_sku: ${targetSku})`);
