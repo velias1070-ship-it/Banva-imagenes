@@ -185,8 +185,14 @@ TAREA: Recrea esta MISMA escena pero adaptada a una cama de 1.5 plaza (cama indi
 
 CAMBIOS OBLIGATORIOS:
 - Cama mas angosta (proporciones de cama de 1 plaza y media / twin)
-- Solo 1 almohada (centrada en la cama)
+- Solo 1 almohada (centrada en la cama), con 1 sola funda de almohada
 - El producto textil se ve mas pequeno, acorde al tamano de la cama
+- Si la imagen tiene texto que menciona cantidades del set (ej: "2 fundas de almohada", "2 pillow cases", "1 Quilt + 2 Fundas"), CAMBIAR las cantidades para reflejar el set de 1.5 plaza:
+  * "2 fundas de almohada" → "1 funda de almohada"
+  * "2 pillow cases" → "1 funda de almohada" (traducir a espanol)
+  * Cualquier referencia a "2 plazas" → "1.5 plazas"
+  * El quilt/sabana sigue siendo 1, solo cambian las fundas (de 2 a 1)
+- Si la imagen muestra visualmente 2 almohadas/fundas (ej: en una infografia o composicion), mostrar solo 1
 
 PRESERVAR EXACTAMENTE:
 - El MISMO color, patron y textura del producto — debe coincidir con la Imagen 2 (swatch)
@@ -194,6 +200,7 @@ PRESERVAR EXACTAMENTE:
 - La MISMA composicion general y angulo de camara
 - Los MISMOS props y elementos decorativos del entorno
 - La MISMA calidad fotografica
+- Los MISMOS iconos, sellos de certificacion (ej: OEKO-TEX) y elementos graficos
 
 NO inventar colores, patrones o texturas que no esten en la Imagen 2.
 Todo texto visible DEBE estar en espanol.
