@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
   // 2. Get approved jobs with hero shot info for ordering
   let jobQuery = supabase
     .from('generation_jobs')
-    .select('id, output_storage_path, swatch_id, hero_shot_id')
+    .select('id, output_storage_path, swatch_id, hero_shot_id, prompt_metadata')
     .eq('status', 'approved')
     .in('batch_id', batchIds);
 
@@ -123,11 +123,40 @@ export async function POST(request: NextRequest) {
 
   const swatchMap = new Map((swatches || []).map((s) => [s.id, s]));
 
-  // 5. Group jobs by swatch, sorted by shot type
-  const bySwatch = new Map<string, typeof jobs>();
+  // 5. Group jobs by effective SKU (target_sku for resized variants, swatch_id for normal)
+  // Jobs with target_sku in prompt_metadata are 1.5P variants — group separately
+  const bySku = new Map<string, { sku: string; jobs: typeof jobs }>();
   for (const job of jobs) {
-    if (!bySwatch.has(job.swatch_id)) bySwatch.set(job.swatch_id, []);
-    bySwatch.get(job.swatch_id)!.push(job);
+    const meta = job.prompt_metadata as Record<string, unknown> | null;
+    const targetSku = meta?.target_sku as string | undefined;
+
+    if (targetSku) {
+      // Resized variant — group by target_sku directly
+      if (!bySku.has(targetSku)) bySku.set(targetSku, { sku: targetSku, jobs: [] });
+      bySku.get(targetSku)!.jobs.push(job);
+    } else {
+      // Normal job — group by swatch_id (legacy behavior)
+      const key = `swatch:${job.swatch_id}`;
+      if (!bySku.has(key)) bySku.set(key, { sku: '', jobs: [] });
+      bySku.get(key)!.jobs.push(job);
+    }
+  }
+
+  // For swatch-grouped jobs, resolve SKU from swatch
+  for (const [key, group] of bySku) {
+    if (key.startsWith('swatch:')) {
+      const swatchId = key.replace('swatch:', '');
+      const swatch = swatchMap.get(swatchId);
+      group.sku = swatch?.sku_suffix || '';
+    }
+  }
+
+  // Legacy alias for compatibility with code below
+  const bySwatch = new Map<string, typeof jobs>();
+  for (const [, group] of bySku) {
+    // Use sku as key (or generate a unique key for groups without sku)
+    const groupKey = group.sku || `unknown-${Math.random()}`;
+    bySwatch.set(groupKey, group.jobs);
   }
 
   // Sort each group by shot type priority
@@ -144,9 +173,16 @@ export async function POST(request: NextRequest) {
 
   // 6. Get ML item mappings
   const inventoryDb = getInventorySupabase();
-  const allSkus = (swatches || [])
+  const swatchSkus = (swatches || [])
     .map((s) => s.sku_suffix)
     .filter(Boolean) as string[];
+
+  // Also collect target_skus from resized variants (1.5P jobs)
+  const targetSkus = (jobs || [])
+    .map((j) => (j.prompt_metadata as Record<string, unknown> | null)?.target_sku as string)
+    .filter(Boolean);
+
+  const allSkus = [...new Set([...swatchSkus, ...targetSkus])];
 
   // Also get all swatch names for fallback matching by title
   const swatchNames = (swatches || []).map((s) => s.name.toLowerCase());
@@ -207,17 +243,30 @@ export async function POST(request: NextRequest) {
   // 8. Process each SKU
   const results: PublishResult[] = [];
 
-  for (const [swatchId, swatchJobs] of bySwatch) {
-    const swatch = swatchMap.get(swatchId);
-    const sku = swatch?.sku_suffix;
+  for (const [skuKey, swatchJobs] of bySwatch) {
+    const sku = skuKey.startsWith('unknown-') ? null : skuKey;
 
     if (!sku) {
       results.push({
-        sku: swatch?.name || swatchId, item_id: '', titulo: '',
+        sku: skuKey, item_id: '', titulo: '',
         pictures_new: 0, pictures_kept: 0, pictures_total: 0,
-        status: 'skipped', error: 'No sku_suffix on swatch',
+        status: 'skipped', error: 'No SKU assigned',
       });
       continue;
+    }
+
+    // If this SKU isn't in our map yet (e.g. a 1.5P target_sku), fetch it
+    if (!skuToItem.has(sku)) {
+      const { data: extraItems } = await inventoryDb
+        .from('ml_items_map')
+        .select('sku_venta, item_id, titulo')
+        .eq('sku_venta', sku)
+        .eq('activo', true)
+        .is('variation_id', null)
+        .limit(1);
+      if (extraItems?.length) {
+        skuToItem.set(sku, extraItems[0]);
+      }
     }
 
     const mlItem = skuToItem.get(sku);
