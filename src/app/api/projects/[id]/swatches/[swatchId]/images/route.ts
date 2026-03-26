@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 interface RouteContext {
   params: Promise<{ id: string; swatchId: string }>;
@@ -23,7 +24,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 // POST — upload a new reference image for a swatch
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id: projectId, swatchId } = await context.params;
-  const supabase = await createServerSupabase();
+  const supabase = createAdminClient();
 
   const formData = await request.formData();
   const file = formData.get('file') as File;
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 // DELETE — remove a swatch image by id (passed as query param)
 export async function DELETE(request: NextRequest, context: RouteContext) {
   const { swatchId } = await context.params;
-  const supabase = await createServerSupabase();
+  const supabase = createAdminClient();
 
   const imageId = request.nextUrl.searchParams.get('imageId');
   if (!imageId) {
