@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -241,12 +241,36 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     }
 
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
-    const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
+    let swatchBuffer: Buffer = Buffer.from(await swatchRes.data.arrayBuffer());
     let heroBase64 = heroBuffer.toString('base64');
+
+    // Check for additional swatch reference images
+    const { data: extraImages } = await supabase
+      .from('swatch_images')
+      .select('storage_path')
+      .eq('swatch_id', job.swatch.id)
+      .order('display_order');
+
+    if (extraImages && extraImages.length > 0) {
+      // Download all extra images and create collage
+      const allBuffers = [swatchBuffer];
+      for (const img of extraImages) {
+        const { data: imgData } = await supabase.storage.from('images').download(img.storage_path);
+        if (imgData) {
+          allBuffers.push(Buffer.from(await imgData.arrayBuffer()));
+        }
+      }
+      if (allBuffers.length > 1) {
+        swatchBuffer = await createSwatchCollage(allBuffers);
+        console.log(`[process-next] Created swatch collage with ${allBuffers.length} images`);
+      }
+    }
+
     let swatchBase64 = swatchBuffer.toString('base64');
 
-    // Detect dark swatches for prompt adjustments
-    const darkSwatch = await isSwatchDark(swatchBuffer);
+    // Detect dark swatches for prompt adjustments (use original swatch, not collage)
+    const originalSwatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
+    const darkSwatch = await isSwatchDark(originalSwatchBuffer);
     if (darkSwatch) {
       console.log(`[process-next] Dark swatch: "${job.swatch.name}"`);
     }

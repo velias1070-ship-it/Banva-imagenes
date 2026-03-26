@@ -149,3 +149,106 @@ export async function ensureOutputSpec(imageBuffer: Buffer, sizePx: number = 120
   console.log(`[image-processing] Post-processed to ${sizePx}x${sizePx} sRGB PNG`);
   return processed;
 }
+
+/**
+ * Combine multiple swatch reference images into a single collage.
+ * Gemini only accepts 2 images (hero + swatch), so multiple swatch
+ * references are stitched into one composite image.
+ *
+ * Layout: horizontal strip if 2-3 images, 2x2 grid if 4.
+ * Output: 1200x1200 square.
+ */
+export async function createSwatchCollage(imageBuffers: Buffer[]): Promise<Buffer> {
+  if (imageBuffers.length === 0) throw new Error('No images to collage');
+  if (imageBuffers.length === 1) return imageBuffers[0];
+
+  const targetSize = 1200;
+  const count = Math.min(imageBuffers.length, 4); // Max 4 images in collage
+
+  let cellWidth: number;
+  let cellHeight: number;
+  let cols: number;
+  let rows: number;
+
+  if (count <= 2) {
+    // Side by side
+    cols = 2; rows = 1;
+    cellWidth = targetSize / 2;
+    cellHeight = targetSize;
+  } else if (count === 3) {
+    // 1 large left + 2 stacked right
+    cols = 2; rows = 2;
+    cellWidth = targetSize / 2;
+    cellHeight = targetSize / 2;
+  } else {
+    // 2x2 grid
+    cols = 2; rows = 2;
+    cellWidth = targetSize / 2;
+    cellHeight = targetSize / 2;
+  }
+
+  // Resize each image to fit its cell
+  const resizedBuffers: Buffer[] = [];
+  for (let i = 0; i < count; i++) {
+    const resized = await sharp(imageBuffers[i])
+      .resize(Math.round(cellWidth), Math.round(cellHeight), {
+        fit: 'contain',
+        background: { r: 255, g: 255, b: 255 },
+      })
+      .png()
+      .toBuffer();
+    resizedBuffers.push(resized);
+  }
+
+  // Special case: 3 images → first image takes full left column
+  if (count === 3) {
+    const largeLeft = await sharp(imageBuffers[0])
+      .resize(Math.round(targetSize / 2), targetSize, {
+        fit: 'contain',
+        background: { r: 255, g: 255, b: 255 },
+      })
+      .png()
+      .toBuffer();
+
+    const collage = await sharp({
+      create: {
+        width: targetSize,
+        height: targetSize,
+        channels: 3,
+        background: { r: 255, g: 255, b: 255 },
+      },
+    })
+      .composite([
+        { input: largeLeft, left: 0, top: 0 },
+        { input: resizedBuffers[1], left: Math.round(targetSize / 2), top: 0 },
+        { input: resizedBuffers[2], left: Math.round(targetSize / 2), top: Math.round(targetSize / 2) },
+      ])
+      .png()
+      .toBuffer();
+
+    console.log(`[image-processing] Created swatch collage: 3 images (1 large + 2 small)`);
+    return collage;
+  }
+
+  // General grid layout (2 or 4 images)
+  const composites = resizedBuffers.map((buf, i) => ({
+    input: buf,
+    left: Math.round((i % cols) * cellWidth),
+    top: Math.round(Math.floor(i / cols) * cellHeight),
+  }));
+
+  const collage = await sharp({
+    create: {
+      width: targetSize,
+      height: targetSize,
+      channels: 3,
+      background: { r: 255, g: 255, b: 255 },
+    },
+  })
+    .composite(composites)
+    .png()
+    .toBuffer();
+
+  console.log(`[image-processing] Created swatch collage: ${count} images in ${cols}x${rows} grid`);
+  return collage;
+}

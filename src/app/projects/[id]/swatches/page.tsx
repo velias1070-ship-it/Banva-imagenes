@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dropzone } from '@/components/upload/dropzone';
-import { ArrowLeft, Trash2, Download, RefreshCw, Loader2, ImagePlus } from 'lucide-react';
+import { ArrowLeft, Trash2, Download, RefreshCw, Loader2, ImagePlus, Plus, X } from 'lucide-react';
 import type { Swatch } from '@/types/database';
 import { toast } from 'sonner';
 
@@ -19,6 +19,8 @@ export default function SwatchesPage() {
   const [imgVersion, setImgVersion] = useState(0);
   const [skuInput, setSkuInput] = useState('');
   const [addingSku, setAddingSku] = useState(false);
+  const [expandedSwatch, setExpandedSwatch] = useState<string | null>(null);
+  const [swatchExtraImages, setSwatchExtraImages] = useState<Record<string, { id: string; storage_path: string; label: string }[]>>({});
 
   const fetchSwatches = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/swatches`);
@@ -169,6 +171,56 @@ export default function SwatchesPage() {
     input.click();
   }
 
+  async function fetchExtraImages(swatchId: string) {
+    const res = await fetch(`/api/projects/${id}/swatches/${swatchId}/images`);
+    if (res.ok) {
+      const images = await res.json();
+      setSwatchExtraImages((prev) => ({ ...prev, [swatchId]: images }));
+    }
+  }
+
+  async function handleAddExtraImage(swatchId: string) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = async () => {
+      const files = input.files;
+      if (!files?.length) return;
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+          await fetch(`/api/projects/${id}/swatches/${swatchId}/images`, {
+            method: 'POST',
+            body: formData,
+          });
+        } catch { /* ignore */ }
+      }
+      toast.success(`${files.length} imagen(es) de referencia agregadas`);
+      fetchExtraImages(swatchId);
+    };
+    input.click();
+  }
+
+  async function handleDeleteExtraImage(swatchId: string, imageId: string) {
+    await fetch(`/api/projects/${id}/swatches/${swatchId}/images?imageId=${imageId}`, {
+      method: 'DELETE',
+    });
+    fetchExtraImages(swatchId);
+  }
+
+  function toggleExpand(swatchId: string) {
+    if (expandedSwatch === swatchId) {
+      setExpandedSwatch(null);
+    } else {
+      setExpandedSwatch(swatchId);
+      if (!swatchExtraImages[swatchId]) {
+        fetchExtraImages(swatchId);
+      }
+    }
+  }
+
   async function handleUpdateSwatch(swatchId: string, updates: Partial<Swatch>) {
     const res = await fetch(`/api/projects/${id}/swatches/${swatchId}`, {
       method: 'PATCH',
@@ -276,7 +328,8 @@ export default function SwatchesPage() {
               ) : (
                 <div className="space-y-3">
                   {swatches.map((swatch) => (
-                    <div key={swatch.id} className="flex items-center gap-3 rounded-lg border p-2">
+                    <div key={swatch.id} className="rounded-lg border p-2">
+                    <div className="flex items-center gap-3">
                       <button
                         onClick={() => handleReplaceImage(swatch.id)}
                         className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100 relative group cursor-pointer"
@@ -327,14 +380,57 @@ export default function SwatchesPage() {
                           {swatch.file_size_kb}KB
                         </p>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDelete(swatch.id)}
-                        className="h-8 w-8 text-red-500 hover:text-red-700"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex flex-col gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => toggleExpand(swatch.id)}
+                          className="h-7 w-7 text-blue-500 hover:text-blue-700"
+                          title="Imagenes de referencia"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDelete(swatch.id)}
+                          className="h-7 w-7 text-red-500 hover:text-red-700"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    {/* Extra reference images panel — inside swatch container */}
+                    {expandedSwatch === swatch.id && (
+                      <div className="mt-2 pt-2 border-t">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-xs font-medium text-muted-foreground">Imagenes de referencia</p>
+                          <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => handleAddExtraImage(swatch.id)}>
+                            <ImagePlus className="h-3 w-3 mr-1" /> Agregar
+                          </Button>
+                        </div>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {(swatchExtraImages[swatch.id] || []).map((img) => (
+                            <div key={img.id} className="relative h-12 w-12 rounded overflow-hidden bg-gray-100 group">
+                              <img
+                                src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/images/${img.storage_path}`}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                              <button
+                                onClick={() => handleDeleteExtraImage(swatch.id, img.id)}
+                                className="absolute top-0 right-0 bg-red-500 text-white rounded-bl p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
+                          ))}
+                          {(swatchExtraImages[swatch.id] || []).length === 0 && (
+                            <p className="text-[10px] text-muted-foreground py-1">Sin imagenes extra — agrega close-ups, texturas o detalles del producto</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     </div>
                   ))}
                 </div>
