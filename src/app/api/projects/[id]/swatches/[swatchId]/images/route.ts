@@ -58,7 +58,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     });
 
   if (uploadError) {
-    return NextResponse.json({ error: uploadError.message }, { status: 500 });
+    console.error('[swatch-images] Upload error:', uploadError.message);
+    return NextResponse.json({ error: `Upload failed: ${uploadError.message}` }, { status: 500 });
   }
 
   // Insert record
@@ -75,7 +76,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     .single();
 
   if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+    console.error('[swatch-images] DB insert error:', insertError.message);
+    return NextResponse.json({ error: `DB insert failed: ${insertError.message}` }, { status: 500 });
   }
 
   return NextResponse.json(image, { status: 201 });

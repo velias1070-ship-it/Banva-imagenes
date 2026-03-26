@@ -187,17 +187,28 @@ export default function SwatchesPage() {
     input.onchange = async () => {
       const files = input.files;
       if (!files?.length) return;
+      let successCount = 0;
       for (const file of Array.from(files)) {
         const formData = new FormData();
         formData.append('file', file);
         try {
-          await fetch(`/api/projects/${id}/swatches/${swatchId}/images`, {
+          const res = await fetch(`/api/projects/${id}/swatches/${swatchId}/images`, {
             method: 'POST',
             body: formData,
           });
-        } catch { /* ignore */ }
+          if (res.ok) {
+            successCount++;
+          } else {
+            const err = await res.json().catch(() => ({}));
+            toast.error(`Error subiendo ${file.name}: ${err.error || res.status}`);
+          }
+        } catch {
+          toast.error(`Error de conexion subiendo ${file.name}`);
+        }
       }
-      toast.success(`${files.length} imagen(es) de referencia agregadas`);
+      if (successCount > 0) {
+        toast.success(`${successCount} imagen(es) de referencia agregadas`);
+      }
       fetchExtraImages(swatchId);
     };
     input.click();
