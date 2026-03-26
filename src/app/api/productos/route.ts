@@ -115,16 +115,27 @@ export async function GET() {
   const groups = new Map<string, { base: string; tamano: string; variantes: Map<string, Variante> }>();
 
   for (const row of productos) {
-    if (!row.color || !row.tamano) continue;
-    const base = extractBaseName(row.nombre, row.color);
-    const key = `${base}|||${row.tamano.trim().toLowerCase()}`;
+    // Infer color from nombre if field is empty
+    let color = row.color || '';
+    if (!color) {
+      const words = row.nombre.trim().split(/\s+/);
+      // Last word is usually the color (e.g. "Set 6 Toallas Valencia Azul" → "Azul")
+      if (words.length > 1) {
+        color = words[words.length - 1];
+      }
+    }
+    if (!color) continue;
+
+    const tamano = row.tamano || '';
+    const base = extractBaseName(row.nombre, color);
+    const key = `${base}|||${tamano.trim().toLowerCase()}`;
     if (!groups.has(key)) {
-      groups.set(key, { base, tamano: row.tamano, variantes: new Map() });
+      groups.set(key, { base, tamano, variantes: new Map() });
     }
     groups.get(key)!.variantes.set(row.sku, {
       sku: row.sku,
-      color: row.color,
-      color_slug: slugify(row.color),
+      color: color,
+      color_slug: slugify(color),
       source: 'catalogo',
     });
   }
