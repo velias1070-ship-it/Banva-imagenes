@@ -77,6 +77,33 @@ export async function GET(request: NextRequest) {
     const actions: string[] = [];
     const batchIsHalted = batch.status === 'halted';
 
+    // Un-halt batches that have pending jobs but low flagged rate
+    if (batchIsHalted) {
+      const { data: batchJobs } = await supabase
+        .from('generation_jobs')
+        .select('status')
+        .eq('batch_id', batch.id);
+
+      if (batchJobs) {
+        const total = batchJobs.length;
+        const flagged = batchJobs.filter((j) => j.status === 'flagged').length;
+        const pending = batchJobs.filter((j) => j.status === 'pending').length;
+        const flaggedPct = total > 0 ? flagged / total : 0;
+
+        if (pending > 0 && flaggedPct < 0.20) {
+          await supabase
+            .from('generation_batches')
+            .update({ status: 'generating', updated_at: new Date().toISOString() })
+            .eq('id', batch.id);
+          actions.push(`Un-halted batch (${flagged}/${total} flagged = ${(flaggedPct * 100).toFixed(0)}%, ${pending} pending)`);
+          // Update local state so the rest of the checks work
+          batch.status = 'generating';
+        }
+      }
+    }
+
+    const batchIsNowHalted = batch.status === 'halted';
+
     // Check for stale generating jobs
     const { data: staleGenerating } = await supabase
       .from('generation_jobs')
@@ -124,7 +151,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Reset stale generating → pending
-    if (!batchIsHalted && (staleGenerating?.length || 0) > 0) {
+    if (!batchIsNowHalted && (staleGenerating?.length || 0) > 0) {
       for (const job of staleGenerating!) {
         await supabase
           .from('generation_jobs')
@@ -139,7 +166,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Relaunch generation chain
-    if (!batchIsHalted && ((staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0)) {
+    if (!batchIsNowHalted && ((staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0)) {
       // Re-activate batch if it was completed/pending
       if (batch.status !== 'generating') {
         await supabase
