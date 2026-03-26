@@ -279,22 +279,27 @@ DO NOT change:
     label: 'Toallas',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a towel product (toalla) — could be bath towel, hand towel, or towel set.`,
 
       what_to_change: `Change ALL towel textile surfaces visible in Image 1:
-* ALL TOWELS -> apply the color and pattern from Image 2
-* If the set includes different sizes, ALL must match Image 2
+* ALL TOWELS -> apply ONLY the color and fabric texture from Image 2
+* If the set includes different sizes, ALL must match Image 2's color
+* IMPORTANT: Image 2 may show a FULL PRODUCT PHOTO (towels stacked, folded, with labels/ribbons). Extract ONLY the fabric COLOR and TEXTURE from it — do NOT copy Image 2's composition, arrangement, labels, ribbons, or packaging.
+* The COMPOSITION must come from Image 1 ONLY (same arrangement, same labels, same props, same angle)
 
 DO NOT change:
 * Non-textile elements (bathroom fixtures, shelves, hooks, props)
+* Labels, tags, ribbons, packaging elements from Image 1
+* The arrangement/stacking/folding pattern from Image 1
 * Persons, hands, or clothing`,
 
       final_check: `Before outputting, verify:
-1. Do ALL towels match Image 2's color/pattern?
+1. Do ALL towels match Image 2's COLOR (not composition)?
 2. Is the terry cloth texture preserved?
-3. Did I invent any pattern not in Image 2? If yes -> FIX IT.`,
+3. Does the composition EXACTLY match Image 1 (same arrangement, labels, props)?
+4. Did I copy any element from Image 2 that is NOT the fabric color? If yes -> FIX IT.`,
 
       dark_swatch_note: `The swatch shows a VERY DARK fabric. Match the darkness exactly. Do NOT lighten.`,
     },
@@ -763,7 +768,9 @@ export function buildEditPrompt(
   const learnings = formatLearnings(strategy);
   const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}`;
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}
+
+REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
