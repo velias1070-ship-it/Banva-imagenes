@@ -23,6 +23,30 @@ interface RouteContext {
  * 3. On error → reset to qa_pending (health check also handles stale qa_processing).
  * 4. Counter sync: queries jobs table for counts (no increment race conditions).
  */
+/**
+ * Reliable chain invocation with retry.
+ * Awaits the fetch so we KNOW it was received.
+ */
+async function reliableQAFetch(url: string, label: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok || res.status < 500) return true;
+      console.error(`[process-qa] ${label} returned ${res.status} (attempt ${attempt + 1})`);
+    } catch (err) {
+      console.error(`[process-qa] ${label} fetch failed (attempt ${attempt + 1}):`, err instanceof Error ? err.message : err);
+    }
+  }
+  return false;
+}
+
 export async function POST(_request: NextRequest, context: RouteContext) {
   const { batchId } = await context.params;
 
@@ -32,27 +56,36 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     shouldChain = await processOneQAJob(batchId);
   } catch (err) {
     console.error('[process-qa] Error:', err);
-    shouldChain = true; // still try next QA job
+    shouldChain = true;
   }
 
-  // ── DUAL-DISPATCH: Fire chain trigger BEFORE response (primary) ──
   const baseUrl = getBaseUrl();
+  let chainDispatched = false;
+
+  // ── PRIMARY: Awaited fetch with retry ──
   if (shouldChain) {
-    fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).catch(() => {});
+    chainDispatched = await reliableQAFetch(
+      `${baseUrl}/api/batches/${batchId}/process-qa`,
+      'qa-chain-next'
+    );
   }
 
-  // ── BACKUP: Also fire in after() ──
-  if (shouldChain) {
+  // ── BACKUP: after() only if primary failed ──
+  if (shouldChain && !chainDispatched) {
+    console.warn(`[process-qa] Primary dispatch failed for batch ${batchId}, using after() backup`);
     after(async () => {
-      fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => {});
-      await new Promise(r => setTimeout(r, 1500));
+      const backupOk = await reliableQAFetch(
+        `${baseUrl}/api/batches/${batchId}/process-qa`,
+        'qa-chain-next (after backup)'
+      );
+      if (!backupOk) {
+        console.error(`[process-qa] CRITICAL: Both primary and backup failed for batch ${batchId}. Health check must recover.`);
+      }
     });
+  }
+
+  if (!shouldChain) {
+    console.log(`[process-qa] QA chain stopped for batch ${batchId} — no more qa_pending jobs`);
   }
 
   return NextResponse.json({ status: 'qa_processing' });

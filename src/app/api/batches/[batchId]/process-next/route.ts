@@ -20,14 +20,43 @@ interface RouteContext {
 }
 
 /**
+ * Reliable chain invocation with retry.
+ * Awaits the fetch with a timeout so we KNOW if it succeeded.
+ * If it fails, retries once. Returns true if the request was dispatched.
+ */
+async function reliableFetch(url: string, label: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok || res.status < 500) {
+        return true;
+      }
+      console.error(`[process-next] ${label} returned ${res.status} (attempt ${attempt + 1})`);
+    } catch (err) {
+      console.error(`[process-next] ${label} fetch failed (attempt ${attempt + 1}):`, err instanceof Error ? err.message : err);
+    }
+  }
+  return false;
+}
+
+/**
  * CADENA 1 — GENERATION CHAIN
  * Process ONE pending job from a batch, then self-invoke for the next.
  * Does NOT do QA — generates, uploads, sets status=qa_pending, chains.
  * After EACH job → triggers QA chain so both run in parallel.
  *
  * ARCHITECTURE: Heavy work (Gemini API) runs BEFORE the response.
- * Only lightweight chain continuation (fetch calls) runs in after().
- * This prevents Vercel from killing the after() callback mid-generation.
+ * Chain continuation uses awaited fetch with retry + after() backup.
+ *
+ * CHAIN RELIABILITY: The chain MUST NOT silently stop. Every exit path
+ * either chains to the next job or logs exactly why it stopped.
  */
 export async function POST(_request: NextRequest, context: RouteContext) {
   const { batchId } = await context.params;
@@ -40,47 +69,70 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     shouldChain = result.chain;
     shouldTriggerQA = result.triggerQA;
   } catch (err) {
-    console.error('[process-next] Error:', err);
+    console.error('[process-next] Unhandled error in processOneJob:', err);
     shouldChain = true; // still try to chain to the next job
   }
 
-  // ── DUAL-DISPATCH: Fire chain triggers BEFORE response (primary) ──
-  // fetch() without await dispatches the HTTP request immediately via the
-  // underlying TCP layer. Even if this function instance is killed right after
-  // returning the response, the receiving Vercel function will already be
-  // invoked. The chain handlers are idempotent (they pick the next pending
-  // job), so duplicate invocations from after() are harmless.
   const baseUrl = getBaseUrl();
+  let chainDispatched = false;
+  let qaDispatched = false;
+
+  // ── PRIMARY DISPATCH: Awaited fetch with retry ──
+  // We await the fetch so we KNOW it was received. If both retries fail,
+  // after() acts as a true backup.
   if (shouldTriggerQA) {
-    fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).catch(() => {});
+    qaDispatched = await reliableFetch(
+      `${baseUrl}/api/batches/${batchId}/process-qa`,
+      'QA trigger'
+    );
   }
   if (shouldChain) {
-    fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).catch(() => {});
+    chainDispatched = await reliableFetch(
+      `${baseUrl}/api/batches/${batchId}/process-next`,
+      'chain-next'
+    );
   }
 
-  // ── BACKUP: Also fire in after() in case the above didn't dispatch ──
+  // ── BACKUP: after() fires if primary dispatch failed ──
+  // Also fires as redundant safety even if primary succeeded — the chain
+  // handlers are idempotent so duplicate invocations are harmless.
+  if ((shouldChain && !chainDispatched) || (shouldTriggerQA && !qaDispatched)) {
+    console.warn(
+      `[process-next] Primary dispatch incomplete — chain: ${chainDispatched}, qa: ${qaDispatched}. ` +
+      `Relying on after() backup for batch ${batchId}`
+    );
+  }
+
   if (shouldChain || shouldTriggerQA) {
     after(async () => {
-      if (shouldTriggerQA) {
-        fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }).catch(() => {});
+      try {
+        if (shouldTriggerQA && !qaDispatched) {
+          await reliableFetch(
+            `${baseUrl}/api/batches/${batchId}/process-qa`,
+            'QA trigger (after backup)'
+          );
+        }
+        if (shouldChain && !chainDispatched) {
+          const backupOk = await reliableFetch(
+            `${baseUrl}/api/batches/${batchId}/process-next`,
+            'chain-next (after backup)'
+          );
+          if (!backupOk) {
+            console.error(
+              `[process-next] CRITICAL: Both primary and after() backup failed to chain batch ${batchId}. ` +
+              `Health check must recover this batch.`
+            );
+          }
+        }
+      } catch (err) {
+        console.error('[process-next] after() backup error:', err);
       }
-      if (shouldChain) {
-        fetch(`${baseUrl}/api/batches/${batchId}/process-next`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }).catch(() => {});
-      }
-      await new Promise(r => setTimeout(r, 1500));
     });
+  }
+
+  // Log when chain intentionally stops
+  if (!shouldChain && !shouldTriggerQA) {
+    console.log(`[process-next] Chain stopped for batch ${batchId} — no more work to dispatch`);
   }
 
   return NextResponse.json({ status: 'processing' });
@@ -90,14 +142,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   const supabase = createAdminClient();
 
   // Get batch info
-  const { data: batch } = await supabase
+  const { data: batch, error: batchError } = await supabase
     .from('generation_batches')
     .select('*, project:projects(*)')
     .eq('id', batchId)
     .single();
 
   if (!batch) {
-    console.log('[process-next] Batch not found:', batchId);
+    console.log('[process-next] Batch not found:', batchId, batchError?.message);
     return { chain: false, triggerQA: false };
   }
 
@@ -140,10 +192,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
   if (staleQaCount && staleQaCount > 0) {
     const baseUrlForQA = getBaseUrl();
-    fetch(`${baseUrlForQA}/api/batches/${batchId}/process-qa`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).catch(() => {});
+    // Use awaited fetch for self-healing QA trigger too
+    reliableFetch(
+      `${baseUrlForQA}/api/batches/${batchId}/process-qa`,
+      'self-heal QA trigger'
+    ).catch(() => {});
     console.log(`[process-next] Self-healed: triggered QA chain for ${staleQaCount} stale qa_pending jobs`);
   }
 
@@ -483,34 +536,4 @@ function getBaseUrl(): string {
   return process.env.APP_URL
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
     || 'http://localhost:3000';
-}
-
-async function chainNext(batchId: string) {
-  const baseUrl = getBaseUrl();
-  const chainUrl = `${baseUrl}/api/batches/${batchId}/process-next`;
-  console.log(`[process-next] Chaining to: ${chainUrl}`);
-
-  try {
-    await fetch(chainUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (err) {
-    console.error('[process-next] Failed to chain next invocation:', err);
-  }
-}
-
-async function triggerQAChain(batchId: string) {
-  const baseUrl = getBaseUrl();
-  const qaUrl = `${baseUrl}/api/batches/${batchId}/process-qa`;
-  console.log(`[process-next] Triggering QA chain: ${qaUrl}`);
-
-  try {
-    await fetch(qaUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-  } catch (err) {
-    console.error('[process-next] Failed to trigger QA chain:', err);
-  }
 }
