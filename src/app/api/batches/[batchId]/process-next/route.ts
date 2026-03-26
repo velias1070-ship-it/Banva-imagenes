@@ -153,10 +153,25 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     return { chain: false, triggerQA: false };
   }
 
-  // Check if batch is halted
+  // Check if batch is halted — but still process never-attempted jobs
   if (batch.status === 'halted') {
-    console.log('[process-next] Batch is halted, stopping chain:', batchId);
-    return { chain: false, triggerQA: false };
+    const { count: neverProcessed } = await supabase
+      .from('generation_jobs')
+      .select('*', { count: 'exact', head: true })
+      .eq('batch_id', batchId)
+      .eq('status', 'pending')
+      .eq('attempt', 0);
+
+    if (!neverProcessed || neverProcessed === 0) {
+      console.log('[process-next] Batch is halted and no unprocessed jobs, stopping chain:', batchId);
+      return { chain: false, triggerQA: false };
+    }
+    // Un-halt: there are jobs that were never even attempted
+    console.log(`[process-next] Batch halted but ${neverProcessed} jobs never processed — continuing`);
+    await supabase
+      .from('generation_batches')
+      .update({ status: 'generating' })
+      .eq('id', batchId);
   }
 
   // ── SELF-HEALING: Reset stale "generating" jobs (stuck > 90s) ──
