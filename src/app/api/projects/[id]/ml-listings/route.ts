@@ -112,8 +112,6 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   const listings: ListingData[] = [];
 
   const mlFetches = swatches.map(async (swatch) => {
-    const ml = swatch.sku_suffix ? skuToMl.get(swatch.sku_suffix) : null;
-
     // Generated images for this swatch
     const genImages = approvedJobs
       .filter((j) => j.swatch_id === swatch.id)
@@ -125,7 +123,40 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         qa_score: j.qa_score,
       }));
 
-    if (!ml) {
+    if (!skuToMl.has(swatch.sku_suffix || '') && swatch.sku_suffix) {
+      // SKU not in ml_items_map — try to find it in ML and auto-insert
+      try {
+        const sellerId = '1953806321';
+        const searchResult = await mlGet<{ results: string[] }>(
+          `/users/${sellerId}/items/search?seller_sku=${swatch.sku_suffix}&limit=1`
+        );
+        if (searchResult?.results?.[0]) {
+          const foundItemId = searchResult.results[0];
+          const itemData = await mlGet<{ id: string; title: string }>(
+            `/items/${foundItemId}?attributes=id,title`
+          );
+          // Insert into ml_items_map
+          await inventoryDb.from('ml_items_map').upsert({
+            sku: swatch.sku_suffix,
+            sku_venta: swatch.sku_suffix,
+            item_id: foundItemId,
+            titulo: itemData?.title || '',
+            activo: true,
+          }, { onConflict: 'sku_venta,item_id' });
+
+          console.log(`[ml-listings] Auto-inserted ${swatch.sku_suffix} → ${foundItemId}`);
+          // Set ml so the code below fetches pictures
+          skuToMl.set(swatch.sku_suffix, { sku_venta: swatch.sku_suffix, item_id: foundItemId, titulo: itemData?.title || '' });
+        }
+      } catch (err) {
+        console.error(`[ml-listings] Auto-insert failed for ${swatch.sku_suffix}:`, err);
+      }
+    }
+
+    // Re-check after potential auto-insert
+    const mlItem = swatch.sku_suffix ? skuToMl.get(swatch.sku_suffix) : null;
+
+    if (!mlItem) {
       listings.push({
         swatch_id: swatch.id,
         swatch_name: swatch.name,
@@ -141,13 +172,13 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     }
 
     try {
-      const item = await mlGet<MlItemResponse>(`/items/${ml.item_id}?attributes=id,title,status,permalink,pictures`);
+      const item = await mlGet<MlItemResponse>(`/items/${mlItem.item_id}?attributes=id,title,status,permalink,pictures`);
       listings.push({
         swatch_id: swatch.id,
         swatch_name: swatch.name,
         sku: swatch.sku_suffix || '',
-        item_id: ml.item_id,
-        titulo: item.title || ml.titulo,
+        item_id: mlItem.item_id,
+        titulo: item.title || mlItem.titulo,
         status: item.status || '',
         permalink: item.permalink || '',
         ml_pictures: (item.pictures || []).map((p) => ({
@@ -162,8 +193,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         swatch_id: swatch.id,
         swatch_name: swatch.name,
         sku: swatch.sku_suffix || '',
-        item_id: ml.item_id,
-        titulo: ml.titulo,
+        item_id: mlItem.item_id,
+        titulo: mlItem.titulo,
         status: 'error',
         permalink: '',
         ml_pictures: [],
