@@ -28,17 +28,36 @@ export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const isCronCall = cronSecret && authHeader === `Bearer ${cronSecret}`;
 
-  // Find all active batches
+  // Find all active batches + completed batches that still have pending/stuck jobs
   let query = supabase
     .from('generation_batches')
     .select('id, project_id, status')
-    .in('status', ['generating', 'halted']);
+    .in('status', ['generating', 'halted', 'completed', 'pending']);
 
   if (projectId) {
     query = query.eq('project_id', projectId);
   }
 
-  const { data: activeBatches } = await query;
+  const { data: allBatches } = await query;
+
+  // Filter: keep active batches + any batch that has pending/generating/qa jobs
+  const activeBatches: typeof allBatches = [];
+  for (const batch of allBatches || []) {
+    if (batch.status === 'generating' || batch.status === 'halted') {
+      activeBatches.push(batch);
+      continue;
+    }
+    // For completed/pending batches, check if they have stuck jobs
+    const { count: stuckCount } = await supabase
+      .from('generation_jobs')
+      .select('*', { count: 'exact', head: true })
+      .eq('batch_id', batch.id)
+      .in('status', ['pending', 'generating', 'qa_pending', 'qa_processing']);
+
+    if (stuckCount && stuckCount > 0) {
+      activeBatches.push(batch);
+    }
+  }
 
   if (!activeBatches?.length) {
     return NextResponse.json({
@@ -121,6 +140,14 @@ export async function GET(request: NextRequest) {
 
     // Relaunch generation chain
     if (!batchIsHalted && ((staleGenerating?.length || 0) > 0 || (pendingCount || 0) > 0)) {
+      // Re-activate batch if it was completed/pending
+      if (batch.status !== 'generating') {
+        await supabase
+          .from('generation_batches')
+          .update({ status: 'generating', updated_at: new Date().toISOString() })
+          .eq('id', batch.id);
+        actions.push(`Reactivated batch from "${batch.status}" to "generating"`);
+      }
       try {
         await fetch(`${baseUrl}/api/batches/${batch.id}/process-next`, {
           method: 'POST',
