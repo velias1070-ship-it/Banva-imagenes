@@ -254,23 +254,23 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     await syncBatchCounters(batchId);
 
     // Check batch halt condition (only if not already halted)
+    // Use TOTAL jobs (not just completed) to avoid premature halting
+    // when many jobs are still pending
     if (newStatus === 'flagged' && !batchIsHalted) {
-      // Re-read batch counters after sync
       const { data: freshBatch } = await supabase
         .from('generation_batches')
-        .select('flagged_count, completed_count')
+        .select('flagged_count, total_combinations')
         .eq('id', batchId)
         .single();
 
       if (freshBatch) {
-        const haltCheck = shouldHaltBatch(
-          freshBatch.flagged_count || 0,
-          freshBatch.completed_count || 0,
-          projectSettings
-        );
+        const totalJobs = freshBatch.total_combinations || 1;
+        const flaggedCount = freshBatch.flagged_count || 0;
+        const flaggedPercent = flaggedCount / totalJobs;
+        const threshold = projectSettings.batch.halt_flagged_percent;
 
-        if (haltCheck.halt) {
-          console.log(`[process-qa] HALTING batch ${batchId}: ${haltCheck.reason}`);
+        if (flaggedPercent > threshold && flaggedCount >= (projectSettings.batch.halt_min_processed || 5)) {
+          console.log(`[process-qa] HALTING batch ${batchId}: ${(flaggedPercent * 100).toFixed(0)}% flagged (${flaggedCount}/${totalJobs}) exceeds ${(threshold * 100).toFixed(0)}% threshold`);
           await supabase
             .from('generation_batches')
             .update({ status: 'halted' })
