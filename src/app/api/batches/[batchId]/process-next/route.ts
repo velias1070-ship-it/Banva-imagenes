@@ -251,6 +251,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       .eq('swatch_id', job.swatch.id)
       .order('display_order');
 
+    let swatchImageCount = 1;
     if (extraImages && extraImages.length > 0) {
       // Download all extra images and create collage
       const allBuffers = [swatchBuffer];
@@ -262,6 +263,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
       if (allBuffers.length > 1) {
         swatchBuffer = await createSwatchCollage(allBuffers);
+        swatchImageCount = allBuffers.length;
         console.log(`[process-next] Created swatch collage with ${allBuffers.length} images`);
       }
     }
@@ -339,7 +341,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     // ── Build prompt (with hex color anchor for color fidelity) ──
     const swatchHex = job.swatch.dominant_color_hex || null;
-    const prompt = buildPromptForMode(
+    let prompt = buildPromptForMode(
       effectiveMode,
       strategy,
       job.swatch.name,
@@ -350,6 +352,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       projectSettings.generation.resolution,
       swatchHex
     );
+
+    // Add collage note if swatch has multiple reference images
+    if (swatchImageCount > 1) {
+      prompt += `\n\nNOTA IMPORTANTE SOBRE IMAGEN 2: La Imagen 2 es un COLLAGE con ${swatchImageCount} fotos de referencia del mismo producto. Muestra diferentes angulos, texturas y detalles del producto. Usa TODAS las fotos del collage para entender el color, patron, textura y detalles exactos del producto. El resultado debe ser fiel a lo que muestran estas referencias combinadas.`;
+    }
 
     const promptMetadata: Record<string, unknown> = {
       strategy: `${effectiveMode}`,
@@ -362,6 +369,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatch_color: swatchColorDescription || null,
       swatch_hex: swatchHex,
       qa_feedback_used: qaFeedback ? true : false,
+      swatch_image_count: swatchImageCount,
     };
 
     // Mark as generating
