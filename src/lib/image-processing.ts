@@ -139,7 +139,10 @@ export async function flattenHeroEmboss(imageBuffer: Buffer): Promise<Buffer> {
 export async function ensureOutputSpec(imageBuffer: Buffer, sizePx: number = 1200): Promise<Buffer> {
   const processed = await sharp(imageBuffer)
     .toColorspace('srgb')
-    .resize(sizePx, sizePx, { fit: 'cover' })
+    .resize(sizePx, sizePx, {
+      fit: 'contain',
+      background: { r: 255, g: 255, b: 255 },
+    })
     .png()
     .toBuffer();
 
