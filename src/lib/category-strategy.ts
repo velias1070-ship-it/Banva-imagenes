@@ -770,7 +770,9 @@ export function buildEditPrompt(
 
   return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}
 
-REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.`;
+REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.
+
+IDIOMA: TODO texto visible en la imagen generada DEBE estar en ESPAÑOL. Si la imagen original tiene texto en ingles, traducirlo al español. Ejemplos: "ULTRA-SOFT" → "ULTRA SUAVE", "Set 6 Pieces" → "Set 6 Piezas", "100% Cotton" → "100% Algodon", "Bath Towel" → "Toalla de Baño". El mercado es MercadoLibre Chile.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -803,6 +805,8 @@ export function buildReferencePrompt(
 Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
 
 ${strategy.prompt.what_to_change}${colorAnchor}${darkNote}${qaNote}${learnings}
+
+IDIOMA: TODO texto visible en la imagen generada DEBE estar en ESPAÑOL. Si hay texto en ingles, traducirlo. El mercado es MercadoLibre Chile.
 
 Genera una imagen fotorrealista de ${resolution}.`;
 }
@@ -838,6 +842,8 @@ export function buildFromScratchPrompt(
 Genera una foto profesional de producto e-commerce de un ${strategy.label}: ${composition}
 
 El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues texto, marcas de agua ni logos.${colorAnchor}${darkNote}${qaNote}${learnings}
+
+IDIOMA: Si la imagen incluye texto visible, DEBE estar en ESPAÑOL. El mercado es MercadoLibre Chile.
 
 Genera una imagen fotorrealista de ${resolution}.`;
 }
