@@ -179,53 +179,29 @@ async function generateResizedVariant(
     const swatchBase64 = swatchBuffer.toString('base64');
 
     // Build prompt for 1.5 plaza adaptation
-    const prompt = `Imagen 1 muestra un producto textil para un set de 2 plazas. Imagen 2 muestra el color/patron exacto del producto.
+    const prompt = `Imagen 1 muestra un producto textil (set de 2 plazas). Imagen 2 muestra el color/patron exacto.
 
-TAREA: Recrea la Imagen 1 EXACTAMENTE pero adaptada a un set de 1.5 plaza.
+TAREA: Recrea la Imagen 1 adaptada a un set de 1.5 plaza.
 
-ANALIZA PRIMERO el tipo de imagen:
+REGLA PRINCIPAL: El set de 1.5 plaza incluye 1 quilt + 1 funda de almohada (NO 2 fundas).
+Esto significa que TANTO en el texto como en la imagen visible deben aparecer SOLO 1 funda de almohada.
+Si la imagen original muestra 2 fundas (como paquetes doblados, almohadas en cama, o cualquier forma), la nueva imagen debe mostrar SOLO 1.
 
-A) Si es LIFESTYLE (cama tendida con almohadas):
-   - Cama mas angosta (proporciones de 1.5 plaza / twin)
-   - Solo 1 almohada centrada en la cama
-   - Producto mas pequeno acorde al tamano
+CAMBIOS OBLIGATORIOS:
+1. TEXTO: Donde diga "2 Fundas" o "2 fundas" → cambiar a "1 Funda de Almohada"
+2. VISUAL: Donde se vean 2 fundas de almohada → mostrar solo 1
+3. VISUAL: Si es cama, poner solo 1 almohada centrada y cama mas angosta
+4. Cualquier referencia a "2 plazas" → "1.5 plazas"
 
-B) Si es PACKAGING / DOBLADA (productos doblados, empaquetados, con moños):
-   - Mantener la MISMA composicion, fondo, props (cajas, moños, adornos)
-   - Mantener el MISMO angulo de camara y estilo fotografico
-   - CRITICO: La imagen DEBE mostrar EXACTAMENTE 2 paquetes/piezas visibles:
-     * 1 paquete GRANDE (el quilt/cubrecama doblado)
-     * 1 paquete PEQUENO (1 sola funda de almohada doblada)
-   - Si la imagen original tiene 3 paquetes (1 grande + 2 pequenos), ELIMINAR uno de los paquetes pequenos
-   - El paquete pequeno restante debe quedar centrado o bien posicionado, NO dejar espacio vacio donde estaba el eliminado
-   - NO cambiar a una escena de cama tendida — mantener el formato de productos doblados/empaquetados
+QUE NO CAMBIAR:
+- Mismo tipo de escena (si es packaging queda packaging, si es cama queda cama)
+- Mismo color, patron y textura — fiel a Imagen 2
+- Mismo estilo de foto, iluminacion, fondo, props y decoracion
+- Mismos iconos, sellos (OEKO-TEX) y elementos graficos
+- Misma calidad fotografica
 
-C) Si es INFOGRAFIA (con texto, iconos, features):
-   - Mantener el MISMO layout grafico y estilo visual
-   - Adaptar las cantidades visualmente (2 piezas → 1 pieza donde corresponda)
-
-CAMBIOS DE TEXTO OBLIGATORIOS (aplica a todos los tipos):
-- "2 fundas de almohada" → "1 funda de almohada"
-- "2 Fundas de Almohada" → "1 Funda de Almohada"
-- "2 pillow cases" → "1 Funda de Almohada" (traducir a espanol)
-- Cualquier referencia a "2 plazas" → "1.5 plazas"
-- El quilt/sabana sigue siendo 1, solo cambian las fundas (de 2 a 1)
-
-PRESERVAR EXACTAMENTE:
-- El MISMO color, patron y textura del producto — debe coincidir con la Imagen 2 (swatch)
-- El MISMO estilo de fotografia, iluminacion y ambiente
-- La MISMA composicion general y angulo de camara
-- Los MISMOS props y elementos decorativos del entorno
-- La MISMA calidad fotografica
-- Los MISMOS iconos, sellos de certificacion (ej: OEKO-TEX) y elementos graficos
-- El MISMO fondo y ambientacion
-
-CRITICO: NO cambies el tipo de escena. Si la imagen original muestra productos doblados, la nueva DEBE mostrar productos doblados. Si muestra una cama, DEBE mostrar una cama.
-
-NO inventar colores, patrones o texturas que no esten en la Imagen 2.
-Todo texto visible DEBE estar en espanol.
-
-Genera una imagen fotorrealista de ${projectSettings.generation.resolution} pixeles, formato cuadrado 1:1, color RGB.`;
+Todo texto en espanol. No inventar colores ni patrones.
+Imagen fotorrealista de ${projectSettings.generation.resolution}px, cuadrada 1:1, RGB.`;
 
     // Generate: approved image as hero (reference), swatch as Image 2 (color)
     const result = await generateImage({
