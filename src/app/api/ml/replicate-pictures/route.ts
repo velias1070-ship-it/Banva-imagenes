@@ -16,10 +16,18 @@ interface MlPicture {
   size: string;
 }
 
+interface PictureSource {
+  type: 'ml' | 'generated';
+  id?: string;
+  url?: string;
+  source_url?: string;
+}
+
 interface ReplicateRequest {
   source_sku: string;          // SKU to copy FROM (e.g. TXV23QLAT25BE)
   target_skus: string[];       // SKUs to copy TO (e.g. [TXV23QLAT20BE, TXV23QLAT30BE])
   cover_index?: number;        // Index of picture to use as cover in targets (0-based, default: same order as source)
+  pictures?: PictureSource[];  // Custom arrangement from editor (mix of ML + generated)
   dry_run?: boolean;
 }
 
@@ -36,7 +44,7 @@ interface ReplicateRequest {
  */
 export async function POST(request: NextRequest) {
   const body: ReplicateRequest = await request.json();
-  const { source_sku, target_skus, cover_index, dry_run = false } = body;
+  const { source_sku, target_skus, cover_index, pictures: customPictures, dry_run = false } = body;
 
   if (!source_sku || !target_skus?.length) {
     return NextResponse.json({ error: 'source_sku and target_skus[] are required' }, { status: 400 });
@@ -60,29 +68,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Source SKU ${source_sku} not found in ml_items_map` }, { status: 404 });
   }
 
-  // 2. Get source pictures from ML
-  const sourceData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItem.item_id}?attributes=pictures`);
-  const sourcePictures = sourceData.pictures || [];
+  // 2. Resolve source image URLs
+  let imageUrls: string[] = [];
 
-  if (!sourcePictures.length) {
-    return NextResponse.json({ error: `Source listing ${sourceItem.item_id} has no pictures` }, { status: 400 });
+  if (customPictures?.length) {
+    // Custom arrangement from editor (mix of ML + generated)
+    for (const pic of customPictures) {
+      const url = pic.source_url || pic.url;
+      if (pic.type === 'ml' && pic.id && sourceItem) {
+        // Resolve ML picture URL
+        const itemData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItem.item_id}?attributes=pictures`);
+        const found = itemData.pictures?.find((p) => p.id === pic.id);
+        if (found) imageUrls.push(found.secure_url);
+      } else if (url) {
+        imageUrls.push(url);
+      }
+    }
+  } else if (sourceItem) {
+    // Copy from source ML listing as-is
+    const sourceData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItem.item_id}?attributes=pictures`);
+    const sourcePictures = sourceData.pictures || [];
+
+    // Reorder if cover_index specified
+    if (cover_index != null && cover_index >= 0 && cover_index < sourcePictures.length && cover_index !== 0) {
+      const reordered = [...sourcePictures];
+      const [cover] = reordered.splice(cover_index, 1);
+      reordered.unshift(cover);
+      imageUrls = reordered.map((p) => p.secure_url);
+    } else {
+      imageUrls = sourcePictures.map((p) => p.secure_url);
+    }
   }
 
-  // Reorder pictures if cover_index is specified
-  let orderedPictures = [...sourcePictures];
-  if (cover_index != null && cover_index >= 0 && cover_index < sourcePictures.length && cover_index !== 0) {
-    const [cover] = orderedPictures.splice(cover_index, 1);
-    orderedPictures.unshift(cover);
+  if (!imageUrls.length) {
+    return NextResponse.json({ error: 'No pictures to replicate' }, { status: 400 });
   }
 
   // 3. Process each target
   const results: {
-    sku: string;
-    item_id: string;
-    titulo: string;
-    pictures_count: number;
-    status: 'success' | 'skipped' | 'error';
-    error?: string;
+    sku: string; item_id: string; titulo: string;
+    pictures_count: number; status: 'success' | 'skipped' | 'error'; error?: string;
   }[] = [];
 
   for (const targetSku of target_skus) {
@@ -93,15 +118,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (dry_run) {
-      results.push({ sku: targetSku, item_id: targetItem.item_id, titulo: targetItem.titulo, pictures_count: sourcePictures.length, status: 'success' });
+      results.push({ sku: targetSku, item_id: targetItem.item_id, titulo: targetItem.titulo, pictures_count: imageUrls.length, status: 'success' });
       continue;
     }
 
     try {
-      // Upload each source picture to ML and collect new picture IDs
+      // Upload each image to ML for this target
       const newPictureIds: { id: string }[] = [];
-      for (const pic of orderedPictures) {
-        const uploaded = await mlUploadImageFromUrl(pic.secure_url);
+      for (const url of imageUrls) {
+        const uploaded = await mlUploadImageFromUrl(url);
         newPictureIds.push({ id: uploaded.id });
       }
 
@@ -122,7 +147,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({
-    source: { sku: source_sku, item_id: sourceItem.item_id, titulo: sourceItem.titulo, pictures: sourcePictures.length },
+    source: { sku: source_sku, item_id: sourceItem?.item_id || '', pictures: imageUrls.length },
     dry_run,
     targets: results,
     success: results.filter((r) => r.status === 'success').length,

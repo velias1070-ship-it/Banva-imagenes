@@ -219,12 +219,20 @@ export default function PublishPage() {
     if (!source.listing.sku) return;
     if (!targetSkus.length) { toast.error('No hay destinos validos'); return; }
 
+    // Send the current editor arrangement (including any generated images added)
+    const pictures = source.pictures.map((p) => ({
+      type: p.type,
+      id: p.id,
+      url: p.url,
+      source_url: p.source_url,
+    }));
+
     setReplicating(true);
     try {
       const res = await fetch('/api/ml/replicate-pictures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, cover_index: coverIndex }),
+        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, cover_index: coverIndex, pictures }),
       });
       const data = await res.json();
       if (res.ok) {
