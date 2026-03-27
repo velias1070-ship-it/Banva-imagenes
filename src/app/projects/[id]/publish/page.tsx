@@ -214,12 +214,12 @@ export default function PublishPage() {
     for (const idx of dirty) { await saveListing(idx); }
   }
 
-  async function replicatePictures(sourceIdx: number, targetSkus: string[], coverIndex?: number) {
+  async function replicatePictures(sourceIdx: number, targetSkus: string[]) {
     const source = listings[sourceIdx];
     if (!source.listing.sku) return;
     if (!targetSkus.length) { toast.error('No hay destinos validos'); return; }
 
-    // Send the current editor arrangement (including any generated images added)
+    // Send the current editor arrangement (what you see on the left panel)
     const pictures = source.pictures.map((p) => ({
       type: p.type,
       id: p.id,
@@ -232,7 +232,7 @@ export default function PublishPage() {
       const res = await fetch('/api/ml/replicate-pictures', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, cover_index: coverIndex, pictures }),
+        body: JSON.stringify({ source_sku: source.listing.sku, target_skus: targetSkus, pictures }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -302,10 +302,10 @@ export default function PublishPage() {
                 <ReplicatePanel
                   sourceSku={ls.listing.sku}
                   sourceName={ls.listing.swatch_name}
-                  pictureCount={ls.listing.ml_pictures.length}
-                  sourcePictures={ls.listing.ml_pictures}
+                  pictureCount={ls.pictures.length}
+                  editorPictures={ls.pictures}
                   replicating={replicating}
-                  onReplicate={(targetSkus, coverIndex) => replicatePictures(listingIdx, targetSkus, coverIndex)}
+                  onReplicate={(targetSkus) => replicatePictures(listingIdx, targetSkus)}
                   onCancel={() => setReplicateSource(null)}
                 />
               )}
@@ -436,20 +436,19 @@ export default function PublishPage() {
 interface RelatedItem { sku_venta: string; titulo: string; group: string }
 
 function ReplicatePanel({
-  sourceSku, sourceName, pictureCount, sourcePictures, replicating, onReplicate, onCancel,
+  sourceSku, sourceName, pictureCount, editorPictures, replicating, onReplicate, onCancel,
 }: {
   sourceSku: string;
   sourceName: string;
   pictureCount: number;
-  sourcePictures: MlPicture[];
+  editorPictures: EditorPicture[];
   replicating: boolean;
-  onReplicate: (targetSkus: string[], coverIndex?: number) => void;
+  onReplicate: (targetSkus: string[]) => void;
   onCancel: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [related, setRelated] = useState<RelatedItem[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(true);
-  const [coverIndex, setCoverIndex] = useState<number | undefined>(undefined);
 
   // Fetch related listings from ml_items_map via the debug endpoint
   useEffect(() => {
@@ -561,28 +560,29 @@ function ReplicatePanel({
         </div>
       </div>
 
-      {/* Cover picker */}
-      {sourcePictures.length > 1 && (
+      {/* Preview of what will be replicated — shows editor state */}
+      {editorPictures.length > 0 && (
         <div className="mb-3">
           <p className="text-xs font-medium text-purple-700 mb-1.5">
-            Portada para la replica {coverIndex != null ? `(foto ${coverIndex + 1})` : '(misma que el original)'}:
+            Se replicara este arreglo:
           </p>
           <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {sourcePictures.map((pic, idx) => (
-              <button
-                key={pic.id}
-                onClick={() => setCoverIndex(idx === coverIndex ? undefined : idx)}
-                className={`relative h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all
-                  ${coverIndex === idx ? 'border-purple-600 ring-2 ring-purple-300' : idx === 0 && coverIndex == null ? 'border-purple-300' : 'border-gray-200 hover:border-purple-300'}`}
+            {editorPictures.map((pic, idx) => (
+              <div
+                key={idx}
+                className="relative h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border-2 border-purple-300"
               >
                 <img src={pic.url} alt="" className="h-full w-full object-cover" />
                 <div className="absolute top-0.5 left-0.5 bg-black/60 text-white text-[9px] px-1 rounded">
-                  {coverIndex === idx ? '★' : idx + 1}
+                  {idx + 1}
                 </div>
-              </button>
+                {pic.type === 'generated' && (
+                  <div className="absolute bottom-0 inset-x-0 bg-green-600 text-white text-[8px] text-center">nueva</div>
+                )}
+              </div>
             ))}
           </div>
-          <p className="text-[10px] text-purple-600 mt-1">Click en una foto para usarla como portada en las replicas</p>
+          <p className="text-[10px] text-purple-600 mt-1">Este es el orden exacto que se enviara a las publicaciones seleccionadas</p>
         </div>
       )}
 
@@ -620,7 +620,7 @@ function ReplicatePanel({
           <Button
             size="sm"
             disabled={replicating}
-            onClick={() => onReplicate(Array.from(selected), coverIndex)}
+            onClick={() => onReplicate(Array.from(selected))}
             className="bg-purple-600 hover:bg-purple-700"
           >
             {replicating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Copy className="mr-2 h-4 w-4" />}
