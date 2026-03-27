@@ -193,8 +193,11 @@ A) Si es LIFESTYLE (cama tendida con almohadas):
 B) Si es PACKAGING / DOBLADA (productos doblados, empaquetados, con moños):
    - Mantener la MISMA composicion, fondo, props (cajas, moños, adornos)
    - Mantener el MISMO angulo de camara y estilo fotografico
-   - Reducir de 3 piezas a 2 piezas: 1 quilt/sabana doblada + 1 funda de almohada doblada
-   - Si hay 2 fundas dobladas apiladas, mostrar solo 1
+   - CRITICO: La imagen DEBE mostrar EXACTAMENTE 2 paquetes/piezas visibles:
+     * 1 paquete GRANDE (el quilt/cubrecama doblado)
+     * 1 paquete PEQUENO (1 sola funda de almohada doblada)
+   - Si la imagen original tiene 3 paquetes (1 grande + 2 pequenos), ELIMINAR uno de los paquetes pequenos
+   - El paquete pequeno restante debe quedar centrado o bien posicionado, NO dejar espacio vacio donde estaba el eliminado
    - NO cambiar a una escena de cama tendida — mantener el formato de productos doblados/empaquetados
 
 C) Si es INFOGRAFIA (con texto, iconos, features):
