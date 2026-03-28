@@ -773,7 +773,13 @@ export function buildEditPrompt(
   const learnings = formatLearnings(strategy);
   const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}
+  // Special handling for detail/close-up shots
+  const isDetailShot = shotType === 'detail';
+  const detailNote = isDetailShot
+    ? `\n\nNOTA ESPECIAL — TOMA TIPO CLOSE-UP/DETALLE: La Imagen 1 es un ACERCAMIENTO de textura de tela (close-up). La salida DEBE ser un close-up de textura IDENTICO — misma composicion, mismo angulo, mismos pliegues — pero en el COLOR de la Imagen 2. NO generes un producto completo, NO agregues etiquetas, packaging, ni escena. Solo textura de tela de cerca en el nuevo color.`
+    : '';
+
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}${detailNote}
 
 REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.
 
@@ -804,6 +810,16 @@ export function buildReferencePrompt(
 
   const learnings = formatLearnings(strategy);
   const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
+
+  const isDetailShot = shotType === 'detail';
+
+  if (isDetailShot) {
+    return `La Imagen 1 es un CLOSE-UP / ACERCAMIENTO de textura de tela. Genera un close-up de textura IDENTICO a la Imagen 1 — misma composicion, mismo angulo, mismos pliegues y arrugas — pero con el COLOR y TEXTURA de la Imagen 2 ("${swatchName}"${colorInfo}).
+
+NO generes un producto completo, NO agregues etiquetas, packaging, escena ni fondo nuevo. La salida debe ser SOLO textura de tela vista de cerca, identica en composicion a la Imagen 1.${colorAnchor}${darkNote}${qaNote}${learnings}
+
+Genera una imagen fotorrealista de ${resolution}.`;
+  }
 
   return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
 
