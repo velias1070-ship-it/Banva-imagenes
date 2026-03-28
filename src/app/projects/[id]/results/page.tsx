@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
   ImageIcon, RotateCcw, LayoutGrid, Layers, ChevronDown, ChevronRight,
-  Upload, Loader2, BedSingle,
+  Upload, Loader2, BedSingle, Star,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -235,6 +235,41 @@ export default function ResultsPage() {
     }
   }
 
+  async function handleUseAsHero(jobId: string) {
+    toast.info('Generando variantes usando esta imagen como base...');
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}/use-as-hero`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Generando ${data.jobs_created} variantes — se actualizaran automaticamente`);
+        // Start polling
+        const poll = setInterval(async () => {
+          const updated = await fetch(`/api/projects/${id}/results`);
+          if (updated.ok) {
+            const allJobs = await updated.json();
+            setJobs(allJobs);
+            const generating = allJobs.filter((j: JobWithRelations) =>
+              ['generating', 'qa_pending', 'qa_processing'].includes(j.status)
+            );
+            if (generating.length === 0) {
+              clearInterval(poll);
+              toast.success('Todas las variantes generadas');
+            }
+          }
+        }, 10000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error generando variantes');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    }
+  }
+
   async function handleGenerate15P(jobId: string) {
     toast.info('Generando variante 1.5 plaza...');
     try {
@@ -427,16 +462,28 @@ export default function ResultsPage() {
                 </Button>
               )}
               {job.status === 'approved' && job.output_storage_path && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs text-purple-600"
-                  onClick={() => handleGenerate15P(job.id)}
-                  title="Generar variante para cama 1.5 plaza (1 almohada)"
-                >
-                  <BedSingle className="h-3 w-3 mr-1" />
-                  1.5P
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs text-amber-600"
+                    onClick={() => handleUseAsHero(job.id)}
+                    title="Usar esta imagen como base para generar los demas swatches"
+                  >
+                    <Star className="h-3 w-3 mr-1" />
+                    Base
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs text-purple-600"
+                    onClick={() => handleGenerate15P(job.id)}
+                    title="Generar variante para cama 1.5 plaza (1 almohada)"
+                  >
+                    <BedSingle className="h-3 w-3 mr-1" />
+                    1.5P
+                  </Button>
+                </>
               )}
               {(job.status === 'flagged' || job.status === 'error') && (
                 <Button
