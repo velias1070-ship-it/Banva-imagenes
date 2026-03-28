@@ -9,6 +9,7 @@ import {
   buildPromptForMode,
 } from '@/lib/category-strategy';
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
+import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
@@ -407,6 +408,21 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatchBase64 = croppedSwatch.toString('base64');
     }
 
+    // ── Auto-detect shot type (overrides user classification if different) ──
+    let effectiveShotType = job.hero_shot.shot_type || 'lifestyle';
+    try {
+      const detection = await detectShotType(heroBase64, job.hero_shot.mime_type || 'image/png');
+      if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
+        console.log(
+          `[process-next] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
+          `(confidence: ${(detection.confidence * 100).toFixed(0)}%, desc: "${detection.description}")`
+        );
+        effectiveShotType = detection.detected_type;
+      }
+    } catch (err) {
+      console.error('[process-next] Shot type detection failed (non-blocking):', err);
+    }
+
     // ── Build prompt (with hex color anchor for color fidelity) ──
     const swatchHex = job.swatch.dominant_color_hex || null;
     let prompt = buildPromptForMode(
@@ -414,7 +430,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       strategy,
       job.swatch.name,
       swatchColorDescription,
-      job.hero_shot.shot_type,
+      effectiveShotType,
       darkSwatch,
       qaFeedback,
       projectSettings.generation.resolution,
