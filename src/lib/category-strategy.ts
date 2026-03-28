@@ -773,13 +773,17 @@ export function buildEditPrompt(
   const learnings = formatLearnings(strategy);
   const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
-  // Special handling for detail/close-up shots
+  // Special handling for detail/close-up and infografia shots
   const isDetailShot = shotType === 'detail';
-  const detailNote = isDetailShot
-    ? `\n\nNOTA ESPECIAL — TOMA TIPO CLOSE-UP/DETALLE: La Imagen 1 es un ACERCAMIENTO de textura de tela (close-up). La salida DEBE ser un close-up de textura IDENTICO — misma composicion, mismo angulo, mismos pliegues — pero en el COLOR de la Imagen 2. NO generes un producto completo, NO agregues etiquetas, packaging, ni escena. Solo textura de tela de cerca en el nuevo color.`
-    : '';
+  const isInfoShot = shotType === 'infografia';
+  let shotNote = '';
+  if (isDetailShot) {
+    shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO CLOSE-UP/DETALLE: La Imagen 1 es un ACERCAMIENTO de textura de tela (close-up). La salida DEBE ser un close-up de textura IDENTICO — misma composicion, mismo angulo, mismos pliegues — pero en el COLOR/DISEÑO de la Imagen 2. NO generes un producto completo, NO agregues etiquetas, packaging, ni escena. Solo textura de tela de cerca en el nuevo color.`;
+  } else if (isInfoShot) {
+    shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO INFOGRAFIA: La Imagen 1 tiene TEXTO SUPERPUESTO, iconos y/o elementos graficos. La salida DEBE mantener EXACTAMENTE el mismo texto, iconos, posicion del texto, fuente, y layout grafico. Solo cambia el diseño/color del producto textil visible. El texto, los iconos y el fondo deben ser IDENTICOS a la Imagen 1.`;
+  }
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}${detailNote}
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change}${darkNote}${colorAnchor}${learnings}${shotNote}
 
 REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.
 

@@ -139,11 +139,11 @@ async function regenerateJob(
       console.error('[regenerateJob] Shot type detection failed:', err);
     }
 
-    // Determine mode — detail shots ALWAYS use edit (reference invents scenes)
+    // Determine mode — detail/infografia shots ALWAYS use edit (reference invents scenes)
     let mode: GenerationMode = strategy.generation_mode;
-    if (effectiveShotType === 'detail') {
+    if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
       mode = 'edit';
-      console.log(`[regenerateJob] Detail shot detected — forcing edit mode (never reference/from_scratch for close-ups)`);
+      console.log(`[regenerateJob] ${effectiveShotType} shot detected — forcing edit mode`);
     } else if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
       mode = strategy.retry_escalation;
       console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);

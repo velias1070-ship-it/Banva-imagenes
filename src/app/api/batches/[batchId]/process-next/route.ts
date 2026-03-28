@@ -381,34 +381,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Retry with QA feedback: "${qaFeedback}"`);
     }
 
-    // ── Determine effective generation mode ──
-    const effectiveMode = projectSettings.generation.mode !== 'auto'
-      ? projectSettings.generation.mode
-      : getEffectiveMode(strategy, job.attempt);
-    const baseTemperature = getEffectiveTemperature(strategy, effectiveMode, job.attempt);
-    // Use project temperature override if custom settings exist, otherwise use strategy default
-    const temperature = projectSettings.generation.temperature !== 0.2
-      ? projectSettings.generation.temperature
-      : baseTemperature;
-
-    console.log(
-      `[process-next] Job ${job.id.substring(0, 8)} — ` +
-      `category: ${category}, mode: ${effectiveMode}, attempt: ${job.attempt}, temp: ${temperature}` +
-      `${swatchColorDescription ? `, color: ${swatchColorDescription}` : ''}`
-    );
-
-    // ── Preprocessing ──
-    if (strategy.preprocessing.flatten_hero) {
-      const flattenedHero = await flattenHeroEmboss(heroBuffer);
-      heroBase64 = flattenedHero.toString('base64');
-      console.log(`[process-next] Flattened hero emboss for ${category}`);
-    }
-    if (strategy.preprocessing.crop_swatch) {
-      const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
-      swatchBase64 = croppedSwatch.toString('base64');
-    }
-
-    // ── Auto-detect shot type (overrides user classification if different) ──
+    // ── Auto-detect shot type FIRST (affects mode selection) ──
     let effectiveShotType = job.hero_shot.shot_type || 'lifestyle';
     try {
       const detection = await detectShotType(heroBase64, job.hero_shot.mime_type || 'image/png');
@@ -421,6 +394,41 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
     } catch (err) {
       console.error('[process-next] Shot type detection failed (non-blocking):', err);
+    }
+
+    // ── Determine effective generation mode ──
+    let effectiveMode = projectSettings.generation.mode !== 'auto'
+      ? projectSettings.generation.mode
+      : getEffectiveMode(strategy, job.attempt);
+
+    // Detail/infografia shots MUST use edit mode — reference/from_scratch invent scenes
+    if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
+      if (effectiveMode !== 'edit') {
+        console.log(`[process-next] Forcing edit mode for ${effectiveShotType} shot (was ${effectiveMode})`);
+        effectiveMode = 'edit';
+      }
+    }
+
+    const baseTemperature = getEffectiveTemperature(strategy, effectiveMode, job.attempt);
+    const temperature = projectSettings.generation.temperature !== 0.2
+      ? projectSettings.generation.temperature
+      : baseTemperature;
+
+    console.log(
+      `[process-next] Job ${job.id.substring(0, 8)} — ` +
+      `category: ${category}, mode: ${effectiveMode}, shotType: ${effectiveShotType}, attempt: ${job.attempt}, temp: ${temperature}` +
+      `${swatchColorDescription ? `, color: ${swatchColorDescription}` : ''}`
+    );
+
+    // ── Preprocessing ──
+    if (strategy.preprocessing.flatten_hero) {
+      const flattenedHero = await flattenHeroEmboss(heroBuffer);
+      heroBase64 = flattenedHero.toString('base64');
+      console.log(`[process-next] Flattened hero emboss for ${category}`);
+    }
+    if (strategy.preprocessing.crop_swatch) {
+      const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
+      swatchBase64 = croppedSwatch.toString('base64');
     }
 
     // ── Build prompt (with hex color anchor for color fidelity) ──
