@@ -277,8 +277,8 @@ DO NOT change:
   toallas: {
     key: 'toallas',
     label: 'Toallas',
-    generation_mode: 'edit',
-    retry_escalation: 'edit',
+    generation_mode: 'reference',
+    retry_escalation: 'from_scratch',
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a towel product (toalla) — could be bath towel, hand towel, or towel set.`,
