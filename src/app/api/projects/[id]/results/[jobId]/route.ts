@@ -106,28 +106,11 @@ async function regenerateJob(
   const strategy = getCategoryStrategy(category);
   const projectSettings = getProjectSettings(projectMetadata);
 
-  // Determine mode — check if QA flagged hero_contamination
-  let mode: GenerationMode = strategy.generation_mode;
   const qaDetail = job.qa_detail as Record<string, number> | null;
   const attempt = (job.attempt as number) || 0;
 
-  if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
-    // Hero contamination detected — escalate
-    mode = strategy.retry_escalation;
-    console.log(
-      `[regenerateJob] Hero contamination ${(qaDetail.hero_contamination * 100).toFixed(0)}% — ` +
-      `escalating from ${strategy.generation_mode} to ${mode}`
-    );
-  } else if (attempt > 0 && strategy.retry_escalation) {
-    // Previous attempt failed — use retry escalation
-    mode = strategy.retry_escalation;
-    console.log(`[regenerateJob] Retry attempt ${attempt} — using ${mode}`);
-  }
-
-  const temperature = getEffectiveTemperature(strategy, mode, attempt);
-
   try {
-    // Download hero and swatch
+    // Download hero and swatch FIRST (needed for shot type detection)
     const [heroRes, swatchRes] = await Promise.all([
       supabase.storage.from('images').download(heroShot.storage_path),
       supabase.storage.from('images').download(swatch.storage_path),
@@ -139,6 +122,37 @@ async function regenerateJob(
 
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
+
+    // Auto-detect shot type BEFORE determining mode
+    const heroBase64ForDetection = heroBuffer.toString('base64');
+    let effectiveShotType = heroShot.shot_type || 'lifestyle';
+    try {
+      const detection = await detectShotType(heroBase64ForDetection, heroShot.mime_type || 'image/png');
+      if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
+        console.log(
+          `[regenerateJob] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
+          `(confidence: ${(detection.confidence * 100).toFixed(0)}%)`
+        );
+        effectiveShotType = detection.detected_type;
+      }
+    } catch (err) {
+      console.error('[regenerateJob] Shot type detection failed:', err);
+    }
+
+    // Determine mode — detail shots ALWAYS use edit (reference invents scenes)
+    let mode: GenerationMode = strategy.generation_mode;
+    if (effectiveShotType === 'detail') {
+      mode = 'edit';
+      console.log(`[regenerateJob] Detail shot detected — forcing edit mode (never reference/from_scratch for close-ups)`);
+    } else if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
+      mode = strategy.retry_escalation;
+      console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);
+    } else if (attempt > 0 && strategy.retry_escalation) {
+      mode = strategy.retry_escalation;
+      console.log(`[regenerateJob] Retry attempt ${attempt} — using ${mode}`);
+    }
+
+    const temperature = getEffectiveTemperature(strategy, mode, attempt);
 
     // Detect dark swatches for prompt adjustments
     const darkSwatch = await isSwatchDark(swatchBuffer);
@@ -185,22 +199,6 @@ async function regenerateJob(
     if (strategy.preprocessing.crop_swatch) {
       const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
       swatchBase64 = croppedSwatch.toString('base64');
-    }
-
-    // Auto-detect shot type
-    const heroBase64 = heroBuffer.toString('base64');
-    let effectiveShotType = heroShot.shot_type || 'lifestyle';
-    try {
-      const detection = await detectShotType(heroBase64, heroShot.mime_type || 'image/png');
-      if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
-        console.log(
-          `[regenerateJob] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
-          `(confidence: ${(detection.confidence * 100).toFixed(0)}%)`
-        );
-        effectiveShotType = detection.detected_type;
-      }
-    } catch (err) {
-      console.error('[regenerateJob] Shot type detection failed (non-blocking):', err);
     }
 
     // Build prompt
