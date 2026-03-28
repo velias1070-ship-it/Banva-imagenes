@@ -3,6 +3,7 @@ import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
 import { isSwatchDark, cropSwatchToFabric } from '@/lib/image-processing';
+import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
   getEffectiveTemperature,
@@ -186,13 +187,29 @@ async function regenerateJob(
       swatchBase64 = croppedSwatch.toString('base64');
     }
 
+    // Auto-detect shot type
+    const heroBase64 = heroBuffer.toString('base64');
+    let effectiveShotType = heroShot.shot_type || 'lifestyle';
+    try {
+      const detection = await detectShotType(heroBase64, heroShot.mime_type || 'image/png');
+      if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
+        console.log(
+          `[regenerateJob] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
+          `(confidence: ${(detection.confidence * 100).toFixed(0)}%)`
+        );
+        effectiveShotType = detection.detected_type;
+      }
+    } catch (err) {
+      console.error('[regenerateJob] Shot type detection failed (non-blocking):', err);
+    }
+
     // Build prompt
     const prompt = buildPromptForMode(
       mode,
       strategy,
       swatch.name,
       swatchColorDescription,
-      heroShot.shot_type,
+      effectiveShotType,
       darkSwatch,
       qaFeedback,
       projectSettings.generation.resolution
@@ -208,6 +225,7 @@ async function regenerateJob(
       swatch_color: swatchColorDescription,
       qa_feedback_used: qaFeedback ? true : false,
       manual_regeneration: true,
+      detected_shot_type: effectiveShotType,
     };
 
     // Generate
