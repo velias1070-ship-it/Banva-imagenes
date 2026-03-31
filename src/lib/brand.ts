@@ -47,23 +47,27 @@ export async function getProjectBrand(projectId: string): Promise<BrandConfig | 
 export function buildBrandPromptSection(brand: BrandConfig): string {
   const parts: string[] = [];
 
-  parts.push(`\nIDENTIDAD DE MARCA: "${brand.name}"`);
+  parts.push(`\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`);
+  parts.push(`Marca: "${brand.name}"`);
+  parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible (titulos, descripciones, etiquetas, infografias, numeros, nombres de producto), DEBES aplicar las siguientes reglas de marca:`);
 
   if (brand.typography) {
-    parts.push(`TIPOGRAFIA: Todos los textos visibles en la imagen DEBEN usar tipografia ${brand.typography}. Mantener consistencia tipografica con la identidad de la marca.`);
+    parts.push(`TIPOGRAFIA OBLIGATORIA: ${brand.typography}. REEMPLAZAR cualquier tipografia del hero original por esta. NO mantener la tipografia original del hero — usar SOLO la del brand.`);
   }
 
   if (brand.primary_color || brand.accent_color) {
     const colors: string[] = [];
-    if (brand.primary_color) colors.push(`primario: ${brand.primary_color}`);
-    if (brand.secondary_color) colors.push(`secundario: ${brand.secondary_color}`);
-    if (brand.accent_color) colors.push(`acento: ${brand.accent_color}`);
-    parts.push(`COLORES DE MARCA: ${colors.join(', ')}. Usar estos colores para textos, headers e infografias.`);
+    if (brand.primary_color) colors.push(`titulos/texto principal: ${brand.primary_color}`);
+    if (brand.secondary_color) colors.push(`texto secundario: ${brand.secondary_color}`);
+    if (brand.accent_color) colors.push(`acento/highlights: ${brand.accent_color}`);
+    parts.push(`COLORES DE TEXTO OBLIGATORIOS: ${colors.join(' | ')}. REEMPLAZAR los colores de texto del hero original por estos. NO mantener los colores de texto originales.`);
   }
 
   if (brand.prompt_guidelines) {
-    parts.push(`GUIDELINES ADICIONALES: ${brand.prompt_guidelines}`);
+    parts.push(`REGLAS ADICIONALES: ${brand.prompt_guidelines}`);
   }
+
+  parts.push(`=== FIN INSTRUCCIONES DE MARCA ===`);
 
   return parts.join('\n');
 }
