@@ -11,7 +11,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
-import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo } from '@/lib/brand';
+import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -447,9 +447,24 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     );
 
     // Add brand guidelines to prompt if project has a brand
-    const brand = await getProjectBrand(project.id);
-    if (brand) {
-      prompt += buildBrandPromptSection(brand);
+    let brand: BrandConfig | null = null;
+    const projectBrandId = project?.brand_id;
+    if (projectBrandId) {
+      console.log(`[process-next] Project has brand_id: ${projectBrandId}`);
+      const { data: brandData } = await supabase
+        .from('brands')
+        .select('*')
+        .eq('id', projectBrandId)
+        .single();
+      if (brandData) {
+        brand = brandData as BrandConfig;
+        prompt += buildBrandPromptSection(brand);
+        console.log(`[process-next] Brand loaded: ${brand.name}`);
+      } else {
+        console.log(`[process-next] Brand ${projectBrandId} not found in DB`);
+      }
+    } else {
+      console.log(`[process-next] No brand_id on project`);
     }
 
     // Add collage note if swatch has multiple reference images
