@@ -12,6 +12,8 @@ import {
 } from '@/lib/category-strategy';
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { getProjectSettings } from '@/lib/project-settings';
+import { buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
+import { ensureOutputSpec } from '@/lib/image-processing';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -68,10 +70,10 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  // Get project for category + settings
+  // Get project for category + settings + brand
   const { data: project } = await supabase
     .from('projects')
-    .select('category, metadata')
+    .select('category, metadata, brand_id')
     .eq('id', id)
     .single();
 
@@ -84,7 +86,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -98,7 +100,8 @@ async function regenerateJob(
   job: Record<string, unknown>,
   category: string,
   projectId: string,
-  projectMetadata?: Record<string, unknown> | null
+  projectMetadata?: Record<string, unknown> | null,
+  brandId?: string | null
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string>;
@@ -202,7 +205,7 @@ async function regenerateJob(
     }
 
     // Build prompt
-    const prompt = buildPromptForMode(
+    let prompt = buildPromptForMode(
       mode,
       strategy,
       swatch.name,
@@ -212,6 +215,21 @@ async function regenerateJob(
       qaFeedback,
       projectSettings.generation.resolution
     );
+
+    // Add brand guidelines if project has a brand
+    let brand: BrandConfig | null = null;
+    if (brandId) {
+      const { data: brandData } = await supabase
+        .from('brands')
+        .select('*')
+        .eq('id', brandId)
+        .single();
+      if (brandData) {
+        brand = brandData as BrandConfig;
+        prompt += buildBrandPromptSection(brand);
+        console.log(`[regenerateJob] Brand loaded: ${brand.name}`);
+      }
+    }
 
     const promptMetadata: Record<string, unknown> = {
       strategy: mode,
@@ -252,14 +270,26 @@ async function regenerateJob(
       throw new Error(result.error || 'Generation failed');
     }
 
+    // Post-process: ensure 1200x1200 sRGB
+    const rawBuffer = Buffer.from(result.imageBase64, 'base64');
+    let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
+
+    // Overlay brand logo if project has a brand
+    if (brand) {
+      try {
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType);
+      } catch (brandErr) {
+        console.error('[regenerateJob] Brand overlay failed (non-blocking):', brandErr);
+      }
+    }
+
     // Upload result
     const outputPath = `projects/${projectId}/generated/${jobId}.png`;
-    const imageBuffer = Buffer.from(result.imageBase64, 'base64');
 
     await supabase.storage
       .from('images')
       .upload(outputPath, imageBuffer, {
-        contentType: result.imageMimeType || 'image/png',
+        contentType: 'image/png',
         upsert: true,
       });
 
