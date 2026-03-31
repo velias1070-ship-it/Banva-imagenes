@@ -81,7 +81,97 @@ export function buildBrandPromptSection(brand: BrandConfig): string {
 }
 
 /**
+ * Analyze a corner region of the image and return how "busy" it is.
+ * Higher score = more content (text, objects). Lower = more empty space.
+ */
+async function getCornerBusyness(
+  imageBuffer: Buffer,
+  imgWidth: number,
+  imgHeight: number,
+  corner: string,
+  regionW: number,
+  regionH: number,
+  margin: number
+): Promise<number> {
+  let left = margin;
+  let top = margin;
+
+  switch (corner) {
+    case 'top-right':
+      left = imgWidth - regionW - margin;
+      break;
+    case 'bottom-left':
+      top = imgHeight - regionH - margin;
+      break;
+    case 'bottom-right':
+      left = imgWidth - regionW - margin;
+      top = imgHeight - regionH - margin;
+      break;
+    case 'top-left':
+    default:
+      break;
+  }
+
+  // Extract the corner region
+  const region = await sharp(imageBuffer)
+    .extract({
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      width: Math.min(regionW, imgWidth - left),
+      height: Math.min(regionH, imgHeight - top),
+    })
+    .greyscale()
+    .raw()
+    .toBuffer();
+
+  // Calculate standard deviation of pixel values — high stddev = busy (text, edges, objects)
+  const pixels = new Uint8Array(region);
+  const mean = pixels.reduce((sum, v) => sum + v, 0) / pixels.length;
+  const variance = pixels.reduce((sum, v) => sum + (v - mean) ** 2, 0) / pixels.length;
+  return Math.sqrt(variance);
+}
+
+/**
+ * Find the best corner to place the logo — the one with least content.
+ */
+async function findBestCorner(
+  imageBuffer: Buffer,
+  imgWidth: number,
+  imgHeight: number,
+  logoWidth: number,
+  logoHeight: number,
+  margin: number,
+  preferredCorner: string
+): Promise<string> {
+  const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+  const scores = await Promise.all(
+    corners.map(async (corner) => ({
+      corner,
+      busyness: await getCornerBusyness(imageBuffer, imgWidth, imgHeight, corner, logoWidth + margin, logoHeight + margin, margin),
+    }))
+  );
+
+  // Sort by least busy (lowest stddev = most uniform/empty)
+  scores.sort((a, b) => a.busyness - b.busyness);
+
+  const preferred = scores.find((s) => s.corner === preferredCorner);
+  const best = scores[0];
+
+  // Use preferred corner if it's reasonably empty (within 30% of the best),
+  // otherwise use the emptiest corner
+  if (preferred && preferred.busyness <= best.busyness * 1.3) {
+    console.log(`[brand] Using preferred corner "${preferredCorner}" (busyness: ${preferred.busyness.toFixed(1)}, best: ${best.corner} at ${best.busyness.toFixed(1)})`);
+    return preferredCorner;
+  }
+
+  console.log(`[brand] Preferred "${preferredCorner}" too busy (${preferred?.busyness.toFixed(1)}), using "${best.corner}" (${best.busyness.toFixed(1)})`);
+  return best.corner;
+}
+
+/**
  * Overlay brand logo on a generated image.
+ * Automatically picks the least busy corner to avoid overlapping text.
  * Returns the processed buffer, or the original if no logo/brand.
  */
 export async function overlayBrandLogo(
@@ -107,7 +197,7 @@ export async function overlayBrandLogo(
     }
   }
 
-  console.log(`[brand] Applying logo overlay: ${brand.name} (${brand.logo_storage_path}) at ${brand.logo_position}`);
+  console.log(`[brand] Applying logo overlay: ${brand.name} (${brand.logo_storage_path}), preferred: ${brand.logo_position}`);
 
   // Download logo
   const supabase = createAdminClient();
@@ -138,12 +228,20 @@ export async function overlayBrandLogo(
   const logoWidth = logoMetadata.width || brand.logo_size_px;
   const logoHeight = logoMetadata.height || brand.logo_size_px;
 
-  // Calculate position
   const margin = brand.logo_margin_px;
+
+  // Smart positioning: find the least busy corner
+  const chosenCorner = await findBestCorner(
+    imageBuffer, imgWidth, imgHeight,
+    logoWidth, logoHeight, margin,
+    brand.logo_position
+  );
+
+  // Calculate position based on chosen corner
   let left = margin;
   let top = margin;
 
-  switch (brand.logo_position) {
+  switch (chosenCorner) {
     case 'top-right':
       left = imgWidth - logoWidth - margin;
       break;
@@ -169,6 +267,6 @@ export async function overlayBrandLogo(
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position}`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${chosenCorner}`);
   return result;
 }
