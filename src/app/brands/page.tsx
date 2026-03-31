@@ -101,7 +101,10 @@ export default function BrandsPage() {
       if (res.ok) {
         toast.success('Logo subido');
         fetchBrands();
-      } else toast.error('Error subiendo logo');
+      } else {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        toast.error(`Error subiendo logo: ${err.error || res.status}`);
+      }
     };
     input.click();
   }
