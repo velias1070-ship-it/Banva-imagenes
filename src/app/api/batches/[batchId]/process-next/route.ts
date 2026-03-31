@@ -11,6 +11,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
+import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo } from '@/lib/brand';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -445,6 +446,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatchHex
     );
 
+    // Add brand guidelines to prompt if project has a brand
+    const brand = await getProjectBrand(project.id);
+    if (brand) {
+      prompt += buildBrandPromptSection(brand);
+    }
+
     // Add collage note if swatch has multiple reference images
     if (swatchImageCount > 1) {
       prompt += `\n\nNOTA IMPORTANTE SOBRE IMAGEN 2: La Imagen 2 es un COLLAGE con ${swatchImageCount} fotos de referencia del mismo producto. Muestra diferentes angulos, texturas y detalles del producto. Usa TODAS las fotos del collage para entender el color, patron, textura y detalles exactos del producto. El resultado debe ser fiel a lo que muestran estas referencias combinadas.`;
@@ -504,7 +511,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     // Post-process: ensure 1200x1200 RGB
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
-    const imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
+    let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
+
+    // Overlay brand logo if project has a brand
+    if (brand) {
+      imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type);
+    }
 
     // Upload result — name includes SKU + color + shot type for searchability
     const sku = job.swatch?.sku_suffix || '';

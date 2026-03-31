@@ -37,6 +37,8 @@ export default function NewProjectPage() {
   const [category, setCategory] = useState('');
   const [skuBase, setSkuBase] = useState('');
   const [description, setDescription] = useState('');
+  const [brandId, setBrandId] = useState('');
+  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     fetch('/api/productos')
@@ -45,6 +47,11 @@ export default function NewProjectPage() {
         if (Array.isArray(data)) setProductos(data);
       })
       .finally(() => setLoadingProductos(false));
+    fetch('/api/brands')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setBrands(data);
+      });
   }, []);
 
   function handleProductoSelect(slug: string) {
@@ -74,6 +81,7 @@ export default function NewProjectPage() {
           category,
           sku_base: skuBase,
           description,
+          brand_id: brandId || null,
           variantes: mode === 'catalog' && prod ? prod.variantes : undefined,
         }),
       });
@@ -203,6 +211,23 @@ export default function NewProjectPage() {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
+
+            {brands.length > 0 && (
+              <div className="space-y-2">
+                <Label>Brand Book (opcional)</Label>
+                <Select value={brandId} onValueChange={setBrandId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sin brand — imagenes sin logo ni guidelines" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin brand</SelectItem>
+                    {brands.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Creando...' : 'Crear Proyecto'}

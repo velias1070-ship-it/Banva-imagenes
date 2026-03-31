@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   const supabase = await createServerSupabase();
   const body = await request.json();
 
-  const { name, category, sku_base, description, variantes } = body;
+  const { name, category, sku_base, description, variantes, brand_id } = body;
 
   if (!name || !category) {
     return NextResponse.json(
@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
       category,
       sku_base: sku_base || null,
       description: description || null,
+      brand_id: brand_id && brand_id !== 'none' ? brand_id : null,
       status: 'draft',
       metadata: variantes ? { variantes } : {},
     })
