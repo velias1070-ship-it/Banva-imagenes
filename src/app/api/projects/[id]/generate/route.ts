@@ -112,7 +112,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const body = await request.json().catch(() => ({}));
   const heroIds: string[] | undefined = body.hero_ids;
   const swatchIds: string[] | undefined = body.swatch_ids;
-  const skipBrand: boolean = body.skip_brand === true;
+  const skipBrandHeroIds: string[] = body.skip_brand_hero_ids || [];
 
   // Get project
   const { data: project, error: projError } = await supabase
@@ -180,6 +180,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   // Create individual jobs for selected heroes x selected swatches
+  const skipBrandSet = new Set(skipBrandHeroIds);
   const jobs = selectedHeroes.flatMap((hero) =>
     selectedSwatches.map((swatch) => ({
       batch_id: batch.id,
@@ -187,7 +188,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       swatch_id: swatch.id,
       status: 'pending' as const,
       attempt: 0,
-      ...(skipBrand ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
+      ...(skipBrandSet.has(hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
     }))
   );
 

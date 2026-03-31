@@ -39,7 +39,8 @@ export default function GeneratePage() {
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState<GenerationBatch | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [skipBrand, setSkipBrand] = useState(false);
+  const [brandHeroIds, setBrandHeroIds] = useState<Set<string>>(new Set()); // heroes that will use brand
+  const [hasBrand, setHasBrand] = useState(false);
 
   const fetchData = useCallback(async () => {
     const [heroStatusRes, swatchRes] = await Promise.all([
@@ -62,8 +63,20 @@ export default function GeneratePage() {
     if (swatchRes.ok) {
       const swatchData: Swatch[] = await swatchRes.json();
       setSwatches(swatchData);
-      // Auto-select all swatches
       setSelectedSwatchIds(new Set(swatchData.map((s) => s.id)));
+    }
+    // Check if project has brand
+    const projRes = await fetch(`/api/projects/${id}`);
+    if (projRes.ok) {
+      const proj = await projRes.json();
+      if (proj.brand_id) {
+        setHasBrand(true);
+        // Auto-enable brand for all heroes
+        if (heroStatusRes.ok) {
+          const hData: HeroWithStatus[] = await heroStatusRes.json();
+          setBrandHeroIds(new Set(hData.map((h) => h.id)));
+        }
+      }
     }
   }, [id]);
 
@@ -194,7 +207,7 @@ export default function GeneratePage() {
         body: JSON.stringify({
           hero_ids: Array.from(selectedHeroIds),
           swatch_ids: Array.from(selectedSwatchIds),
-          skip_brand: skipBrand,
+          skip_brand_hero_ids: Array.from(selectedHeroIds).filter((hId) => !brandHeroIds.has(hId)),
         }),
       });
 
@@ -294,6 +307,23 @@ export default function GeneratePage() {
                       <p className="text-sm font-medium truncate">{hero.filename}</p>
                       <p className="text-xs text-muted-foreground capitalize">{hero.shot_type}</p>
                     </div>
+
+                    {/* Brand toggle */}
+                    {hasBrand && isSelected && (
+                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={brandHeroIds.has(hero.id)}
+                          onCheckedChange={(checked) => {
+                            setBrandHeroIds((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.add(hero.id); else next.delete(hero.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="text-[11px] text-muted-foreground">Brand</span>
+                      </div>
+                    )}
 
                     {/* Status Badge */}
                     {isFullyProcessed && (
@@ -476,14 +506,8 @@ export default function GeneratePage() {
         </Card>
       )}
 
-      {/* Options + Launch Button */}
-      <div className="flex flex-col items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Checkbox id="skip-brand" checked={skipBrand} onCheckedChange={(v) => setSkipBrand(!!v)} />
-          <label htmlFor="skip-brand" className="text-sm text-muted-foreground cursor-pointer">
-            Generar sin brand (sin logo ni guidelines de marca)
-          </label>
-        </div>
+      {/* Launch Button */}
+      <div className="flex justify-center">
         <Button
           size="lg"
           onClick={handleGenerate}
