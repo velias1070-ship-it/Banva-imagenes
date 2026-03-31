@@ -78,13 +78,24 @@ export async function overlayBrandLogo(
   shotType?: string
 ): Promise<Buffer> {
   // Check if overlay should be applied
-  if (!brand.apply_logo_overlay) return imageBuffer;
-  if (!brand.logo_storage_path) return imageBuffer;
+  if (!brand.apply_logo_overlay) {
+    console.log('[brand] Logo overlay disabled for brand:', brand.name);
+    return imageBuffer;
+  }
+  if (!brand.logo_storage_path) {
+    console.log('[brand] No logo path for brand:', brand.name);
+    return imageBuffer;
+  }
 
   // Check shot type filter
   if (brand.apply_to_shot_types?.length > 0 && shotType) {
-    if (!brand.apply_to_shot_types.includes(shotType)) return imageBuffer;
+    if (!brand.apply_to_shot_types.includes(shotType)) {
+      console.log(`[brand] Shot type "${shotType}" not in filter for brand ${brand.name}`);
+      return imageBuffer;
+    }
   }
+
+  console.log(`[brand] Applying logo overlay: ${brand.name} (${brand.logo_storage_path}) at ${brand.logo_position}`);
 
   // Download logo
   const supabase = createAdminClient();

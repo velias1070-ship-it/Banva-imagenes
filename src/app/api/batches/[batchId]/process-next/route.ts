@@ -515,7 +515,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     // Overlay brand logo if project has a brand
     if (brand) {
-      imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type);
+      try {
+        console.log(`[process-next] Brand detected: ${brand.name}, applying overlay...`);
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type);
+      } catch (brandErr) {
+        console.error('[process-next] Brand overlay failed (non-blocking):', brandErr);
+      }
+    } else {
+      console.log(`[process-next] No brand for project ${project.id}`);
     }
 
     // Upload result — name includes SKU + color + shot type for searchability
