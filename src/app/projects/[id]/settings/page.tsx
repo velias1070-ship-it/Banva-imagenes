@@ -34,9 +34,11 @@ export default function SettingsPage() {
   const [isCustomized, setIsCustomized] = useState(false);
   const [swatches, setSwatches] = useState<SwatchData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null); // which section is saving
+  const [saving, setSaving] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [projectName, setProjectName] = useState('');
+  const [brandId, setBrandId] = useState<string | null>(null);
+  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });
@@ -66,6 +68,13 @@ export default function SettingsPage() {
       if (projectRes.ok) {
         const data = await projectRes.json();
         setProjectName(data.name || '');
+        setBrandId(data.brand_id || null);
+      }
+
+      const brandsRes = await fetch('/api/brands');
+      if (brandsRes.ok) {
+        const data = await brandsRes.json();
+        if (Array.isArray(data)) setBrands(data);
       }
     } catch (err) {
       console.error('Failed to load settings:', err);
@@ -226,6 +235,58 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-6 max-w-4xl">
+        {/* ── Card 0: Brand Book ── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Palette className="h-5 w-5 text-blue-500" />
+              <div>
+                <CardTitle className="text-base">Brand Book</CardTitle>
+                <CardDescription>Identidad visual — logo, tipografia y colores para las imagenes generadas</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-3">
+              <Select
+                value={brandId || 'none'}
+                onValueChange={async (v) => {
+                  const newBrandId = v === 'none' ? null : v;
+                  setBrandId(newBrandId);
+                  setSaving('brand');
+                  const res = await fetch(`/api/projects/${projectId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brand_id: newBrandId }),
+                  });
+                  setSaving(null);
+                  if (res.ok) showToast('Brand actualizado');
+                  else showToast('Error actualizando brand', 'error');
+                }}
+              >
+                <SelectTrigger className="w-64">
+                  <SelectValue placeholder="Sin brand" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin brand</SelectItem>
+                  {brands.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {saving === 'brand' && <Loader2 className="h-4 w-4 animate-spin" />}
+              {brandId && (
+                <a href="/brands" target="_blank" className="text-xs text-blue-600 hover:underline">
+                  Editar brand
+                </a>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Las proximas imagenes generadas usaran la tipografia, colores y logo de este brand.
+            </p>
+          </CardContent>
+        </Card>
+
         {/* ── Card 1: Generacion ── */}
         <Card>
           <CardHeader>
