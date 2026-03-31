@@ -112,6 +112,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const body = await request.json().catch(() => ({}));
   const heroIds: string[] | undefined = body.hero_ids;
   const swatchIds: string[] | undefined = body.swatch_ids;
+  const skipBrand: boolean = body.skip_brand === true;
 
   // Get project
   const { data: project, error: projError } = await supabase
@@ -186,6 +187,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       swatch_id: swatch.id,
       status: 'pending' as const,
       attempt: 0,
+      ...(skipBrand ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
     }))
   );
 

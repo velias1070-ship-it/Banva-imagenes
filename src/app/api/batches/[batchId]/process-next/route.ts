@@ -446,10 +446,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatchHex
     );
 
-    // Add brand guidelines to prompt if project has a brand
+    // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
+    const skipBrand = job.prompt_adjustment === 'SKIP_BRAND';
     let brand: BrandConfig | null = null;
     const projectBrandId = project?.brand_id;
-    if (projectBrandId) {
+    if (projectBrandId && !skipBrand) {
       console.log(`[process-next] Project has brand_id: ${projectBrandId}`);
       const { data: brandData } = await supabase
         .from('brands')

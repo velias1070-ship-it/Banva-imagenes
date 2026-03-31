@@ -39,6 +39,7 @@ export default function GeneratePage() {
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState<GenerationBatch | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [skipBrand, setSkipBrand] = useState(false);
 
   const fetchData = useCallback(async () => {
     const [heroStatusRes, swatchRes] = await Promise.all([
@@ -193,6 +194,7 @@ export default function GeneratePage() {
         body: JSON.stringify({
           hero_ids: Array.from(selectedHeroIds),
           swatch_ids: Array.from(selectedSwatchIds),
+          skip_brand: skipBrand,
         }),
       });
 
@@ -474,8 +476,14 @@ export default function GeneratePage() {
         </Card>
       )}
 
-      {/* Launch Button */}
-      <div className="flex justify-center">
+      {/* Options + Launch Button */}
+      <div className="flex flex-col items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Checkbox id="skip-brand" checked={skipBrand} onCheckedChange={(v) => setSkipBrand(!!v)} />
+          <label htmlFor="skip-brand" className="text-sm text-muted-foreground cursor-pointer">
+            Generar sin brand (sin logo ni guidelines de marca)
+          </label>
+        </div>
         <Button
           size="lg"
           onClick={handleGenerate}
