@@ -45,13 +45,21 @@ export async function getProjectBrand(projectId: string): Promise<BrandConfig | 
  * Injected into the generation prompt when the project has a brand.
  */
 export function buildBrandPromptSection(brand: BrandConfig): string {
+  // If no typography and no guidelines configured, don't inject anything into prompt
+  // (logo overlay will still be applied separately by Sharp)
+  const hasTypography = brand.typography?.trim();
+  const hasGuidelines = brand.prompt_guidelines?.trim();
+  if (!hasTypography && !hasGuidelines) {
+    return '';
+  }
+
   const parts: string[] = [];
 
   parts.push(`\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`);
-  parts.push(`Marca: "${brand.name}"`);
-  parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible (titulos, descripciones, etiquetas, infografias, numeros, nombres de producto), DEBES aplicar las siguientes reglas de marca:`);
+  parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
+  parts.push(`IMPORTANTE: NO agregar el nombre de la marca como texto en la imagen. El logo se agrega automaticamente despues.`);
 
-  if (brand.typography) {
+  if (hasTypography) {
     parts.push(`TIPOGRAFIA OBLIGATORIA: ${brand.typography}. REEMPLAZAR cualquier tipografia del hero original por esta. NO mantener la tipografia original del hero — usar SOLO la del brand.`);
   }
 
@@ -60,10 +68,10 @@ export function buildBrandPromptSection(brand: BrandConfig): string {
     if (brand.primary_color) colors.push(`titulos/texto principal: ${brand.primary_color}`);
     if (brand.secondary_color) colors.push(`texto secundario: ${brand.secondary_color}`);
     if (brand.accent_color) colors.push(`acento/highlights: ${brand.accent_color}`);
-    parts.push(`COLORES DE TEXTO OBLIGATORIOS: ${colors.join(' | ')}. REEMPLAZAR los colores de texto del hero original por estos. NO mantener los colores de texto originales.`);
+    parts.push(`COLORES DE TEXTO OBLIGATORIOS: ${colors.join(' | ')}. REEMPLAZAR los colores de texto del hero original por estos.`);
   }
 
-  if (brand.prompt_guidelines) {
+  if (hasGuidelines) {
     parts.push(`REGLAS ADICIONALES: ${brand.prompt_guidelines}`);
   }
 
