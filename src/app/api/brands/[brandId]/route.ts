@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 interface RouteContext {
   params: Promise<{ brandId: string }>;
@@ -47,7 +48,7 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
 // Upload logo
 export async function PUT(request: NextRequest, context: RouteContext) {
   const { brandId } = await context.params;
-  const supabase = await createServerSupabase();
+  const supabase = createAdminClient();
 
   const formData = await request.formData();
   const file = formData.get('logo') as File;
