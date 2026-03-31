@@ -459,7 +459,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         .single();
       if (brandData) {
         brand = brandData as BrandConfig;
-        prompt += buildBrandPromptSection(brand);
+        prompt += buildBrandPromptSection(brand, effectiveShotType);
         console.log(`[process-next] Brand loaded: ${brand.name}`);
       } else {
         console.log(`[process-next] Brand ${projectBrandId} not found in DB`);
