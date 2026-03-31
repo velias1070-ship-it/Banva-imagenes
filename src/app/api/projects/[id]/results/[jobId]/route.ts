@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -13,7 +13,6 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { getProjectSettings } from '@/lib/project-settings';
 import { buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
-import { ensureOutputSpec } from '@/lib/image-processing';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;

@@ -312,6 +312,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     let swatchBuffer: Buffer = Buffer.from(await swatchRes.data.arrayBuffer());
+    const originalSwatchBuffer = Buffer.from(swatchBuffer); // copy before collage may modify it
     let heroBase64 = heroBuffer.toString('base64');
 
     // Check for additional swatch reference images
@@ -341,7 +342,6 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     let swatchBase64 = swatchBuffer.toString('base64');
 
     // Detect dark swatches for prompt adjustments (use original swatch, not collage)
-    const originalSwatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
     const darkSwatch = await isSwatchDark(originalSwatchBuffer);
     if (darkSwatch) {
       console.log(`[process-next] Dark swatch: "${job.swatch.name}"`);

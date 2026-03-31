@@ -210,6 +210,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
       strategy,
       attempt: job.attempt,
       projectSettings,
+      actualMode: (job.prompt_metadata as Record<string, unknown>)?.strategy as string | undefined,
     });
 
     // Determine new status based on QA action

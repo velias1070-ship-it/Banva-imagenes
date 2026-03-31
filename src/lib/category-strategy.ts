@@ -770,6 +770,10 @@ export function buildEditPrompt(
     ? ` La muestra es muy oscura, no aclares el resultado.`
     : '';
 
+  const qaNote = qaFeedback
+    ? `\n\nINTENTO ANTERIOR FALLO: "${qaFeedback}" — corrige este problema especifico.`
+    : '';
+
   const learnings = formatLearnings(strategy);
   const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
 
@@ -783,7 +787,7 @@ export function buildEditPrompt(
     shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO INFOGRAFIA: La Imagen 1 tiene TEXTO SUPERPUESTO, iconos y/o elementos graficos. La salida DEBE mantener EXACTAMENTE el mismo texto, iconos, posicion del texto, fuente, y layout grafico. Solo cambia el diseño/color del producto textil visible. El texto, los iconos y el fondo deben ser IDENTICOS a la Imagen 1.`;
   }
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change} No agregues texto, marcas de agua ni logos.${darkNote}${colorAnchor}${learnings}${shotNote}
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change} No agregues texto, marcas de agua ni logos.${darkNote}${colorAnchor}${learnings}${shotNote}${qaNote}
 
 REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.
 
@@ -825,11 +829,15 @@ NO generes un producto completo, NO agregues etiquetas, packaging, escena ni fon
 Genera una imagen fotorrealista de ${resolution}.`;
   }
 
+  const referenceNote = strategy.reference_instruction
+    ? `\n\n${strategy.reference_instruction}`
+    : '';
+
   return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
 
 Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
 
-${strategy.prompt.what_to_change} No agregues texto, marcas de agua ni logos.${colorAnchor}${darkNote}${qaNote}${learnings}
+${strategy.prompt.what_to_change} No agregues texto, marcas de agua ni logos.${referenceNote}${colorAnchor}${darkNote}${qaNote}${learnings}
 
 IDIOMA: TODO texto visible en la imagen generada DEBE estar en ESPAÑOL. Si hay texto en ingles, traducirlo. El mercado es MercadoLibre Chile.
 

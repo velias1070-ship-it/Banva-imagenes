@@ -24,6 +24,7 @@ export interface ScoreImageRequest {
   strategy: CategoryStrategy;
   attempt: number;
   projectSettings?: ProjectSettings; // Per-project QA overrides
+  actualMode?: string; // The actual generation mode used (from prompt_metadata.strategy), falls back to strategy.generation_mode
 }
 
 export interface ScoreImageResult {
@@ -181,7 +182,7 @@ function parseQAResponse(text: string): { detail: QADetail; feedback: string } |
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function scoreImage(request: ScoreImageRequest): Promise<ScoreImageResult> {
-  const generationMode = request.strategy.generation_mode;
+  const generationMode = request.actualMode || request.strategy.generation_mode;
 
   const prompt = buildQAPrompt(
     request.strategy,
