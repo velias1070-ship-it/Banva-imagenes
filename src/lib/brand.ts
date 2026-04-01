@@ -12,6 +12,9 @@ export interface BrandConfig {
   secondary_color: string;
   accent_color: string;
   typography: string;
+  typography_title: string;
+  typography_subtitle: string;
+  typography_subsubtitle: string;
   prompt_guidelines: string;
   apply_logo_overlay: boolean;
   apply_to_shot_types: string[];
@@ -60,6 +63,18 @@ const ROLE_COLOR_MAP: Record<TextElement['role'], keyof Pick<BrandConfig, 'prima
 };
 
 /**
+ * Map text element roles to per-role typography fields.
+ */
+const ROLE_TYPOGRAPHY_MAP: Record<TextElement['role'], keyof Pick<BrandConfig, 'typography_title' | 'typography_subtitle' | 'typography_subsubtitle'>> = {
+  title: 'typography_title',
+  subtitle: 'typography_subtitle',
+  body: 'typography_subsubtitle',
+  feature: 'typography_subsubtitle',
+  label: 'typography_subsubtitle',
+  icon_label: 'typography_subsubtitle',
+};
+
+/**
  * Build brand-specific prompt additions.
  * Injected into the generation prompt when the project has a brand.
  * When shotType is 'infografia' and logo is at the top, instructs Gemini
@@ -71,7 +86,8 @@ const ROLE_COLOR_MAP: Record<TextElement['role'], keyof Pick<BrandConfig, 'prima
 export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, textElements?: TextElement[] | null): string {
   // If no typography and no guidelines configured, don't inject anything into prompt
   // (logo overlay will still be applied separately by Sharp)
-  const hasTypography = brand.typography?.trim();
+  const hasPerRoleTypography = brand.typography_title?.trim() || brand.typography_subtitle?.trim() || brand.typography_subsubtitle?.trim();
+  const hasTypography = hasPerRoleTypography || brand.typography?.trim();
   const hasGuidelines = brand.prompt_guidelines?.trim();
   const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
@@ -109,15 +125,33 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
     parts.push(`COLORES DE TEXTO OBLIGATORIOS: ${colors.join(' | ')}. REEMPLAZAR los colores de texto del hero original por estos.`);
   }
 
-  if (hasTextElements && hasTypography) {
-    // ── SPECIFIC per-element typography instructions ──
+  if (hasTextElements && hasPerRoleTypography) {
+    // ── SPECIFIC per-element typography with per-role fonts ──
+    parts.push(`TIPOGRAFIA POR ELEMENTO (aplicar EXACTAMENTE segun el rol de cada texto):`);
+    for (const el of textElements!) {
+      const typoField = ROLE_TYPOGRAPHY_MAP[el.role];
+      const typoValue = brand[typoField]?.trim() || brand.typography?.trim();
+      if (typoValue) {
+        parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → tipografia: ${typoValue}`);
+      }
+    }
+    parts.push(`NO mantener la tipografia original del hero — usar SOLO las tipografias del brand para TODOS los textos.`);
+  } else if (hasTextElements && hasTypography) {
+    // ── SPECIFIC per-element typography with single font (backward compatible) ──
     parts.push(`TIPOGRAFIA OBLIGATORIA (${brand.typography}) — aplicar a cada texto detectado:`);
     for (const el of textElements!) {
       parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → tipografia: ${brand.typography}`);
     }
     parts.push(`NO mantener la tipografia original del hero — usar SOLO la del brand para TODOS los textos.`);
+  } else if (hasPerRoleTypography) {
+    // ── GENERIC per-role typography (no text elements detected) ──
+    const typos: string[] = [];
+    if (brand.typography_title?.trim()) typos.push(`titulos: ${brand.typography_title}`);
+    if (brand.typography_subtitle?.trim()) typos.push(`subtitulos/body/labels: ${brand.typography_subtitle}`);
+    if (brand.typography_subsubtitle?.trim()) typos.push(`sub-subtitulos/body/features: ${brand.typography_subsubtitle}`);
+    parts.push(`TIPOGRAFIA OBLIGATORIA: ${typos.join(' | ')}. REEMPLAZAR cualquier tipografia del hero original por estas. NO mantener la tipografia original del hero — usar SOLO las del brand.`);
   } else if (hasTypography) {
-    // ── GENERIC typography instructions ──
+    // ── GENERIC single typography (backward compatible) ──
     parts.push(`TIPOGRAFIA OBLIGATORIA: ${brand.typography}. REEMPLAZAR cualquier tipografia del hero original por esta. NO mantener la tipografia original del hero — usar SOLO la del brand.`);
   }
 

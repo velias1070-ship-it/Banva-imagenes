@@ -25,6 +25,9 @@ interface Brand {
   secondary_color: string;
   accent_color: string;
   typography: string;
+  typography_title: string;
+  typography_subtitle: string;
+  typography_subsubtitle: string;
   prompt_guidelines: string;
   apply_logo_overlay: boolean;
   apply_to_shot_types: string[];
@@ -76,6 +79,9 @@ export default function BrandsPage() {
         secondary_color: brand.secondary_color,
         accent_color: brand.accent_color,
         typography: brand.typography,
+        typography_title: brand.typography_title,
+        typography_subtitle: brand.typography_subtitle,
+        typography_subsubtitle: brand.typography_subsubtitle,
         prompt_guidelines: brand.prompt_guidelines,
         logo_position: brand.logo_position,
         logo_margin_px: brand.logo_margin_px,
@@ -169,7 +175,7 @@ export default function BrandsPage() {
                           <div className="h-4 w-4 rounded-full border" style={{ backgroundColor: brand.secondary_color }} title="Secundario" />
                           <div className="h-4 w-4 rounded-full border" style={{ backgroundColor: brand.accent_color }} title="Acento" />
                         </div>
-                        {brand.typography && <Badge variant="outline" className="text-[10px]">{brand.typography.substring(0, 30)}</Badge>}
+                        {(brand.typography_title || brand.typography_subtitle || brand.typography_subsubtitle || brand.typography) && <Badge variant="outline" className="text-[10px]">{(brand.typography_title || brand.typography_subtitle || brand.typography_subsubtitle || brand.typography).substring(0, 30)}</Badge>}
                       </div>
                     </div>
                   </div>
@@ -215,9 +221,19 @@ export default function BrandsPage() {
                           </div>
                         </div>
                       </div>
-                      <div>
-                        <Label>Tipografia (descripcion para IA)</Label>
-                        <Input value={brand.typography} onChange={(e) => updateBrandLocal(brand.id, { typography: e.target.value })} placeholder="Ej: Sans-serif bold, estilo clean y moderno" />
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <Label className="text-xs">Tipografia titulos</Label>
+                          <Input value={brand.typography_title} onChange={(e) => updateBrandLocal(brand.id, { typography_title: e.target.value })} placeholder="Ej: Sans-serif bold" className="text-xs" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Tipografia subtitulos</Label>
+                          <Input value={brand.typography_subtitle} onChange={(e) => updateBrandLocal(brand.id, { typography_subtitle: e.target.value })} placeholder="Ej: Sans-serif regular" className="text-xs" />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Tipografia sub-subtitulos</Label>
+                          <Input value={brand.typography_subsubtitle} onChange={(e) => updateBrandLocal(brand.id, { typography_subsubtitle: e.target.value })} placeholder="Ej: Sans-serif light" className="text-xs" />
+                        </div>
                       </div>
                       <div>
                         <Label>Posicion del logo</Label>
