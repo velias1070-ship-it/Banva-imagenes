@@ -40,22 +40,46 @@ export async function getProjectBrand(projectId: string): Promise<BrandConfig | 
   return brand as BrandConfig | null;
 }
 
+export interface TextElement {
+  text: string;
+  role: 'title' | 'subtitle' | 'body' | 'feature' | 'label' | 'icon_label';
+  position: 'top' | 'center' | 'bottom';
+  size: 'large' | 'medium' | 'small';
+}
+
+/**
+ * Map text element roles to brand color fields.
+ */
+const ROLE_COLOR_MAP: Record<TextElement['role'], keyof Pick<BrandConfig, 'primary_color' | 'secondary_color' | 'accent_color'>> = {
+  title: 'primary_color',
+  subtitle: 'secondary_color',
+  body: 'secondary_color',
+  feature: 'accent_color',
+  label: 'secondary_color',
+  icon_label: 'accent_color',
+};
+
 /**
  * Build brand-specific prompt additions.
  * Injected into the generation prompt when the project has a brand.
  * When shotType is 'infografia' and logo is at the top, instructs Gemini
  * to shift hero text down to leave room for the logo overlay.
+ *
+ * When textElements are provided (detected from the hero image), generates
+ * SPECIFIC per-element color and typography instructions instead of generic ones.
  */
-export function buildBrandPromptSection(brand: BrandConfig, shotType?: string): string {
+export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, textElements?: TextElement[] | null): string {
   // If no typography and no guidelines configured, don't inject anything into prompt
   // (logo overlay will still be applied separately by Sharp)
   const hasTypography = brand.typography?.trim();
   const hasGuidelines = brand.prompt_guidelines?.trim();
+  const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   const isInfoShot = shotType === 'infografia';
   const needsTextShift = isInfoShot && logoAtTop && brand.apply_logo_overlay && !!brand.logo_storage_path;
+  const hasTextElements = textElements && textElements.length > 0;
 
-  if (!hasTypography && !hasGuidelines && !needsTextShift) {
+  if (!hasTypography && !hasGuidelines && !needsTextShift && !hasColors) {
     return '';
   }
 
@@ -65,16 +89,36 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string): 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
   parts.push(`PROHIBIDO: NO generar logotipos, nombres de marca, ni watermarks en la imagen. NUNCA escribir "${brand.name}" ni ninguna marca en la imagen. El logo se compone automaticamente en post-proceso — si lo generas, quedara DUPLICADO y MAL POSICIONADO.`);
 
-  if (hasTypography) {
-    parts.push(`TIPOGRAFIA OBLIGATORIA: ${brand.typography}. REEMPLAZAR cualquier tipografia del hero original por esta. NO mantener la tipografia original del hero — usar SOLO la del brand.`);
-  }
-
-  if (brand.primary_color || brand.accent_color) {
+  if (hasTextElements && hasColors) {
+    // ── SPECIFIC per-element color instructions ──
+    parts.push(`COLORES DE TEXTO POR ELEMENTO (aplicar EXACTAMENTE segun el rol de cada texto):`);
+    for (const el of textElements!) {
+      const colorField = ROLE_COLOR_MAP[el.role];
+      const colorValue = brand[colorField];
+      if (colorValue) {
+        parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → color: ${colorValue}`);
+      }
+    }
+    parts.push(`REEMPLAZAR los colores de texto del hero original por los indicados arriba.`);
+  } else if (hasColors) {
+    // ── GENERIC color instructions (no text elements detected) ──
     const colors: string[] = [];
     if (brand.primary_color) colors.push(`titulos/texto principal: ${brand.primary_color}`);
     if (brand.secondary_color) colors.push(`texto secundario: ${brand.secondary_color}`);
     if (brand.accent_color) colors.push(`acento/highlights: ${brand.accent_color}`);
     parts.push(`COLORES DE TEXTO OBLIGATORIOS: ${colors.join(' | ')}. REEMPLAZAR los colores de texto del hero original por estos.`);
+  }
+
+  if (hasTextElements && hasTypography) {
+    // ── SPECIFIC per-element typography instructions ──
+    parts.push(`TIPOGRAFIA OBLIGATORIA (${brand.typography}) — aplicar a cada texto detectado:`);
+    for (const el of textElements!) {
+      parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → tipografia: ${brand.typography}`);
+    }
+    parts.push(`NO mantener la tipografia original del hero — usar SOLO la del brand para TODOS los textos.`);
+  } else if (hasTypography) {
+    // ── GENERIC typography instructions ──
+    parts.push(`TIPOGRAFIA OBLIGATORIA: ${brand.typography}. REEMPLAZAR cualquier tipografia del hero original por esta. NO mantener la tipografia original del hero — usar SOLO la del brand.`);
   }
 
   if (hasGuidelines) {

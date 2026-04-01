@@ -12,6 +12,7 @@ import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
 import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
+import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -449,6 +450,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
     const skipBrand = job.prompt_adjustment === 'SKIP_BRAND';
     let brand: BrandConfig | null = null;
+    let textElements: import('@/lib/brand').TextElement[] | null = null;
     const projectBrandId = project?.brand_id;
     if (projectBrandId && !skipBrand) {
       console.log(`[process-next] Project has brand_id: ${projectBrandId}`);
@@ -459,7 +461,21 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         .single();
       if (brandData) {
         brand = brandData as BrandConfig;
-        prompt += buildBrandPromptSection(brand, effectiveShotType);
+
+        // Detect text elements for precise brand color/typography application (infografia only)
+        if (brand && effectiveShotType === 'infografia') {
+          try {
+            const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
+            if (textAnalysis?.elements?.length) {
+              textElements = textAnalysis.elements;
+              console.log(`[process-next] Detected ${textElements.length} text elements in infografia hero`);
+            }
+          } catch (err) {
+            console.error('[process-next] Text element analysis failed (non-blocking):', err);
+          }
+        }
+
+        prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
         console.log(`[process-next] Brand loaded: ${brand.name}`);
       } else {
         console.log(`[process-next] Brand ${projectBrandId} not found in DB`);
@@ -485,6 +501,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       swatch_hex: swatchHex,
       qa_feedback_used: qaFeedback ? true : false,
       swatch_image_count: swatchImageCount,
+      text_elements_detected: textElements || null,
     };
 
     // Mark as generating
