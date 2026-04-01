@@ -551,7 +551,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     if (brand) {
       try {
         console.log(`[process-next] Brand detected: ${brand.name}, applying overlay...`);
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type);
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, textElements);
       } catch (brandErr) {
         console.error('[process-next] Brand overlay failed (non-blocking):', brandErr);
       }

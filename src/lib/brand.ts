@@ -92,7 +92,8 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   const isInfoShot = shotType === 'infografia';
-  const needsTextShift = isInfoShot && logoAtTop && brand.apply_logo_overlay && !!brand.logo_storage_path;
+  // Text shift no longer needed — overlayBrandLogo auto-detects the least busy corner
+  const needsTextShift = false;
   const hasTextElements = textElements && textElements.length > 0;
 
   if (!hasTypography && !hasGuidelines && !needsTextShift && !hasColors) {
@@ -172,17 +173,158 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
 }
 
 /**
+ * Analyze a corner region of the image and return how "busy" it is.
+ * Higher stddev = more content (text, edges, objects). Lower = empty/uniform.
+ */
+async function getCornerBusyness(
+  imageBuffer: Buffer,
+  imgWidth: number,
+  imgHeight: number,
+  corner: string,
+  regionW: number,
+  regionH: number,
+  margin: number
+): Promise<number> {
+  let left = margin;
+  let top = margin;
+
+  switch (corner) {
+    case 'top-right':
+      left = imgWidth - regionW - margin;
+      break;
+    case 'bottom-left':
+      top = imgHeight - regionH - margin;
+      break;
+    case 'bottom-right':
+      left = imgWidth - regionW - margin;
+      top = imgHeight - regionH - margin;
+      break;
+    case 'top-left':
+    default:
+      break;
+  }
+
+  const extractW = Math.min(regionW, imgWidth - Math.max(0, left));
+  const extractH = Math.min(regionH, imgHeight - Math.max(0, top));
+  if (extractW <= 0 || extractH <= 0) return 999;
+
+  const region = await sharp(imageBuffer)
+    .extract({ left: Math.max(0, left), top: Math.max(0, top), width: extractW, height: extractH })
+    .greyscale()
+    .raw()
+    .toBuffer();
+
+  const pixels = new Uint8Array(region);
+  const mean = pixels.reduce((sum, v) => sum + v, 0) / pixels.length;
+  const variance = pixels.reduce((sum, v) => sum + (v - mean) ** 2, 0) / pixels.length;
+  return Math.sqrt(variance);
+}
+
+/**
+ * Find the best corner for the logo — the one with least content.
+ * Prefers the configured corner if it's reasonably empty.
+ */
+async function findBestCorner(
+  imageBuffer: Buffer,
+  imgWidth: number,
+  imgHeight: number,
+  logoWidth: number,
+  logoHeight: number,
+  margin: number,
+  preferredCorner: string
+): Promise<string> {
+  const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+  const scores = await Promise.all(
+    corners.map(async (corner) => ({
+      corner,
+      busyness: await getCornerBusyness(imageBuffer, imgWidth, imgHeight, corner, logoWidth + margin * 2, logoHeight + margin * 2, margin),
+    }))
+  );
+
+  scores.sort((a, b) => a.busyness - b.busyness);
+  const best = scores[0];
+  const preferred = scores.find((s) => s.corner === preferredCorner);
+
+  if (preferred && preferred.busyness <= best.busyness * 1.3) {
+    console.log(`[brand] Corner "${preferredCorner}" OK (busyness: ${preferred.busyness.toFixed(1)}, best: ${best.corner} ${best.busyness.toFixed(1)})`);
+    return preferredCorner;
+  }
+
+  console.log(`[brand] Corner "${preferredCorner}" busy (${preferred?.busyness.toFixed(1)}), using "${best.corner}" (${best.busyness.toFixed(1)})`);
+  return best.corner;
+}
+
+/**
+ * Pick the best corner for the logo based on detected text positions.
+ * Avoids corners where text elements are located.
+ */
+function findBestCornerFromText(
+  textElements: TextElement[] | null | undefined,
+  preferredCorner: string
+): string {
+  if (!textElements?.length) return preferredCorner;
+
+  // Determine which zones have text
+  const hasTopText = textElements.some(el => el.position === 'top');
+  const hasBottomText = textElements.some(el => el.position === 'bottom');
+  const hasCenterText = textElements.some(el => el.position === 'center');
+
+  const cornerScores: Record<string, number> = {
+    'top-left': 0,
+    'top-right': 0,
+    'bottom-left': 0,
+    'bottom-right': 0,
+  };
+
+  // Penalize corners in zones with text
+  if (hasTopText) {
+    cornerScores['top-left'] += 10;
+    cornerScores['top-right'] += 10;
+  }
+  if (hasBottomText) {
+    cornerScores['bottom-left'] += 10;
+    cornerScores['bottom-right'] += 10;
+  }
+  if (hasCenterText) {
+    // Center text slightly penalizes all corners but less
+    cornerScores['top-left'] += 3;
+    cornerScores['top-right'] += 3;
+    cornerScores['bottom-left'] += 3;
+    cornerScores['bottom-right'] += 3;
+  }
+
+  // If preferred corner has no penalty, use it
+  if (cornerScores[preferredCorner] === 0) {
+    console.log(`[brand] Preferred "${preferredCorner}" is clear of text`);
+    return preferredCorner;
+  }
+
+  // Find the corner with lowest penalty
+  const sorted = Object.entries(cornerScores).sort((a, b) => a[1] - b[1]);
+  const best = sorted[0];
+
+  // If all corners are equally penalized, use preferred
+  if (best[1] === cornerScores[preferredCorner]) {
+    console.log(`[brand] All corners have text, using preferred "${preferredCorner}"`);
+    return preferredCorner;
+  }
+
+  console.log(`[brand] Preferred "${preferredCorner}" has text (score ${cornerScores[preferredCorner]}), using "${best[0]}" (score ${best[1]})`);
+  return best[0];
+}
+
+/**
  * Overlay brand logo on a generated image.
- * Uses the configured corner position. For infografia shots, the prompt
- * already told Gemini to shift text away from the logo zone.
- * Returns the processed buffer, or the original if no logo/brand.
+ * Uses detected text elements to pick a corner without text overlap.
+ * Falls back to pixel analysis if no text data, or preferred corner if empty.
  */
 export async function overlayBrandLogo(
   imageBuffer: Buffer,
   brand: BrandConfig,
-  shotType?: string
+  shotType?: string,
+  textElements?: TextElement[] | null
 ): Promise<Buffer> {
-  // Check if overlay should be applied
   if (!brand.apply_logo_overlay) {
     console.log('[brand] Logo overlay disabled for brand:', brand.name);
     return imageBuffer;
@@ -192,7 +334,6 @@ export async function overlayBrandLogo(
     return imageBuffer;
   }
 
-  // Check shot type filter
   if (brand.apply_to_shot_types?.length > 0 && shotType) {
     if (!brand.apply_to_shot_types.includes(shotType)) {
       console.log(`[brand] Shot type "${shotType}" not in filter for brand ${brand.name}`);
@@ -200,9 +341,8 @@ export async function overlayBrandLogo(
     }
   }
 
-  console.log(`[brand] Applying logo overlay: ${brand.name} (${brand.logo_storage_path}) at ${brand.logo_position}`);
+  console.log(`[brand] Applying logo overlay: ${brand.name}, preferred: ${brand.logo_position}`);
 
-  // Download logo
   const supabase = createAdminClient();
   const { data: logoData, error } = await supabase.storage
     .from('images')
@@ -215,28 +355,37 @@ export async function overlayBrandLogo(
 
   const logoBuffer = Buffer.from(await logoData.arrayBuffer());
 
-  // Resize logo to configured size
   const resizedLogo = await sharp(logoBuffer)
     .resize(brand.logo_size_px, brand.logo_size_px, { fit: 'inside', withoutEnlargement: true })
     .png()
     .toBuffer();
 
-  // Get image dimensions
   const imageMetadata = await sharp(imageBuffer).metadata();
   const imgWidth = imageMetadata.width || 1200;
   const imgHeight = imageMetadata.height || 1200;
 
-  // Get logo dimensions after resize
   const logoMetadata = await sharp(resizedLogo).metadata();
   const logoWidth = logoMetadata.width || brand.logo_size_px;
   const logoHeight = logoMetadata.height || brand.logo_size_px;
 
-  // Calculate position
   const margin = brand.logo_margin_px;
+
+  // Smart corner detection: prefer text-based (reliable), fallback to pixel analysis
+  let chosenCorner: string;
+  if (textElements?.length) {
+    chosenCorner = findBestCornerFromText(textElements, brand.logo_position);
+  } else {
+    chosenCorner = await findBestCorner(
+      imageBuffer, imgWidth, imgHeight,
+      logoWidth, logoHeight, margin,
+      brand.logo_position
+    );
+  }
+
   let left = margin;
   let top = margin;
 
-  switch (brand.logo_position) {
+  switch (chosenCorner) {
     case 'top-right':
       left = imgWidth - logoWidth - margin;
       break;
@@ -252,7 +401,6 @@ export async function overlayBrandLogo(
       break;
   }
 
-  // Composite logo onto image
   const result = await sharp(imageBuffer)
     .composite([{
       input: resizedLogo,
@@ -262,6 +410,6 @@ export async function overlayBrandLogo(
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position}`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${chosenCorner}`);
   return result;
 }
