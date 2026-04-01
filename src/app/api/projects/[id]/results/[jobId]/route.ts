@@ -13,6 +13,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { getProjectSettings } from '@/lib/project-settings';
 import { buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
+import { analyzeTextElements } from '@/lib/text-element-analyzer';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -217,6 +218,7 @@ async function regenerateJob(
 
     // Add brand guidelines if project has a brand
     let brand: BrandConfig | null = null;
+    let textElements: import('@/lib/brand').TextElement[] | null = null;
     if (brandId) {
       const { data: brandData } = await supabase
         .from('brands')
@@ -225,7 +227,22 @@ async function regenerateJob(
         .single();
       if (brandData) {
         brand = brandData as BrandConfig;
-        prompt += buildBrandPromptSection(brand);
+
+        // Detect text elements for precise brand application
+        if (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color) {
+          try {
+            const heroB64 = heroBuffer.toString('base64');
+            const textAnalysis = await analyzeTextElements(heroB64, heroShot.mime_type || 'image/png');
+            if (textAnalysis?.elements?.length) {
+              textElements = textAnalysis.elements;
+              console.log(`[regenerateJob] Detected ${textElements.length} text elements`);
+            }
+          } catch (err) {
+            console.error('[regenerateJob] Text analysis failed (non-blocking):', err);
+          }
+        }
+
+        prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
         console.log(`[regenerateJob] Brand loaded: ${brand.name}`);
       }
     }
@@ -276,7 +293,7 @@ async function regenerateJob(
     // Overlay brand logo if project has a brand
     if (brand) {
       try {
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType);
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, textElements);
       } catch (brandErr) {
         console.error('[regenerateJob] Brand overlay failed (non-blocking):', brandErr);
       }
