@@ -462,13 +462,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       if (brandData) {
         brand = brandData as BrandConfig;
 
-        // Detect text elements for precise brand color/typography application (infografia only)
-        if (brand && effectiveShotType === 'infografia') {
+        // Detect text elements for precise brand color/typography application
+        // Runs for any shot with brand (not just infografia) — text can appear in lifestyle, packaging, etc.
+        if (brand && (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color)) {
           try {
             const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
             if (textAnalysis?.elements?.length) {
               textElements = textAnalysis.elements;
-              console.log(`[process-next] Detected ${textElements.length} text elements in infografia hero`);
+              console.log(`[process-next] Detected ${textElements.length} text elements in ${effectiveShotType} hero`);
             }
           } catch (err) {
             console.error('[process-next] Text element analysis failed (non-blocking):', err);
