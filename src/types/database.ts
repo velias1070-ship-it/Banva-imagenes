@@ -91,6 +91,7 @@ export interface QADetail {
   aspect_ratio: number;
   ml_compliance: number;
   hero_contamination: number;  // 0=clean, 1=identical to hero. Independent escalation trigger (NOT in weighted score)
+  brand_compliance?: number;   // 0=wrong colors, 1=matches brand. Optional (defaults to 1.0 when no brand)
 }
 
 export interface CategoryTemplate {

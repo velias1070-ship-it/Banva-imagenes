@@ -4,6 +4,7 @@ import { scoreImage } from '@/lib/qa-scorer';
 import { getCategoryStrategy } from '@/lib/category-strategy';
 import { shouldHaltBatch } from '@/lib/qa-criteria';
 import { getProjectSettings } from '@/lib/project-settings';
+import type { BrandConfig } from '@/lib/brand';
 
 export const maxDuration = 60;
 
@@ -178,6 +179,19 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
   const strategy = getCategoryStrategy(category);
   const projectSettings = getProjectSettings(project?.metadata as Record<string, unknown> | null);
 
+  // Load brand config if project has a brand_id (for brand compliance scoring)
+  let brand: BrandConfig | null = null;
+  if (project?.brand_id) {
+    const { data: brandData } = await supabase
+      .from('brands')
+      .select('*')
+      .eq('id', project.brand_id)
+      .single();
+    if (brandData) {
+      brand = brandData as BrandConfig;
+    }
+  }
+
   try {
     // Download 3 images: generated + swatch + hero
     const [generatedRes, swatchRes, heroRes] = await Promise.all([
@@ -211,6 +225,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
       attempt: job.attempt,
       projectSettings,
       actualMode: (job.prompt_metadata as Record<string, unknown>)?.strategy as string | undefined,
+      brand,
     });
 
     // Determine new status based on QA action

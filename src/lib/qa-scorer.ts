@@ -10,6 +10,7 @@ import { computeWeightedScore, determineAction, type QAAction } from '@/lib/qa-c
 import type { QADetail } from '@/types/database';
 import type { CategoryStrategy } from '@/lib/category-strategy';
 import type { ProjectSettings } from '@/lib/project-settings';
+import type { BrandConfig } from '@/lib/brand';
 
 export interface ScoreImageRequest {
   generatedBase64: string;
@@ -25,6 +26,7 @@ export interface ScoreImageRequest {
   attempt: number;
   projectSettings?: ProjectSettings; // Per-project QA overrides
   actualMode?: string; // The actual generation mode used (from prompt_metadata.strategy), falls back to strategy.generation_mode
+  brand?: BrandConfig | null; // Brand config for brand compliance scoring
 }
 
 export interface ScoreImageResult {
@@ -43,7 +45,8 @@ function buildQAPrompt(
   strategy: CategoryStrategy,
   swatchName: string,
   generationMode: string,
-  swatchHex?: string | null
+  swatchHex?: string | null,
+  brand?: BrandConfig | null
 ): string {
   const focusAreas = strategy.qa_focus_areas?.length
     ? `\nCATEGORY-SPECIFIC FOCUS AREAS:\n${strategy.qa_focus_areas.map((a) => `* ${a}`).join('\n')}`
@@ -109,7 +112,20 @@ EVALUATE Image 1 across these 8 dimensions. Score each from 0.0 to 1.0:
    - 0.5 = PARTIAL — some elements from Image 3's fabric visible
    - 1.0 = FULL — Image 1 looks like Image 3 with no fabric change
    - This measures whether the generation FAILED to replace the original textile
+${brand ? `
+9. **brand_compliance** (0-1): ONLY score this if brand information is provided below.
+   - Are the text colors in the generated image consistent with the brand colors specified?
+   - 1.0 = text colors match brand specification
+   - 0.5 = some text colors match, some don't
+   - 0.0 = text colors completely wrong or ignored
+   If no brand information is provided, score 1.0 (not applicable).` : ''}
 ${focusAreas}${learningsBlock}
+${brand ? `
+BRAND INFORMATION:
+Expected text colors:
+  - Titles: ${brand.primary_color}
+  - Subtitles: ${brand.secondary_color}
+  - Features/highlights: ${brand.accent_color}` : ''}
 
 RESPOND WITH ONLY a valid JSON object (no markdown, no backticks, no explanation before or after):
 {
@@ -120,7 +136,7 @@ RESPOND WITH ONLY a valid JSON object (no markdown, no backticks, no explanation
   "resolution": <number>,
   "aspect_ratio": <number>,
   "ml_compliance": <number>,
-  "hero_contamination": <number>,
+  "hero_contamination": <number>,${brand ? '\n  "brand_compliance": <number>,' : ''}
   "feedback": "<one sentence explaining the most critical issue, or 'Excellent quality' if all good>"
 }`;
 }
@@ -164,6 +180,7 @@ function parseQAResponse(text: string): { detail: QADetail; feedback: string } |
       aspect_ratio: parsed.aspect_ratio,
       ml_compliance: parsed.ml_compliance,
       hero_contamination: parsed.hero_contamination,
+      brand_compliance: typeof parsed.brand_compliance === 'number' ? parsed.brand_compliance : 1.0,
     };
 
     const feedback = typeof parsed.feedback === 'string'
@@ -188,7 +205,8 @@ export async function scoreImage(request: ScoreImageRequest): Promise<ScoreImage
     request.strategy,
     request.swatchName,
     generationMode,
-    request.swatchHex
+    request.swatchHex,
+    request.brand
   );
 
   // Send 3 images: generated + swatch + hero

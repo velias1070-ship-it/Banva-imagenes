@@ -511,6 +511,13 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       qa_feedback_used: qaFeedback ? true : false,
       swatch_image_count: swatchImageCount,
       text_elements_detected: textElements || null,
+      brand_name: brand?.name || null,
+      brand_colors: brand ? {
+        primary: brand.primary_color,
+        secondary: brand.secondary_color,
+        accent: brand.accent_color,
+      } : null,
+      logo_overlay_expected: brand?.apply_logo_overlay || false,
     };
 
     // Mark as generating
