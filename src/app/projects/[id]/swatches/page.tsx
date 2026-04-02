@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dropzone } from '@/components/upload/dropzone';
-import { ArrowLeft, Trash2, Download, RefreshCw, Loader2, ImagePlus, Plus, X } from 'lucide-react';
+import { ArrowLeft, Trash2, Download, RefreshCw, Loader2, ImagePlus, Plus, X, Search } from 'lucide-react';
 import type { Swatch } from '@/types/database';
 import { toast } from 'sonner';
 
@@ -142,6 +142,25 @@ export default function SwatchesPage() {
       toast.error('Error de conexion');
     } finally {
       setAddingSku(false);
+    }
+  }
+
+  async function handleFetchCannon(swatchId: string, swatchName: string) {
+    toast.info(`Buscando "${swatchName}" en Cannon...`);
+    try {
+      const res = await fetch(`/api/projects/${id}/swatches/${swatchId}/fetch-cannon`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Imagen de "${data.design}" descargada de Cannon`);
+        setImgVersion((v) => v + 1);
+        fetchSwatches();
+      } else {
+        toast.error(data.error || 'Error buscando en Cannon');
+      }
+    } catch {
+      toast.error('Error de conexion');
     }
   }
 
@@ -453,6 +472,17 @@ export default function SwatchesPage() {
                         </p>
                       </div>
                       <div className="flex flex-col gap-1">
+                        {swatch.sku_suffix && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleFetchCannon(swatch.id, swatch.name)}
+                            className="h-7 w-7 text-orange-500 hover:text-orange-700"
+                            title="Buscar imagen en Cannon"
+                          >
+                            <Search className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
