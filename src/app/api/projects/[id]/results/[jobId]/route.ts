@@ -11,6 +11,7 @@ import {
   type GenerationMode,
 } from '@/lib/category-strategy';
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
+import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
 import { buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
@@ -245,6 +246,13 @@ async function regenerateJob(
         prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
         console.log(`[regenerateJob] Brand loaded: ${brand.name}`);
       }
+    }
+
+    // Add size-aware note for 1P/1.5P bed products
+    const sizeNote = buildSizePromptNote(swatch.sku_suffix, category);
+    if (sizeNote) {
+      prompt += sizeNote;
+      console.log(`[regenerateJob] Size adjustment for SKU ${swatch.sku_suffix}`);
     }
 
     const promptMetadata: Record<string, unknown> = {

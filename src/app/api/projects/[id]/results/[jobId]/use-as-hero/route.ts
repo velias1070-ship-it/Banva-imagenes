@@ -4,6 +4,7 @@ import { generateImage } from '@/lib/gemini/client';
 import { ensureOutputSpec } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
+import { buildSizePromptNote } from '@/lib/size-utils';
 
 export const maxDuration = 60;
 
@@ -330,7 +331,7 @@ De la Imagen 2 extraer UNICAMENTE el diseño/patron/color de la tela. NO copiar 
 
 IDIOMA: Todo texto visible DEBE estar en español.
 
-Genera una imagen fotorrealista de ${projectSettings.generation.resolution}.`;
+Genera una imagen fotorrealista de ${projectSettings.generation.resolution}.${buildSizePromptNote(swatch.sku_suffix, category)}`;
 
     const result = await generateImage({
       heroImageBase64: heroBase64,

@@ -9,6 +9,7 @@ import {
   buildPromptForMode,
 } from '@/lib/category-strategy';
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
+import { buildSizePromptNote } from '@/lib/size-utils';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
 import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
@@ -483,6 +484,13 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
     } else {
       console.log(`[process-next] No brand_id on project`);
+    }
+
+    // Add size-aware note for 1P/1.5P bed products
+    const sizeNote = buildSizePromptNote(job.swatch.sku_suffix, category);
+    if (sizeNote) {
+      prompt += sizeNote;
+      console.log(`[process-next] Size adjustment added for SKU ${job.swatch.sku_suffix} (${category})`);
     }
 
     // Add collage note if swatch has multiple reference images
