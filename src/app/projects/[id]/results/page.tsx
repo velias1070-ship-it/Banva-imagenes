@@ -63,7 +63,6 @@ export default function ResultsPage() {
   });
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string>>(new Set());
   const [editingJob, setEditingJob] = useState<string | null>(null);
-  const [editInstruction, setEditInstruction] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
@@ -242,7 +241,6 @@ export default function ResultsPage() {
     if (!instruction.trim()) return;
     toast.info('Editando imagen...');
     setEditingJob(null);
-    setEditInstruction('');
     try {
       const res = await fetch(`/api/projects/${id}/results/${jobId}/edit-image`, {
         method: 'POST',
@@ -546,45 +544,12 @@ export default function ResultsPage() {
 
           {/* Edit panel */}
           {editingJob === job.id && (
-            <div className="mt-2 pt-2 border-t space-y-2">
-              <div className="flex gap-1.5">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs text-amber-600"
-                  onClick={() => handleUseAsHero(job.id)}
-                >
-                  <Star className="h-3 w-3 mr-1" />
-                  Base
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs text-purple-600"
-                  onClick={() => handleGenerate15P(job.id)}
-                >
-                  <BedSingle className="h-3 w-3 mr-1" />
-                  1.5P
-                </Button>
-              </div>
-              <div className="flex gap-1.5">
-                <Input
-                  placeholder="Instruccion (ej: cambia 1 plaza por 2 plazas)"
-                  value={editInstruction}
-                  onChange={(e) => setEditInstruction(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleEditImage(job.id, editInstruction)}
-                  className="h-7 text-xs"
-                />
-                <Button
-                  size="sm"
-                  className="h-7 text-xs"
-                  disabled={!editInstruction.trim()}
-                  onClick={() => handleEditImage(job.id, editInstruction)}
-                >
-                  <Send className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
+            <EditPanel
+              jobId={job.id}
+              onUseAsHero={() => handleUseAsHero(job.id)}
+              onGenerate15P={() => handleGenerate15P(job.id)}
+              onEditImage={(instruction) => handleEditImage(job.id, instruction)}
+            />
           )}
         </CardContent>
       </Card>
@@ -837,6 +802,51 @@ export default function ResultsPage() {
           )}
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// Separate component with its own state — prevents re-render of all cards when typing
+function EditPanel({ jobId, onUseAsHero, onGenerate15P, onEditImage }: {
+  jobId: string;
+  onUseAsHero: () => void;
+  onGenerate15P: () => void;
+  onEditImage: (instruction: string) => void;
+}) {
+  const [instruction, setInstruction] = useState('');
+
+  return (
+    <div className="mt-2 pt-2 border-t space-y-2">
+      <div className="flex gap-1.5">
+        <Button variant="outline" size="sm" className="h-7 text-xs text-amber-600" onClick={onUseAsHero}>
+          <Star className="h-3 w-3 mr-1" /> Base
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 text-xs text-purple-600" onClick={onGenerate15P}>
+          <BedSingle className="h-3 w-3 mr-1" /> 1.5P
+        </Button>
+      </div>
+      <div className="flex gap-1.5">
+        <Input
+          placeholder="Instruccion (ej: cambia 1 plaza por 2 plazas)"
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') onEditImage(instruction);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="h-7 text-xs"
+          autoFocus
+        />
+        <Button
+          size="sm"
+          className="h-7 text-xs"
+          disabled={!instruction.trim()}
+          onClick={() => onEditImage(instruction)}
+        >
+          <Send className="h-3 w-3" />
+        </Button>
+      </div>
     </div>
   );
 }
