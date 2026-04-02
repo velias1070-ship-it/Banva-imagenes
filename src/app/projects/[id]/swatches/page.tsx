@@ -19,6 +19,9 @@ export default function SwatchesPage() {
   const [imgVersion, setImgVersion] = useState(0);
   const [skuInput, setSkuInput] = useState('');
   const [addingSku, setAddingSku] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  const [urlName, setUrlName] = useState('');
+  const [addingUrl, setAddingUrl] = useState(false);
   const [expandedSwatch, setExpandedSwatch] = useState<string | null>(null);
   const [swatchExtraImages, setSwatchExtraImages] = useState<Record<string, { id: string; storage_path: string; label: string }[]>>({});
 
@@ -139,6 +142,32 @@ export default function SwatchesPage() {
       toast.error('Error de conexion');
     } finally {
       setAddingSku(false);
+    }
+  }
+
+  async function handleAddFromUrl() {
+    const url = urlInput.trim();
+    if (!url) return;
+    setAddingUrl(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/swatches/from-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, name: urlName.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Swatch "${data.swatch.name}" creado desde URL`);
+        setUrlInput('');
+        setUrlName('');
+        fetchSwatches();
+      } else {
+        toast.error(data.error || 'Error descargando imagen');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setAddingUrl(false);
     }
   }
 
@@ -306,6 +335,38 @@ export default function SwatchesPage() {
               </div>
               <p className="text-xs text-muted-foreground mt-2">
                 Busca el SKU en ML, descarga la foto y crea el swatch automaticamente
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Agregar desde URL</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <Input
+                  placeholder="URL de imagen (ej: https://cannonhome.cl/media/...jpg)"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  disabled={addingUrl}
+                />
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Nombre del swatch (opcional)"
+                    value={urlName}
+                    onChange={(e) => setUrlName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddFromUrl()}
+                    disabled={addingUrl}
+                  />
+                  <Button onClick={handleAddFromUrl} disabled={addingUrl || !urlInput.trim()}>
+                    {addingUrl ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {addingUrl ? 'Descargando...' : 'Agregar'}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Descarga la imagen desde cualquier URL y crea el swatch
               </p>
             </CardContent>
           </Card>
