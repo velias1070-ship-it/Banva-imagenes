@@ -49,8 +49,9 @@ function buildCannonUrl(attrs: Record<string, string>): { pageUrl: string; image
 
   // Build URL parts
   const sizeCompact = sizeSlug.replace(/-/g, '');  // "2plazas"
+  const designCompact = designSlug.replace(/-/g, '');  // "cuadramini" (image URLs have no dashes)
   const pageUrl = `https://cannonhome.cl/sabanas-${sizeSlug}-${threadCount}-hilos-${designSlug}.html`;
-  const imageUrl = `https://cannonhome.cl/media/catalog/product/s/a/sabanas${sizeCompact}${threadCount}hilos${designSlug}_1.jpg`;
+  const imageUrl = `https://cannonhome.cl/media/catalog/product/s/a/sabanas${sizeCompact}${threadCount}hilos${designCompact}_1.jpg`;
 
   return { pageUrl, imageUrl };
 }
@@ -141,22 +142,62 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     }, { status: 400 });
   }
 
-  // Try to download the image directly (faster than scraping the page)
+  // Try to download the image directly
   let imageBuffer: Buffer | null = null;
   let sourceUrl = cannonUrls.imageUrl;
 
-  const directRes = await fetch(cannonUrls.imageUrl);
-  if (directRes.ok) {
+  console.log(`[fetch-cannon] Trying image URL: ${cannonUrls.imageUrl}`);
+
+  const directRes = await fetch(cannonUrls.imageUrl, {
+    headers: { 'Accept': 'image/*' },
+    redirect: 'follow',
+  });
+  const directContentType = directRes.headers.get('content-type') || '';
+  if (directRes.ok && directContentType.startsWith('image/')) {
     imageBuffer = Buffer.from(await directRes.arrayBuffer());
+    console.log(`[fetch-cannon] Direct download: ${imageBuffer.length} bytes, type: ${directContentType}`);
+  } else {
+    console.log(`[fetch-cannon] Direct failed: status=${directRes.status}, type=${directContentType}`);
   }
 
-  // If direct image URL failed, try with ?optimize=medium
-  if (!imageBuffer || imageBuffer.length < 1000) {
+  // If direct failed, try with optimize params
+  if (!imageBuffer || imageBuffer.length < 5000) {
     const optimizedUrl = `${cannonUrls.imageUrl}?optimize=medium&bg-color=255,255,255&fit=bounds&height=1200&width=1200`;
-    const optRes = await fetch(optimizedUrl);
-    if (optRes.ok) {
+    console.log(`[fetch-cannon] Trying optimized URL: ${optimizedUrl}`);
+    const optRes = await fetch(optimizedUrl, {
+      headers: { 'Accept': 'image/*' },
+      redirect: 'follow',
+    });
+    const optContentType = optRes.headers.get('content-type') || '';
+    if (optRes.ok && optContentType.startsWith('image/')) {
       imageBuffer = Buffer.from(await optRes.arrayBuffer());
       sourceUrl = optimizedUrl;
+      console.log(`[fetch-cannon] Optimized download: ${imageBuffer.length} bytes`);
+    }
+  }
+
+  // Fallback: try the page URL and scrape the main image
+  if (!imageBuffer || imageBuffer.length < 5000) {
+    console.log(`[fetch-cannon] Image download failed, trying page scrape: ${cannonUrls.pageUrl}`);
+    try {
+      const pageRes = await fetch(cannonUrls.pageUrl);
+      if (pageRes.ok) {
+        const html = await pageRes.text();
+        // Look for product image in the HTML
+        const imgMatch = html.match(/media\/catalog\/product[^"']+\.(jpg|jpeg|png|webp)/i);
+        if (imgMatch) {
+          const scraped = `https://cannonhome.cl/${imgMatch[0]}`;
+          console.log(`[fetch-cannon] Found image in page: ${scraped}`);
+          const scrapedRes = await fetch(scraped, { headers: { 'Accept': 'image/*' } });
+          const scrapedType = scrapedRes.headers.get('content-type') || '';
+          if (scrapedRes.ok && scrapedType.startsWith('image/')) {
+            imageBuffer = Buffer.from(await scrapedRes.arrayBuffer());
+            sourceUrl = scraped;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[fetch-cannon] Page scrape failed:`, err);
     }
   }
 
