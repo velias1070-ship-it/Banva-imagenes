@@ -6,11 +6,12 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
   ImageIcon, RotateCcw, LayoutGrid, Layers, ChevronDown, ChevronRight,
-  Upload, Loader2, BedSingle, Star,
+  Upload, Loader2, BedSingle, Star, Pencil, Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -61,6 +62,8 @@ export default function ResultsPage() {
     return 'grouped';
   });
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string>>(new Set());
+  const [editingJob, setEditingJob] = useState<string | null>(null);
+  const [editInstruction, setEditInstruction] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
@@ -229,6 +232,41 @@ export default function ResultsPage() {
         URL.revokeObjectURL(url);
       } else {
         toast.error('Error descargando imagen');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    }
+  }
+
+  async function handleEditImage(jobId: string, instruction: string) {
+    if (!instruction.trim()) return;
+    toast.info('Editando imagen...');
+    setEditingJob(null);
+    setEditInstruction('');
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}/edit-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success('Editando — se actualizara automaticamente');
+        const poll = setInterval(async () => {
+          const updated = await fetch(`/api/projects/${id}/results`);
+          if (updated.ok) {
+            const allJobs = await updated.json();
+            setJobs(allJobs);
+            const newJob = allJobs.find((j: JobWithRelations) => j.id === data.new_job_id);
+            if (newJob && !['generating', 'qa_pending', 'qa_processing'].includes(newJob.status)) {
+              clearInterval(poll);
+              toast.success('Imagen editada');
+            }
+          }
+        }, 5000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error editando');
       }
     } catch {
       toast.error('Error de conexion');
@@ -462,28 +500,15 @@ export default function ResultsPage() {
                 </Button>
               )}
               {job.status === 'approved' && job.output_storage_path && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs text-amber-600"
-                    onClick={() => handleUseAsHero(job.id)}
-                    title="Usar esta imagen como base para generar los demas swatches"
-                  >
-                    <Star className="h-3 w-3 mr-1" />
-                    Base
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs text-purple-600"
-                    onClick={() => handleGenerate15P(job.id)}
-                    title="Generar variante para cama 1.5 plaza (1 almohada)"
-                  >
-                    <BedSingle className="h-3 w-3 mr-1" />
-                    1.5P
-                  </Button>
-                </>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={`h-7 text-xs ${editingJob === job.id ? 'bg-blue-50 text-blue-700' : 'text-blue-600'}`}
+                  onClick={() => setEditingJob(editingJob === job.id ? null : job.id)}
+                >
+                  <Pencil className="h-3 w-3 mr-1" />
+                  Editar
+                </Button>
               )}
               {(job.status === 'flagged' || job.status === 'error') && (
                 <Button
@@ -516,6 +541,49 @@ export default function ResultsPage() {
                   Rechazar
                 </Button>
               )}
+            </div>
+          )}
+
+          {/* Edit panel */}
+          {editingJob === job.id && (
+            <div className="mt-2 pt-2 border-t space-y-2">
+              <div className="flex gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-amber-600"
+                  onClick={() => handleUseAsHero(job.id)}
+                >
+                  <Star className="h-3 w-3 mr-1" />
+                  Base
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-purple-600"
+                  onClick={() => handleGenerate15P(job.id)}
+                >
+                  <BedSingle className="h-3 w-3 mr-1" />
+                  1.5P
+                </Button>
+              </div>
+              <div className="flex gap-1.5">
+                <Input
+                  placeholder="Instruccion (ej: cambia 1 plaza por 2 plazas)"
+                  value={editInstruction}
+                  onChange={(e) => setEditInstruction(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleEditImage(job.id, editInstruction)}
+                  className="h-7 text-xs"
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={!editInstruction.trim()}
+                  onClick={() => handleEditImage(job.id, editInstruction)}
+                >
+                  <Send className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
