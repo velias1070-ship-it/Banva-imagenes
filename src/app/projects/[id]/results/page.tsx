@@ -533,35 +533,19 @@ export default function ResultsPage() {
   }
 
   async function handleUseAsHero(jobId: string) {
-    toast.info('Generando variantes usando esta imagen como base...');
+    toast.info('Guardando como hero shot...');
     try {
-      const res = await fetch(`/api/projects/${id}/results/${jobId}/use-as-hero`, {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}/save-as-hero`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Generando ${data.jobs_created} variantes — se actualizaran automaticamente`);
-        const poll = setInterval(async () => {
-          try {
-            const updated = await fetch(`/api/projects/${id}/results-with-listings`);
-            if (updated.ok) {
-              const allData: SwatchResultGroup[] = await updated.json();
-              setGroups(allData);
-              const generating = allData.flatMap((g) => g.jobs).filter((j) =>
-                ['generating', 'qa_pending', 'qa_processing'].includes(j.status)
-              );
-              if (generating.length === 0) {
-                clearInterval(poll);
-                toast.success('Todas las variantes generadas');
-              }
-            }
-          } catch { /* ignore */ }
-        }, 10000);
+        toast.success(`Guardado como hero: ${data.filename} (${data.shot_type})`);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.error || 'Error generando variantes');
+        toast.error(err.error || 'Error guardando como hero');
       }
     } catch {
       toast.error('Error de conexion');
@@ -1314,7 +1298,7 @@ function EditPanel({ jobId, onUseAsHero, onGenerate15P, onEditImage }: {
     <div className="mt-2 pt-2 border-t space-y-2">
       <div className="flex gap-1.5">
         <Button variant="outline" size="sm" className="h-7 text-xs text-amber-600" onClick={onUseAsHero}>
-          <Star className="h-3 w-3 mr-1" /> Base
+          <Star className="h-3 w-3 mr-1" /> Hero
         </Button>
         <Button variant="outline" size="sm" className="h-7 text-xs text-purple-600" onClick={onGenerate15P}>
           <BedSingle className="h-3 w-3 mr-1" /> 1.5P
