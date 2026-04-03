@@ -63,6 +63,7 @@ export default function ResultsPage() {
   });
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string>>(new Set());
   const [editingJob, setEditingJob] = useState<string | null>(null);
+  const [importingCannon, setImportingCannon] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
@@ -234,6 +235,31 @@ export default function ResultsPage() {
       }
     } catch {
       toast.error('Error de conexion');
+    }
+  }
+
+  async function handleImportCannon() {
+    setImportingCannon(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/import-cannon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`${data.total_images} imagenes importadas de Cannon (${data.success} swatches)`);
+        if (data.errors > 0) {
+          toast.error(`${data.errors} swatches con errores`);
+        }
+        fetchResults();
+      } else {
+        toast.error(data.error || 'Error importando');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setImportingCannon(false);
     }
   }
 
@@ -571,8 +597,17 @@ export default function ResultsPage() {
             {jobs.length} imagenes generadas &middot; {approvedCount} aprobadas
           </p>
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={handleImportCannon}
+            disabled={importingCannon}
+          >
+            {importingCannon ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {importingCannon ? 'Importando...' : 'Importar de Cannon'}
+          </Button>
         {approvedCount > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
+          <>
             <Button variant="outline" onClick={handleDownloadAll}>
               <Download className="mr-2 h-4 w-4" />
               ZIP ({approvedCount})
@@ -601,8 +636,9 @@ export default function ResultsPage() {
             >
               Agregar al final
             </Button>
-          </div>
+          </>
         )}
+        </div>
       </div>
 
       {/* Publish result panel */}
