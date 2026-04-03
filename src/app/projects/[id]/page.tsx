@@ -102,31 +102,18 @@ export default async function ProjectDetailPage({ params }: Props) {
         <Link href={`/projects/${id}/results`}>
           <Card className="cursor-pointer transition-shadow hover:shadow-md">
             <CardHeader className="flex flex-row items-center gap-3">
-              <ImageIcon className="h-8 w-8 text-amber-500" />
+              <div className="relative">
+                <ImageIcon className="h-8 w-8 text-amber-500" />
+                <Globe className="absolute -bottom-1 -right-1 h-4 w-4 text-blue-500" />
+              </div>
               <div>
-                <CardTitle className="text-base">Resultados</CardTitle>
-                <p className="text-sm text-muted-foreground">Galeria + descarga</p>
+                <CardTitle className="text-base">Resultados & ML</CardTitle>
+                <p className="text-sm text-muted-foreground">Galeria, QA y publicacion</p>
               </div>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{approved}</div>
               <p className="text-xs text-muted-foreground">aprobadas</p>
-            </CardContent>
-          </Card>
-        </Link>
-
-        <Link href={`/projects/${id}/publish`}>
-          <Card className="cursor-pointer transition-shadow hover:shadow-md border-blue-200">
-            <CardHeader className="flex flex-row items-center gap-3">
-              <Globe className="h-8 w-8 text-blue-500" />
-              <div>
-                <CardTitle className="text-base">Publicar en ML</CardTitle>
-                <p className="text-sm text-muted-foreground">Gestionar fotos de publicaciones</p>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{swatches}</div>
-              <p className="text-xs text-muted-foreground">publicaciones</p>
             </CardContent>
           </Card>
         </Link>

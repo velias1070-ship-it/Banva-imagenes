@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -10,12 +10,15 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
-  ImageIcon, RotateCcw, LayoutGrid, Layers, ChevronDown, ChevronRight,
+  ImageIcon, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
+  Globe, ExternalLink, GripVertical, X, Plus, Save,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
+// ── Types ──
 
 interface JobWithRelations {
   id: string;
@@ -34,13 +37,33 @@ interface JobWithRelations {
   swatch: { id: string; name: string; color_description: string | null; storage_path: string; display_order: number } | null;
 }
 
-interface SwatchGroup {
-  swatchId: string;
-  swatchName: string;
-  colorDescription: string | null;
-  swatchStoragePath: string;
-  displayOrder: number;
+interface MlListingData {
+  item_id: string;
+  titulo: string;
+  status: string;
+  permalink: string;
+  ml_pictures: Array<{ id: string; url: string; size: string }>;
+}
+
+interface SwatchResultGroup {
+  swatch: {
+    id: string;
+    name: string;
+    sku_suffix: string | null;
+    color_description: string | null;
+    storage_path: string;
+    display_order: number;
+  };
   jobs: JobWithRelations[];
+  ml_listing: MlListingData | null;
+}
+
+interface EditorPicture {
+  type: 'ml' | 'generated';
+  id?: string;
+  url: string;
+  source_url?: string;
+  shot_type?: string;
 }
 
 function getStorageUrl(path: string, attempt?: number): string {
@@ -49,18 +72,11 @@ function getStorageUrl(path: string, attempt?: number): string {
 }
 
 type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending';
-type ViewMode = 'grid' | 'grouped';
 
 export default function ResultsPage() {
   const { id } = useParams<{ id: string }>();
-  const [jobs, setJobs] = useState<JobWithRelations[]>([]);
+  const [groups, setGroups] = useState<SwatchResultGroup[]>([]);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('banva-results-view') as ViewMode) || 'grouped';
-    }
-    return 'grouped';
-  });
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
   const [editingJob, setEditingJob] = useState<string | null>(null);
   const [importingCannon, setImportingCannon] = useState(false);
@@ -71,10 +87,52 @@ export default function ResultsPage() {
     details?: { sku: string; item_id: string; titulo: string; status: string; error?: string; pictures_new?: number; pictures_kept?: number; pictures_total?: number }[];
   } | null>(null);
 
+  // ML panel state per swatch
+  const [mlPanelOpen, setMlPanelOpen] = useState<Set<string>>(new Set());
+  const [mlPictures, setMlPictures] = useState<Map<string, EditorPicture[]>>(new Map());
+  const [mlDirty, setMlDirty] = useState<Map<string, boolean>>(new Map());
+  const [mlSaving, setMlSaving] = useState<Map<string, boolean>>(new Map());
+
+  // Drag state for ML panel
+  const [dragging, setDragging] = useState(false);
+  const [dropSwatchId, setDropSwatchId] = useState<string | null>(null);
+  const [dropPosition, setDropPosition] = useState<number | null>(null);
+  const dragRef = useRef<{
+    kind: 'reorder' | 'add';
+    swatchId: string;
+    picIdx?: number;
+    job?: JobWithRelations;
+  } | null>(null);
+
+  // Derive flat jobs list from groups
+  const allJobs = useMemo(() => groups.flatMap((g) => g.jobs), [groups]);
+
   const fetchResults = useCallback(async () => {
-    const res = await fetch(`/api/projects/${id}/results`);
-    if (res.ok) {
-      setJobs(await res.json());
+    try {
+      const res = await fetch(`/api/projects/${id}/results-with-listings`);
+      if (res.ok) {
+        const data: SwatchResultGroup[] = await res.json();
+        setGroups(data);
+
+        // Initialize ML pictures for groups that haven't been touched
+        setMlPictures((prev) => {
+          const next = new Map(prev);
+          for (const g of data) {
+            if (!next.has(g.swatch.id) || !prev.has(g.swatch.id)) {
+              if (g.ml_listing) {
+                next.set(g.swatch.id, g.ml_listing.ml_pictures.map((p) => ({
+                  type: 'ml' as const, id: p.id, url: p.url,
+                })));
+              } else {
+                next.set(g.swatch.id, []);
+              }
+            }
+          }
+          return next;
+        });
+      }
+    } catch {
+      // silent
     }
   }, [id]);
 
@@ -82,92 +140,249 @@ export default function ResultsPage() {
     fetchResults();
   }, [fetchResults]);
 
-  // ── AUTO-POLL + HEALTH CHECK: keeps chains alive while jobs are active ──
-  const hasActiveJobs = jobs.some((j) =>
+  // ── AUTO-POLL + HEALTH CHECK ──
+  const hasActiveJobs = allJobs.some((j) =>
     ['pending', 'generating', 'qa_pending', 'qa_processing'].includes(j.status)
   );
 
   useEffect(() => {
     if (!hasActiveJobs) return;
-
-    // Poll results every 10s
     const pollInterval = setInterval(fetchResults, 10_000);
-
-    // Trigger health check every 30s to auto-recover stale chains
     const healthInterval = setInterval(() => {
       fetch(`/api/cron/health-check?project_id=${id}`).catch(() => {});
     }, 30_000);
-
-    // Also trigger immediately on mount
     fetch(`/api/cron/health-check?project_id=${id}`).catch(() => {});
-
     return () => {
       clearInterval(pollInterval);
       clearInterval(healthInterval);
     };
   }, [hasActiveJobs, fetchResults, id]);
 
-  const filtered = activeTab === 'all'
-    ? jobs
-    : activeTab === 'qa_pending'
-      ? jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing')
-      : jobs.filter((j) => j.status === activeTab);
+  // ── Filter groups ──
+  const filteredGroups = useMemo<SwatchResultGroup[]>(() => {
+    if (activeTab === 'all') return groups;
 
-  const approvedCount = jobs.filter((j) => j.status === 'approved').length;
-  const retryCount = jobs.filter((j) => j.status === 'retry').length;
-  const flaggedCount = jobs.filter((j) => j.status === 'flagged').length;
-  const errorCount = jobs.filter((j) => j.status === 'error').length;
-  const qaPendingCount = jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing').length;
+    return groups
+      .map((g) => ({
+        ...g,
+        jobs: activeTab === 'qa_pending'
+          ? g.jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing')
+          : g.jobs.filter((j) => j.status === activeTab),
+      }))
+      .filter((g) => g.jobs.length > 0);
+  }, [groups, activeTab]);
 
-  // Group filtered jobs by swatch
-  const groupedBySwatch = useMemo<SwatchGroup[]>(() => {
-    const map = new Map<string, SwatchGroup>();
+  // ── Counts ──
+  const approvedCount = allJobs.filter((j) => j.status === 'approved').length;
+  const retryCount = allJobs.filter((j) => j.status === 'retry').length;
+  const flaggedCount = allJobs.filter((j) => j.status === 'flagged').length;
+  const errorCount = allJobs.filter((j) => j.status === 'error').length;
+  const qaPendingCount = allJobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing').length;
 
-    for (const job of filtered) {
-      const swatchId = job.swatch?.id ?? '__unknown__';
-      if (!map.has(swatchId)) {
-        map.set(swatchId, {
-          swatchId,
-          swatchName: job.swatch?.name ?? 'Sin variante',
-          colorDescription: job.swatch?.color_description ?? null,
-          swatchStoragePath: job.swatch?.storage_path ?? '',
-          displayOrder: job.swatch?.display_order ?? 999,
-          jobs: [],
-        });
-      }
-      map.get(swatchId)!.jobs.push(job);
-    }
-
-    return Array.from(map.values()).sort((a, b) => a.displayOrder - b.displayOrder);
-  }, [filtered]);
-
-  // Start with all swatches collapsed
+  // ── Start collapsed ──
   useEffect(() => {
-    if (collapsedSwatches === null && groupedBySwatch.length > 0) {
-      setCollapsedSwatches(new Set(groupedBySwatch.map((g) => g.swatchId)));
+    if (collapsedSwatches === null && filteredGroups.length > 0) {
+      setCollapsedSwatches(new Set(filteredGroups.map((g) => g.swatch.id)));
     }
-  }, [groupedBySwatch, collapsedSwatches]);
+  }, [filteredGroups, collapsedSwatches]);
 
-  // Safe accessor — treat null as "all collapsed"
-  const collapsed = collapsedSwatches ?? new Set(groupedBySwatch.map((g) => g.swatchId));
+  const collapsed = collapsedSwatches ?? new Set(filteredGroups.map((g) => g.swatch.id));
 
-  function handleViewModeChange(mode: ViewMode) {
-    setViewMode(mode);
-    localStorage.setItem('banva-results-view', mode);
-  }
-
+  // ── Swatch collapse ──
   function toggleSwatchCollapse(swatchId: string) {
     setCollapsedSwatches((prev) => {
       const next = new Set(prev);
-      if (next.has(swatchId)) {
-        next.delete(swatchId);
-      } else {
-        next.add(swatchId);
-      }
+      if (next.has(swatchId)) next.delete(swatchId);
+      else next.add(swatchId);
       return next;
     });
   }
 
+  // ── ML Panel toggle ──
+  function toggleMlPanel(swatchId: string) {
+    setMlPanelOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(swatchId)) next.delete(swatchId);
+      else next.add(swatchId);
+      return next;
+    });
+  }
+
+  // ── ML Panel operations ──
+  function addAllApproved(swatchId: string) {
+    const group = groups.find((g) => g.swatch.id === swatchId);
+    if (!group) return;
+    const approved = group.jobs.filter(
+      (j) => j.status === 'approved' && j.output_storage_path
+    );
+    setMlPictures((prev) => {
+      const next = new Map(prev);
+      const current = [...(next.get(swatchId) || [])];
+      for (const job of approved) {
+        const url = getStorageUrl(job.output_storage_path!);
+        if (current.length >= 10) break;
+        if (current.some((p) => p.source_url === url)) continue;
+        current.push({
+          type: 'generated',
+          url,
+          source_url: url,
+          shot_type: job.hero_shot?.shot_type,
+        });
+      }
+      next.set(swatchId, current);
+      return next;
+    });
+    setMlDirty((prev) => new Map(prev).set(swatchId, true));
+  }
+
+  function addJobToMlPanel(swatchId: string, job: JobWithRelations) {
+    if (!job.output_storage_path) return;
+    const url = getStorageUrl(job.output_storage_path);
+    setMlPictures((prev) => {
+      const next = new Map(prev);
+      const current = [...(next.get(swatchId) || [])];
+      if (current.length >= 10) { toast.error('Maximo 10 fotos'); return prev; }
+      if (current.some((p) => p.source_url === url)) { toast.info('Ya agregada'); return prev; }
+      current.push({
+        type: 'generated',
+        url,
+        source_url: url,
+        shot_type: job.hero_shot?.shot_type,
+      });
+      next.set(swatchId, current);
+      return next;
+    });
+    setMlDirty((prev) => new Map(prev).set(swatchId, true));
+  }
+
+  function removeMlPicture(swatchId: string, picIdx: number) {
+    setMlPictures((prev) => {
+      const next = new Map(prev);
+      const current = [...(next.get(swatchId) || [])];
+      current.splice(picIdx, 1);
+      next.set(swatchId, current);
+      return next;
+    });
+    setMlDirty((prev) => new Map(prev).set(swatchId, true));
+  }
+
+  // ── ML Panel drag & drop ──
+  function handleMlDragStart(
+    e: React.DragEvent,
+    source: { kind: 'reorder' | 'add'; swatchId: string; picIdx?: number; job?: JobWithRelations }
+  ) {
+    dragRef.current = source;
+    setDragging(true);
+    e.dataTransfer.effectAllowed = source.kind === 'reorder' ? 'move' : 'copy';
+    const el = e.currentTarget as HTMLElement;
+    if (el) e.dataTransfer.setDragImage(el, 24, 24);
+  }
+
+  function handleMlDragEnd() {
+    dragRef.current = null;
+    setDragging(false);
+    setDropSwatchId(null);
+    setDropPosition(null);
+  }
+
+  function getMlDropPosition(e: React.DragEvent, container: HTMLElement): number {
+    const children = Array.from(container.querySelectorAll('[data-ml-pic-idx]'));
+    const mouseY = e.clientY;
+    for (let i = 0; i < children.length; i++) {
+      const rect = children[i].getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (mouseY < midY) return i;
+    }
+    return children.length;
+  }
+
+  function handleMlContainerDragOver(e: React.DragEvent, swatchId: string) {
+    e.preventDefault();
+    const drag = dragRef.current;
+    if (!drag || drag.swatchId !== swatchId) return;
+    const container = e.currentTarget as HTMLElement;
+    const pos = getMlDropPosition(e, container);
+    setDropSwatchId(swatchId);
+    setDropPosition(pos);
+  }
+
+  function handleMlContainerDrop(e: React.DragEvent, swatchId: string) {
+    e.preventDefault();
+    const drag = dragRef.current;
+    if (!drag || drag.swatchId !== swatchId) return;
+
+    const container = e.currentTarget as HTMLElement;
+    const position = getMlDropPosition(e, container);
+
+    if (drag.kind === 'reorder' && drag.picIdx != null) {
+      setMlPictures((prev) => {
+        const next = new Map(prev);
+        const pics = [...(next.get(swatchId) || [])];
+        const [moved] = pics.splice(drag.picIdx!, 1);
+        const insertAt = position > drag.picIdx! ? position - 1 : position;
+        pics.splice(insertAt, 0, moved);
+        next.set(swatchId, pics);
+        return next;
+      });
+      setMlDirty((prev) => new Map(prev).set(swatchId, true));
+    } else if (drag.kind === 'add' && drag.job) {
+      if (!drag.job.output_storage_path) return;
+      const url = getStorageUrl(drag.job.output_storage_path);
+      setMlPictures((prev) => {
+        const next = new Map(prev);
+        const pics = [...(next.get(swatchId) || [])];
+        if (pics.length >= 10) { toast.error('Maximo 10 fotos'); return prev; }
+        if (pics.some((p) => p.source_url === url)) { toast.info('Ya agregada'); return prev; }
+        pics.splice(position, 0, {
+          type: 'generated',
+          url,
+          source_url: url,
+          shot_type: drag.job!.hero_shot?.shot_type,
+        });
+        next.set(swatchId, pics);
+        return next;
+      });
+      setMlDirty((prev) => new Map(prev).set(swatchId, true));
+    }
+
+    handleMlDragEnd();
+  }
+
+  // ── ML Panel save ──
+  async function saveSwatchML(swatchId: string) {
+    const group = groups.find((g) => g.swatch.id === swatchId);
+    if (!group?.ml_listing?.item_id) return;
+
+    setMlSaving((prev) => new Map(prev).set(swatchId, true));
+
+    const pics = mlPictures.get(swatchId) || [];
+    const pictures = pics.map((p) =>
+      p.type === 'ml' && p.id ? { id: p.id } : { source: p.source_url || p.url }
+    );
+
+    try {
+      const res = await fetch('/api/ml/update-pictures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: group.ml_listing.item_id, pictures }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`${group.swatch.name}: ${pictures.length} fotos guardadas en ML`);
+        setMlDirty((prev) => new Map(prev).set(swatchId, false));
+        // Refresh to get updated ML picture IDs
+        fetchResults();
+      } else {
+        toast.error(`Error: ${data.error}`);
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setMlSaving((prev) => new Map(prev).set(swatchId, false));
+    }
+  }
+
+  // ── Job actions ──
   async function handleDownloadAll() {
     toast.info('Preparando descarga ZIP...');
     try {
@@ -196,27 +411,35 @@ export default function ResultsPage() {
         method: 'POST',
       });
       if (res.ok) {
-        setJobs((prev) =>
-          prev.map((j) => (j.id === jobId ? { ...j, status: 'generating' } : j))
+        // Optimistic update
+        setGroups((prev) =>
+          prev.map((g) => ({
+            ...g,
+            jobs: g.jobs.map((j) =>
+              j.id === jobId ? { ...j, status: 'generating' } : j
+            ),
+          }))
         );
         toast.success('Regenerando — se actualizara automaticamente');
         const poll = setInterval(async () => {
-          const updated = await fetch(`/api/projects/${id}/results`);
-          if (updated.ok) {
-            const allJobs = await updated.json();
-            const thisJob = allJobs.find((j: JobWithRelations) => j.id === jobId);
-            setJobs(allJobs);
-            if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending' && thisJob.status !== 'qa_processing') {
-              clearInterval(poll);
-              if (thisJob.status === 'approved') {
-                toast.success('Imagen regenerada y aprobada por QA');
-              } else if (thisJob.status === 'flagged') {
-                toast.error('Imagen regenerada pero rechazada por QA');
-              } else {
-                toast.error(`Regeneracion termino con estado: ${thisJob.status}`);
+          try {
+            const updated = await fetch(`/api/projects/${id}/results-with-listings`);
+            if (updated.ok) {
+              const data: SwatchResultGroup[] = await updated.json();
+              const thisJob = data.flatMap((g) => g.jobs).find((j) => j.id === jobId);
+              setGroups(data);
+              if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending' && thisJob.status !== 'qa_processing') {
+                clearInterval(poll);
+                if (thisJob.status === 'approved') {
+                  toast.success('Imagen regenerada y aprobada por QA');
+                } else if (thisJob.status === 'flagged') {
+                  toast.error('Imagen regenerada pero rechazada por QA');
+                } else {
+                  toast.error(`Regeneracion termino con estado: ${thisJob.status}`);
+                }
               }
             }
-          }
+          } catch { /* ignore */ }
         }, 5000);
       } else {
         toast.error('Error iniciando regeneracion');
@@ -287,16 +510,18 @@ export default function ResultsPage() {
         const data = await res.json();
         toast.success('Editando — se actualizara automaticamente');
         const poll = setInterval(async () => {
-          const updated = await fetch(`/api/projects/${id}/results`);
-          if (updated.ok) {
-            const allJobs = await updated.json();
-            setJobs(allJobs);
-            const newJob = allJobs.find((j: JobWithRelations) => j.id === data.new_job_id);
-            if (newJob && !['generating', 'qa_pending', 'qa_processing'].includes(newJob.status)) {
-              clearInterval(poll);
-              toast.success('Imagen editada');
+          try {
+            const updated = await fetch(`/api/projects/${id}/results-with-listings`);
+            if (updated.ok) {
+              const allData: SwatchResultGroup[] = await updated.json();
+              setGroups(allData);
+              const newJob = allData.flatMap((g) => g.jobs).find((j) => j.id === data.new_job_id);
+              if (newJob && !['generating', 'qa_pending', 'qa_processing'].includes(newJob.status)) {
+                clearInterval(poll);
+                toast.success('Imagen editada');
+              }
             }
-          }
+          } catch { /* ignore */ }
         }, 5000);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -318,20 +543,21 @@ export default function ResultsPage() {
       if (res.ok) {
         const data = await res.json();
         toast.success(`Generando ${data.jobs_created} variantes — se actualizaran automaticamente`);
-        // Start polling
         const poll = setInterval(async () => {
-          const updated = await fetch(`/api/projects/${id}/results`);
-          if (updated.ok) {
-            const allJobs = await updated.json();
-            setJobs(allJobs);
-            const generating = allJobs.filter((j: JobWithRelations) =>
-              ['generating', 'qa_pending', 'qa_processing'].includes(j.status)
-            );
-            if (generating.length === 0) {
-              clearInterval(poll);
-              toast.success('Todas las variantes generadas');
+          try {
+            const updated = await fetch(`/api/projects/${id}/results-with-listings`);
+            if (updated.ok) {
+              const allData: SwatchResultGroup[] = await updated.json();
+              setGroups(allData);
+              const generating = allData.flatMap((g) => g.jobs).filter((j) =>
+                ['generating', 'qa_pending', 'qa_processing'].includes(j.status)
+              );
+              if (generating.length === 0) {
+                clearInterval(poll);
+                toast.success('Todas las variantes generadas');
+              }
             }
-          }
+          } catch { /* ignore */ }
         }, 10000);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -352,22 +578,23 @@ export default function ResultsPage() {
         const data = await res.json();
         const skuMsg = data.target_sku ? ` (SKU: ${data.target_sku})` : '';
         toast.success(`Generando 1.5P${skuMsg} — se agregara automaticamente`);
-        // Poll for the new job
         const poll = setInterval(async () => {
-          const updated = await fetch(`/api/projects/${id}/results`);
-          if (updated.ok) {
-            const allJobs = await updated.json();
-            setJobs(allJobs);
-            const newJob = allJobs.find((j: JobWithRelations) => j.id === data.new_job_id);
-            if (newJob && !['generating', 'qa_pending', 'qa_processing'].includes(newJob.status)) {
-              clearInterval(poll);
-              if (newJob.status === 'approved') {
-                toast.success('Variante 1.5P generada y aprobada');
-              } else {
-                toast.info(`Variante 1.5P terminada con estado: ${newJob.status}`);
+          try {
+            const updated = await fetch(`/api/projects/${id}/results-with-listings`);
+            if (updated.ok) {
+              const allData: SwatchResultGroup[] = await updated.json();
+              setGroups(allData);
+              const newJob = allData.flatMap((g) => g.jobs).find((j) => j.id === data.new_job_id);
+              if (newJob && !['generating', 'qa_pending', 'qa_processing'].includes(newJob.status)) {
+                clearInterval(poll);
+                if (newJob.status === 'approved') {
+                  toast.success('Variante 1.5P generada y aprobada');
+                } else {
+                  toast.info(`Variante 1.5P terminada con estado: ${newJob.status}`);
+                }
               }
             }
-          }
+          } catch { /* ignore */ }
         }, 5000);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -386,8 +613,13 @@ export default function ResultsPage() {
     });
 
     if (res.ok) {
-      setJobs((prev) =>
-        prev.map((j) => (j.id === jobId ? { ...j, status: newStatus } : j))
+      setGroups((prev) =>
+        prev.map((g) => ({
+          ...g,
+          jobs: g.jobs.map((j) =>
+            j.id === jobId ? { ...j, status: newStatus } : j
+          ),
+        }))
       );
       toast.success(`Imagen ${newStatus === 'approved' ? 'aprobada' : 'rechazada'}`);
     }
@@ -424,6 +656,7 @@ export default function ResultsPage() {
     }
   }
 
+  // ── Helpers ──
   function statusIcon(status: string) {
     switch (status) {
       case 'approved':
@@ -444,11 +677,35 @@ export default function ResultsPage() {
     }
   }
 
-  // ---- Reusable JobCard ----
-  function JobCard({ job }: { job: JobWithRelations }) {
+  function mlStatusColor(status: string): string {
+    switch (status) {
+      case 'active': return 'bg-green-100 text-green-800 border-green-200';
+      case 'paused': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'closed': return 'bg-red-100 text-red-800 border-red-200';
+      default: return '';
+    }
+  }
+
+  // ── JobCard ──
+  function JobCard({ job, swatchId }: { job: JobWithRelations; swatchId: string }) {
+    const isPanelOpen = mlPanelOpen.has(swatchId);
+    const isApproved = job.status === 'approved' && job.output_storage_path;
+    const group = groups.find((g) => g.swatch.id === swatchId);
+    const hasListing = !!group?.ml_listing;
+
     return (
       <Card className="overflow-hidden">
-        <div className="aspect-square bg-gray-100 relative">
+        <div
+          className="aspect-square bg-gray-100 relative"
+          draggable={!!(isPanelOpen && isApproved && hasListing)}
+          onDragStart={(e) => {
+            if (isPanelOpen && isApproved && hasListing) {
+              handleMlDragStart(e, { kind: 'add', swatchId, job });
+            }
+          }}
+          onDragEnd={handleMlDragEnd}
+          style={isPanelOpen && isApproved && hasListing ? { cursor: 'grab' } : undefined}
+        >
           {job.output_storage_path ? (
             <img
               src={getStorageUrl(job.output_storage_path, job.attempt)}
@@ -458,6 +715,14 @@ export default function ResultsPage() {
           ) : (
             <div className="flex h-full items-center justify-center text-xs text-gray-400">
               {job.status === 'error' ? job.error_message || 'Error' : 'Sin imagen'}
+            </div>
+          )}
+          {/* Drag hint overlay */}
+          {isPanelOpen && isApproved && hasListing && (
+            <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition-opacity">
+              <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700">
+                Arrastrar a ML
+              </Badge>
             </div>
           )}
         </div>
@@ -522,7 +787,7 @@ export default function ResultsPage() {
             </div>
           )}
           {job.status !== 'pending' && job.status !== 'generating' && job.status !== 'qa_pending' && job.status !== 'qa_processing' && (
-            <div className="flex gap-1.5">
+            <div className="flex gap-1.5 flex-wrap">
               {job.output_storage_path && (
                 <Button
                   variant="outline"
@@ -542,6 +807,18 @@ export default function ResultsPage() {
                 >
                   <Pencil className="h-3 w-3 mr-1" />
                   Editar
+                </Button>
+              )}
+              {/* Add to ML button when panel is open */}
+              {isPanelOpen && isApproved && hasListing && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-green-600"
+                  onClick={() => addJobToMlPanel(swatchId, job)}
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  ML
                 </Button>
               )}
               {(job.status === 'flagged' || job.status === 'error') && (
@@ -592,7 +869,150 @@ export default function ResultsPage() {
     );
   }
 
-  // ---- Render ----
+  // ── ML Panel (sidebar within each swatch section) ──
+  function MlPanel({ group }: { group: SwatchResultGroup }) {
+    const swatchId = group.swatch.id;
+    const listing = group.ml_listing;
+    const pics = mlPictures.get(swatchId) || [];
+    const isDirty = mlDirty.get(swatchId) || false;
+    const isSaving = mlSaving.get(swatchId) || false;
+
+    if (!listing) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center p-4">
+          <Globe className="h-6 w-6 text-muted-foreground/30 mb-2" />
+          <p className="text-xs text-muted-foreground">Sin publicacion ML</p>
+          {group.swatch.sku_suffix && (
+            <p className="text-[10px] text-muted-foreground mt-1">SKU: {group.swatch.sku_suffix}</p>
+          )}
+        </div>
+      );
+    }
+
+    const approvedJobs = group.jobs.filter(
+      (j) => j.status === 'approved' && j.output_storage_path
+    );
+    const addableCount = approvedJobs.filter((j) => {
+      const url = getStorageUrl(j.output_storage_path!);
+      return !pics.some((p) => p.source_url === url);
+    }).length;
+
+    return (
+      <div className="flex flex-col h-full">
+        {/* Header info */}
+        <div className="flex items-center justify-between mb-2 px-1">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-xs font-medium truncate">
+              {listing.item_id}
+            </span>
+            {listing.permalink && (
+              <a href={listing.permalink} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
+                <ExternalLink className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+              </a>
+            )}
+          </div>
+          <span className="text-[10px] text-muted-foreground">{pics.length}/10</span>
+        </div>
+
+        {/* Picture list with drag-drop */}
+        <div
+          className={`flex-1 min-h-[60px] rounded-lg p-1 transition-colors overflow-y-auto ${
+            dragging && dragRef.current?.swatchId === swatchId ? 'bg-blue-50/50' : ''
+          }`}
+          onDragOver={(e) => handleMlContainerDragOver(e, swatchId)}
+          onDragLeave={() => { setDropSwatchId(null); setDropPosition(null); }}
+          onDrop={(e) => handleMlContainerDrop(e, swatchId)}
+        >
+          {pics.map((pic, picIdx) => {
+            const isDropBefore = dropSwatchId === swatchId && dropPosition === picIdx;
+            const isDropAfter = dropSwatchId === swatchId && dropPosition === picIdx + 1 && picIdx === pics.length - 1;
+            const isDragSource = dragRef.current?.kind === 'reorder' && dragRef.current.swatchId === swatchId && dragRef.current.picIdx === picIdx;
+
+            return (
+              <div key={`${pic.type}-${pic.id || pic.url}-${picIdx}`} data-ml-pic-idx={picIdx}>
+                {isDropBefore && <div className="h-1 bg-blue-500 rounded-full mx-1 my-0.5 animate-pulse" />}
+                <div
+                  className={`flex items-center gap-1.5 rounded-md border p-1 group transition-all mb-1 ${
+                    isDragSource ? 'opacity-30 scale-95' : 'opacity-100'
+                  }`}
+                  draggable
+                  onDragStart={(e) => handleMlDragStart(e, { kind: 'reorder', swatchId, picIdx })}
+                  onDragEnd={handleMlDragEnd}
+                >
+                  <GripVertical className="h-3 w-3 text-muted-foreground/40 flex-shrink-0 cursor-grab active:cursor-grabbing" />
+                  <div className="w-4 text-center text-[10px] font-bold text-muted-foreground flex-shrink-0">{picIdx + 1}</div>
+                  <div className="h-10 w-10 flex-shrink-0 rounded overflow-hidden bg-gray-100">
+                    <img src={pic.url} alt="" className="h-full w-full object-cover pointer-events-none" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {pic.type === 'generated' ? (
+                      <Badge variant="secondary" className="text-[9px] px-1 h-4 bg-green-100 text-green-800">nueva</Badge>
+                    ) : (
+                      <span className="text-[9px] text-muted-foreground">ML</span>
+                    )}
+                  </div>
+                  <button
+                    className="h-5 w-5 flex items-center justify-center text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 rounded hover:bg-red-50"
+                    onClick={() => removeMlPicture(swatchId, picIdx)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                {isDropAfter && <div className="h-1 bg-blue-500 rounded-full mx-1 my-0.5 animate-pulse" />}
+              </div>
+            );
+          })}
+
+          {pics.length === 0 && (
+            <div className={`flex items-center justify-center h-16 text-[10px] border border-dashed rounded-lg transition-colors ${
+              dragging && dragRef.current?.swatchId === swatchId
+                ? 'border-blue-400 bg-blue-50 text-blue-600'
+                : 'border-gray-200 text-muted-foreground'
+            }`}>
+              {dragging ? 'Soltar aqui' : 'Sin fotos'}
+            </div>
+          )}
+
+          {/* Bottom drop indicator */}
+          {dropSwatchId === swatchId && dropPosition === pics.length && pics.length > 0 && (
+            <div className="h-1 bg-blue-500 rounded-full mx-1 my-0.5 animate-pulse" />
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div className="mt-2 space-y-1.5">
+          {addableCount > 0 && pics.length < 10 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-7 text-[10px]"
+              onClick={() => addAllApproved(swatchId)}
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              Agregar todas ({addableCount})
+            </Button>
+          )}
+          {isDirty && (
+            <Button
+              size="sm"
+              className="w-full h-7 text-[10px]"
+              onClick={() => saveSwatchML(swatchId)}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Save className="h-3 w-3 mr-1" />
+              )}
+              Guardar en ML
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render ──
   return (
     <div className="p-8">
       <Link href={`/projects/${id}`} className="mb-6 inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
@@ -604,7 +1024,7 @@ export default function ResultsPage() {
         <div>
           <h1 className="text-2xl font-bold">Resultados</h1>
           <p className="text-muted-foreground">
-            {jobs.length} imagenes generadas &middot; {approvedCount} aprobadas
+            {allJobs.length} imagenes generadas &middot; {approvedCount} aprobadas
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -694,10 +1114,10 @@ export default function ResultsPage() {
       )}
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as FilterTab)}>
-        {/* View toggle + Tabs */}
+        {/* Tabs + controls */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
-            <TabsTrigger value="all">Todas ({jobs.length})</TabsTrigger>
+            <TabsTrigger value="all">Todas ({allJobs.length})</TabsTrigger>
             <TabsTrigger value="approved">Aprobadas ({approvedCount})</TabsTrigger>
             <TabsTrigger value="retry">Retry ({retryCount})</TabsTrigger>
             <TabsTrigger value="flagged">Flagged ({flaggedCount})</TabsTrigger>
@@ -706,138 +1126,167 @@ export default function ResultsPage() {
           </TabsList>
 
           <div className="flex items-center gap-2">
-            {viewMode === 'grouped' && groupedBySwatch.length > 1 && (
+            {filteredGroups.length > 1 && (
               <Button
                 variant="ghost"
                 size="sm"
                 className="text-xs text-muted-foreground"
                 onClick={() => {
-                  if (collapsed.size === groupedBySwatch.length) {
+                  if (collapsed.size === filteredGroups.length) {
                     setCollapsedSwatches(new Set());
                   } else {
-                    setCollapsedSwatches(new Set(groupedBySwatch.map((g) => g.swatchId)));
+                    setCollapsedSwatches(new Set(filteredGroups.map((g) => g.swatch.id)));
                   }
                 }}
               >
-                {collapsed.size === groupedBySwatch.length ? 'Expandir todo' : 'Colapsar todo'}
+                {collapsed.size === filteredGroups.length ? 'Expandir todo' : 'Colapsar todo'}
               </Button>
             )}
-            <div className="flex items-center gap-0.5 rounded-lg border p-0.5 bg-muted">
-              <Button
-                variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                size="sm"
-                className="h-7 gap-1.5 text-xs px-2.5"
-                onClick={() => handleViewModeChange('grid')}
-              >
-                <LayoutGrid className="h-3.5 w-3.5" />
-                Grilla
-              </Button>
-              <Button
-                variant={viewMode === 'grouped' ? 'default' : 'ghost'}
-                size="sm"
-                className="h-7 gap-1.5 text-xs px-2.5"
-                onClick={() => handleViewModeChange('grouped')}
-              >
-                <Layers className="h-3.5 w-3.5" />
-                Por Variante
-              </Button>
-            </div>
           </div>
         </div>
 
         <TabsContent value={activeTab}>
-          {filtered.length === 0 ? (
+          {filteredGroups.length === 0 ? (
             <Card>
               <CardContent className="py-12">
                 <div className="flex flex-col items-center justify-center text-center">
                   <ImageIcon className="mb-4 h-12 w-12 text-muted-foreground/50" />
                   <p className="text-muted-foreground">
-                    {jobs.length === 0
+                    {allJobs.length === 0
                       ? 'No hay resultados aun. Genera variantes primero.'
                       : 'No hay imagenes en esta categoria'}
                   </p>
                 </div>
               </CardContent>
             </Card>
-          ) : viewMode === 'grid' ? (
-            /* ---- FLAT GRID VIEW ---- */
-            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {filtered.map((job) => (
-                <JobCard key={job.id} job={job} />
-              ))}
-            </div>
           ) : (
-            /* ---- GROUPED BY SWATCH VIEW ---- */
             <div className="space-y-4">
-              {groupedBySwatch.map((group) => {
-                const isCollapsed = collapsed.has(group.swatchId);
+              {filteredGroups.map((group) => {
+                const swatchId = group.swatch.id;
+                const isCollapsed = collapsed.has(swatchId);
+                const isPanelOpen = mlPanelOpen.has(swatchId);
                 const approvedInGroup = group.jobs.filter((j) => j.status === 'approved').length;
+                const mlPicCount = (mlPictures.get(swatchId) || []).length;
+                const isDirty = mlDirty.get(swatchId) || false;
 
                 return (
-                  <div key={group.swatchId} className="rounded-xl border bg-card shadow-sm overflow-hidden">
+                  <div key={swatchId} className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''}`}>
                     {/* Section header */}
-                    <button
-                      onClick={() => toggleSwatchCollapse(group.swatchId)}
-                      className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
-                    >
-                      {/* Swatch thumbnail */}
-                      {group.swatchStoragePath ? (
-                        <div className="h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border bg-gray-100">
-                          <img
-                            src={getStorageUrl(group.swatchStoragePath)}
-                            alt={group.swatchName}
-                            className="h-full w-full object-cover"
-                          />
-                        </div>
-                      ) : (
-                        <div className="h-14 w-14 flex-shrink-0 rounded-lg border bg-gray-100 flex items-center justify-center">
-                          <ImageIcon className="h-6 w-6 text-gray-300" />
-                        </div>
-                      )}
-
-                      {/* Swatch info */}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-sm leading-tight truncate">{group.swatchName}</p>
-                        {group.colorDescription && (
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{group.colorDescription}</p>
+                    <div className="flex items-center gap-4 px-4 py-3">
+                      {/* Clickable area for collapse */}
+                      <button
+                        onClick={() => toggleSwatchCollapse(swatchId)}
+                        className="flex items-center gap-4 flex-1 min-w-0 hover:bg-muted/50 -mx-1 px-1 py-0.5 rounded transition-colors text-left"
+                      >
+                        {/* Swatch thumbnail */}
+                        {group.swatch.storage_path ? (
+                          <div className="h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden border bg-gray-100">
+                            <img
+                              src={getStorageUrl(group.swatch.storage_path)}
+                              alt={group.swatch.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                        ) : (
+                          <div className="h-14 w-14 flex-shrink-0 rounded-lg border bg-gray-100 flex items-center justify-center">
+                            <ImageIcon className="h-6 w-6 text-gray-300" />
+                          </div>
                         )}
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {group.jobs.length} imagen{group.jobs.length !== 1 ? 'es' : ''}
-                          {approvedInGroup > 0 && (
-                            <span className="text-green-600"> &middot; {approvedInGroup} aprobada{approvedInGroup !== 1 ? 's' : ''}</span>
+
+                        {/* Swatch info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-semibold text-sm leading-tight truncate">{group.swatch.name}</p>
+                            {group.swatch.sku_suffix && (
+                              <Badge variant="outline" className="text-[10px] font-mono h-5 px-1.5">
+                                {group.swatch.sku_suffix}
+                              </Badge>
+                            )}
+                          </div>
+                          {group.swatch.color_description && (
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate">{group.swatch.color_description}</p>
                           )}
-                        </p>
-                      </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <p className="text-xs text-muted-foreground">
+                              {group.jobs.length} imagen{group.jobs.length !== 1 ? 'es' : ''}
+                              {approvedInGroup > 0 && (
+                                <span className="text-green-600"> &middot; {approvedInGroup} aprobada{approvedInGroup !== 1 ? 's' : ''}</span>
+                              )}
+                            </p>
+                            {group.ml_listing && (
+                              <>
+                                <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
+                                  {group.ml_listing.item_id}
+                                </Badge>
+                                <Badge variant="secondary" className={`text-[10px] h-5 px-1.5 ${mlStatusColor(group.ml_listing.status)}`}>
+                                  {group.ml_listing.status}
+                                </Badge>
+                              </>
+                            )}
+                          </div>
+                        </div>
 
-                      {/* Status summary badges */}
-                      <div className="flex-shrink-0 flex items-center gap-1.5">
-                        {approvedInGroup === group.jobs.length ? (
-                          <Badge variant="default" className="text-xs bg-green-100 text-green-700 border-green-200">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            Completo
-                          </Badge>
-                        ) : approvedInGroup > 0 ? (
-                          <Badge variant="secondary" className="text-xs">
-                            {approvedInGroup}/{group.jobs.length}
-                          </Badge>
-                        ) : null}
-                      </div>
+                        {/* Status summary */}
+                        <div className="flex-shrink-0 flex items-center gap-1.5">
+                          {approvedInGroup === group.jobs.length && group.jobs.length > 0 ? (
+                            <Badge variant="default" className="text-xs bg-green-100 text-green-700 border-green-200">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Completo
+                            </Badge>
+                          ) : approvedInGroup > 0 ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {approvedInGroup}/{group.jobs.length}
+                            </Badge>
+                          ) : null}
+                        </div>
 
-                      {/* Collapse chevron */}
-                      <div className="flex-shrink-0 text-muted-foreground">
-                        {isCollapsed
-                          ? <ChevronRight className="h-5 w-5" />
-                          : <ChevronDown className="h-5 w-5" />}
-                      </div>
-                    </button>
+                        {/* Collapse chevron */}
+                        <div className="flex-shrink-0 text-muted-foreground">
+                          {isCollapsed
+                            ? <ChevronRight className="h-5 w-5" />
+                            : <ChevronDown className="h-5 w-5" />}
+                        </div>
+                      </button>
 
-                    {/* Section body — collapsible */}
+                      {/* ML panel toggle button (outside the collapse click area) */}
+                      {group.ml_listing && (
+                        <Button
+                          variant={isPanelOpen ? 'default' : 'ghost'}
+                          size="sm"
+                          className={`h-8 gap-1.5 text-xs flex-shrink-0 ${isPanelOpen ? '' : 'text-muted-foreground'}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleMlPanel(swatchId);
+                          }}
+                          title={isPanelOpen ? 'Cerrar panel ML' : 'Abrir panel ML'}
+                        >
+                          <Globe className="h-3.5 w-3.5" />
+                          {!isPanelOpen && mlPicCount > 0 && (
+                            <span>{mlPicCount}</span>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Section body */}
                     {!isCollapsed && (
                       <div className="px-4 pb-4 border-t">
-                        <div className="grid gap-3 pt-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                          {group.jobs.map((job) => (
-                            <JobCard key={job.id} job={job} />
-                          ))}
+                        <div className="flex gap-4 pt-4">
+                          {/* LEFT: Results grid */}
+                          <div className="flex-1 min-w-0">
+                            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                              {group.jobs.map((job) => (
+                                <JobCard key={job.id} job={job} swatchId={swatchId} />
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* RIGHT: ML Panel (collapsible sidebar) */}
+                          {isPanelOpen && group.ml_listing && (
+                            <div className="w-72 flex-shrink-0 border-l pl-4">
+                              <MlPanel group={group} />
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
