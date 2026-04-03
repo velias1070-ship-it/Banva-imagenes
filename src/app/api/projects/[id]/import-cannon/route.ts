@@ -153,9 +153,41 @@ export async function POST(request: NextRequest, context: RouteContext) {
     errors: string[];
   }[] = [];
 
+  // Get all existing cannon imports for this project to avoid duplicates
+  const batchIds = [batchId];
+  const { data: allBatches } = await supabase
+    .from('generation_batches')
+    .select('id')
+    .eq('project_id', projectId);
+  if (allBatches) {
+    for (const b of allBatches) {
+      if (!batchIds.includes(b.id)) batchIds.push(b.id);
+    }
+  }
+
+  const { data: existingJobs } = await supabase
+    .from('generation_jobs')
+    .select('swatch_id, prompt_metadata')
+    .in('batch_id', batchIds)
+    .eq('status', 'approved');
+
+  const swatchesWithCannonImport = new Set<string>();
+  for (const job of existingJobs || []) {
+    const meta = job.prompt_metadata as Record<string, unknown> | null;
+    if (meta?.strategy === 'cannon_import') {
+      swatchesWithCannonImport.add(job.swatch_id);
+    }
+  }
+
   for (const swatch of targetSwatches) {
     if (!swatch.sku_suffix) {
       results.push({ swatch: swatch.name, sku: '', images_imported: 0, errors: ['No SKU'] });
+      continue;
+    }
+
+    // Skip if already imported from Cannon
+    if (swatchesWithCannonImport.has(swatch.id)) {
+      results.push({ swatch: swatch.name, sku: swatch.sku_suffix, images_imported: 0, errors: ['Ya importado de Cannon'] });
       continue;
     }
 
