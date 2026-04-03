@@ -48,7 +48,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
 
   // Upload to heroes storage path
   const heroId = crypto.randomUUID();
-  const swatchName = (job.swatch as Record<string, string>)?.name || 'variant';
+  const swatchName = (job.swatch as unknown as { name: string })?.name || 'variant';
   const filename = `${swatchName.replace(/\s+/g, '-')}_${shotType}.png`;
   const storagePath = `projects/${projectId}/heroes/${heroId}.png`;
 
