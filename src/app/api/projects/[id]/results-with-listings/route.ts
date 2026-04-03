@@ -291,8 +291,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
   // Sort groups by most recent job activity (newest first)
   groups.sort((a, b) => {
-    const aLatest = a.jobs[0]?.created_at || '';
-    const bLatest = b.jobs[0]?.created_at || '';
+    const aLatest = (a.jobs[0] as Record<string, unknown>)?.created_at as string || '';
+    const bLatest = (b.jobs[0] as Record<string, unknown>)?.created_at as string || '';
     return bLatest > aLatest ? 1 : bLatest < aLatest ? -1 : 0;
   });
 
