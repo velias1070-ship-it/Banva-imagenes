@@ -42,6 +42,9 @@ export default function GeneratePage() {
   const [brandHeroIds, setBrandHeroIds] = useState<Set<string>>(new Set()); // heroes that will use brand
   const [hasBrand, setHasBrand] = useState(false);
   const [swatchStatus, setSwatchStatus] = useState<Record<string, { status: string; available_quantity: number; item_id: string }>>({});
+  const [missingVariants, setMissingVariants] = useState<Array<{ item_id: string; title: string; seller_sku: string; status: string; available_quantity: number }>>([]);
+  const [loadingMissing, setLoadingMissing] = useState(false);
+  const [addingMissing, setAddingMissing] = useState(false);
 
   const fetchData = useCallback(async () => {
     const [heroStatusRes, swatchRes] = await Promise.all([
@@ -88,6 +91,13 @@ export default function GeneratePage() {
       .then((r) => r.ok ? r.json() : {})
       .then(setSwatchStatus)
       .catch(() => {});
+    // Check for missing variants
+    setLoadingMissing(true);
+    fetch(`/api/projects/${id}/missing-variants`)
+      .then((r) => r.ok ? r.json() : { missing: [] })
+      .then((data) => setMissingVariants(data.missing || []))
+      .catch(() => {})
+      .finally(() => setLoadingMissing(false));
   }, [fetchData, id]);
 
   // Poll for batch progress
@@ -357,6 +367,63 @@ export default function GeneratePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Missing Variants Alert */}
+      {missingVariants.length > 0 && (
+        <Card className="mb-6 border-amber-300 bg-amber-50">
+          <CardContent className="pt-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-amber-800">
+                  <AlertTriangle className="h-4 w-4 inline mr-1" />
+                  {missingVariants.length} publicaciones activas en ML no estan en este proyecto:
+                </p>
+                <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+                  {missingVariants.map((v) => (
+                    <div key={v.item_id} className="text-xs text-amber-700 flex items-center gap-2">
+                      <span className={v.status === 'active' ? 'text-green-600' : 'text-red-500'}>●</span>
+                      <span className="font-mono">{v.seller_sku}</span>
+                      <span className="truncate">{v.title}</span>
+                      <span className="text-amber-500">stk: {v.available_quantity}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700 flex-shrink-0"
+                disabled={addingMissing}
+                onClick={async () => {
+                  setAddingMissing(true);
+                  try {
+                    const res = await fetch(`/api/projects/${id}/missing-variants`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ skus: missingVariants.map((v) => v.seller_sku) }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      toast.success(`${data.added} variantes agregadas`);
+                      setMissingVariants([]);
+                      fetchData();
+                    }
+                  } catch { toast.error('Error'); }
+                  finally { setAddingMissing(false); }
+                }}
+              >
+                {addingMissing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                Agregar {missingVariants.length} faltantes
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {loadingMissing && (
+        <div className="mb-4 text-xs text-muted-foreground flex items-center gap-2">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Verificando variantes en MercadoLibre...
+        </div>
+      )}
 
       {/* Swatch Selection */}
       <Card className="mb-6">
