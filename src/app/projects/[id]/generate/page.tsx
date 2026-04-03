@@ -41,6 +41,7 @@ export default function GeneratePage() {
   const [generating, setGenerating] = useState(false);
   const [brandHeroIds, setBrandHeroIds] = useState<Set<string>>(new Set()); // heroes that will use brand
   const [hasBrand, setHasBrand] = useState(false);
+  const [swatchStatus, setSwatchStatus] = useState<Record<string, { status: string; available_quantity: number; item_id: string }>>({});
 
   const fetchData = useCallback(async () => {
     const [heroStatusRes, swatchRes] = await Promise.all([
@@ -82,7 +83,12 @@ export default function GeneratePage() {
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+    // Fetch ML status/stock for swatches
+    fetch(`/api/projects/${id}/swatches-status`)
+      .then((r) => r.ok ? r.json() : {})
+      .then(setSwatchStatus)
+      .catch(() => {});
+  }, [fetchData, id]);
 
   // Poll for batch progress
   useEffect(() => {
@@ -405,6 +411,16 @@ export default function GeneratePage() {
                     <p className="text-xs text-center text-muted-foreground truncate w-full">
                       {swatch.name.length > 20 ? swatch.name.substring(0, 20) + '...' : swatch.name}
                     </p>
+                    {swatchStatus[swatch.id] && (
+                      <div className="flex items-center gap-1.5 text-[10px]">
+                        <span className={swatchStatus[swatch.id].status === 'active' ? 'text-green-600' : 'text-red-500'}>
+                          {swatchStatus[swatch.id].status === 'active' ? '●' : '○'} {swatchStatus[swatch.id].status}
+                        </span>
+                        <span className={`font-mono ${swatchStatus[swatch.id].available_quantity === 0 ? 'text-red-600 font-bold' : 'text-muted-foreground'}`}>
+                          stk: {swatchStatus[swatch.id].available_quantity}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })}
