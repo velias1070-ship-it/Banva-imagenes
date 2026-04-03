@@ -61,7 +61,7 @@ export default function ResultsPage() {
     }
     return 'grouped';
   });
-  const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string>>(new Set());
+  const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
   const [editingJob, setEditingJob] = useState<string | null>(null);
   const [importingCannon, setImportingCannon] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -140,6 +140,16 @@ export default function ResultsPage() {
 
     return Array.from(map.values()).sort((a, b) => a.displayOrder - b.displayOrder);
   }, [filtered]);
+
+  // Start with all swatches collapsed
+  useEffect(() => {
+    if (collapsedSwatches === null && groupedBySwatch.length > 0) {
+      setCollapsedSwatches(new Set(groupedBySwatch.map((g) => g.swatchId)));
+    }
+  }, [groupedBySwatch, collapsedSwatches]);
+
+  // Safe accessor — treat null as "all collapsed"
+  const collapsed = collapsedSwatches ?? new Set(groupedBySwatch.map((g) => g.swatchId));
 
   function handleViewModeChange(mode: ViewMode) {
     setViewMode(mode);
@@ -702,14 +712,14 @@ export default function ResultsPage() {
                 size="sm"
                 className="text-xs text-muted-foreground"
                 onClick={() => {
-                  if (collapsedSwatches.size === groupedBySwatch.length) {
+                  if (collapsed.size === groupedBySwatch.length) {
                     setCollapsedSwatches(new Set());
                   } else {
                     setCollapsedSwatches(new Set(groupedBySwatch.map((g) => g.swatchId)));
                   }
                 }}
               >
-                {collapsedSwatches.size === groupedBySwatch.length ? 'Expandir todo' : 'Colapsar todo'}
+                {collapsed.size === groupedBySwatch.length ? 'Expandir todo' : 'Colapsar todo'}
               </Button>
             )}
             <div className="flex items-center gap-0.5 rounded-lg border p-0.5 bg-muted">
@@ -760,7 +770,7 @@ export default function ResultsPage() {
             /* ---- GROUPED BY SWATCH VIEW ---- */
             <div className="space-y-4">
               {groupedBySwatch.map((group) => {
-                const isCollapsed = collapsedSwatches.has(group.swatchId);
+                const isCollapsed = collapsed.has(group.swatchId);
                 const approvedInGroup = group.jobs.filter((j) => j.status === 'approved').length;
 
                 return (
