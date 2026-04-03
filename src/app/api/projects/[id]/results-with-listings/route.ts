@@ -49,6 +49,7 @@ interface JobData {
   qa_detail: Record<string, number | undefined> | null;
   error_message: string | null;
   swatch_id: string | null;
+  created_at: string;
   hero_shot: { filename: string; shot_type: string; storage_path: string } | null;
   swatch: { id: string; name: string; color_description: string | null; storage_path: string; display_order: number } | null;
 }
@@ -287,6 +288,13 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       ml_listing: null,
     });
   }
+
+  // Sort groups by most recent job activity (newest first)
+  groups.sort((a, b) => {
+    const aLatest = a.jobs[0]?.created_at || '';
+    const bLatest = b.jobs[0]?.created_at || '';
+    return bLatest > aLatest ? 1 : bLatest < aLatest ? -1 : 0;
+  });
 
   return NextResponse.json(groups);
 }
