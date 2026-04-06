@@ -151,7 +151,7 @@ export default async function ProjectDetailPage({ params }: Props) {
             projectId={id}
             brandName={brandName}
             hasBrand={!!project.brand_id}
-            swatchCount={swatches}
+            heroCount={heroes}
           />
         </div>
       )}

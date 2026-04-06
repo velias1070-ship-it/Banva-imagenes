@@ -1,24 +1,11 @@
 import { NextRequest, NextResponse, after } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
 import { COST_PER_IMAGE_USD } from '@/lib/constants';
 
 export const maxDuration = 60;
 
 interface RouteContext {
   params: Promise<{ id: string }>;
-}
-
-function getInventorySupabase() {
-  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, key);
-}
-
-interface MlItem {
-  id: string;
-  pictures?: { id: string; secure_url: string; size: string }[];
 }
 
 async function startBatchProcessing(batchId: string) {
@@ -43,20 +30,19 @@ async function startBatchProcessing(batchId: string) {
 /**
  * POST /api/projects/{id}/brand-regen
  *
- * Regenerate ML listing images with brand applied:
- * 1. For each selected swatch, fetch ALL pictures from ML listing
- * 2. Save each picture as both hero AND swatch (same image)
- * 3. Create jobs with prompt_adjustment='BRAND_ONLY'
- * 4. Pipeline reproduces image identically but applies brand (colors, typography, logo)
+ * Takes existing hero shots and regenerates them with brand applied.
+ * For each hero, creates a temporary swatch (same image) to satisfy
+ * the pipeline, then processes with BRAND_ONLY prompt.
  *
- * Body: { swatch_ids?: string[], brand_id?: string }
+ * Body: { hero_ids?: string[], brand_id?: string }
+ * - hero_ids: optional filter, defaults to ALL heroes
+ * - brand_id: optional override, defaults to project's brand
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id: projectId } = await context.params;
   const body = await request.json().catch(() => ({}));
 
   const supabase = createAdminClient();
-  const inventoryDb = getInventorySupabase();
 
   // 1. Get project & validate brand
   const { data: project } = await supabase
@@ -83,47 +69,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
   }
 
-  // 2. Get swatches (optionally filtered)
-  const swatchFilterIds: string[] | undefined = body.swatch_ids;
-  let swatchQuery = supabase
-    .from('swatches')
-    .select('id, name, sku_suffix, storage_path')
+  // 2. Get heroes (optionally filtered)
+  const heroFilterIds: string[] | undefined = body.hero_ids;
+  let heroQuery = supabase
+    .from('hero_shots')
+    .select('id, filename, storage_path, shot_type, mime_type')
     .eq('project_id', projectId);
 
-  if (swatchFilterIds?.length) {
-    swatchQuery = swatchQuery.in('id', swatchFilterIds);
+  if (heroFilterIds?.length) {
+    heroQuery = heroQuery.in('id', heroFilterIds);
   }
 
-  const { data: swatches } = await swatchQuery.order('display_order');
-  const swatchesWithSku = (swatches || []).filter((s) => s.sku_suffix);
+  const { data: heroes } = await heroQuery.order('display_order');
 
-  if (!swatchesWithSku.length) {
-    return NextResponse.json({ error: 'No swatches have SKU linked.' }, { status: 400 });
+  if (!heroes?.length) {
+    return NextResponse.json({ error: 'No hero shots found. Upload images first.' }, { status: 400 });
   }
 
-  // 3. Look up ML items
-  const allSkus = swatchesWithSku.map((s) => s.sku_suffix) as string[];
-  const { data: mlItems } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
-    .in('sku_venta', allSkus)
-    .eq('activo', true)
-    .is('variation_id', null);
-
-  const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
-
-  // 4. Fetch ML images → save as hero + swatch, create job pairs
+  // 3. For each hero, create a temporary swatch (same image) for the pipeline
   const jobRows: { heroId: string; swatchId: string }[] = [];
-  const errors: { sku: string; error: string }[] = [];
-
-  const { data: existingHeroes } = await supabase
-    .from('hero_shots')
-    .select('display_order')
-    .eq('project_id', projectId)
-    .order('display_order', { ascending: false })
-    .limit(1);
-
-  let nextHeroOrder = (existingHeroes?.[0]?.display_order ?? -1) + 1;
 
   const { data: existingSwatches } = await supabase
     .from('swatches')
@@ -134,94 +98,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   let nextSwatchOrder = (existingSwatches?.[0]?.display_order ?? -1) + 1;
 
-  for (const swatch of swatchesWithSku) {
-    const mlItem = skuToItem.get(swatch.sku_suffix!);
-    if (!mlItem) {
-      errors.push({ sku: swatch.sku_suffix!, error: 'SKU not found in ML' });
-      continue;
-    }
+  for (const hero of heroes) {
+    // Create swatch pointing to the SAME storage path (no duplicate upload)
+    const { data: swatch } = await supabase
+      .from('swatches')
+      .insert({
+        project_id: projectId,
+        name: `_brand_regen_${hero.filename}`,
+        storage_path: hero.storage_path,
+        color_description: 'brand-regen',
+        display_order: nextSwatchOrder++,
+      })
+      .select('id')
+      .single();
 
-    try {
-      const item = await mlGet<MlItem>(`/items/${mlItem.item_id}?attributes=pictures`);
-      if (!item?.pictures?.length) {
-        errors.push({ sku: swatch.sku_suffix!, error: 'No pictures on ML listing' });
-        continue;
-      }
-
-      for (let picIdx = 0; picIdx < item.pictures.length; picIdx++) {
-        const pic = item.pictures[picIdx];
-        const imgRes = await fetch(pic.secure_url);
-        if (!imgRes.ok) {
-          errors.push({ sku: swatch.sku_suffix!, error: `Download failed pic ${picIdx + 1}: ${imgRes.status}` });
-          continue;
-        }
-
-        const imageBuffer = Buffer.from(await imgRes.arrayBuffer());
-        const ext = pic.secure_url.includes('.webp') ? 'webp' : 'jpg';
-        const contentType = ext === 'webp' ? 'image/webp' : 'image/jpeg';
-
-        // Save as hero
-        const heroUuid = crypto.randomUUID();
-        const heroPath = `projects/${projectId}/heroes/${heroUuid}.${ext}`;
-        const { error: heroUploadErr } = await supabase.storage
-          .from('images')
-          .upload(heroPath, imageBuffer, { contentType, upsert: true });
-
-        if (heroUploadErr) {
-          errors.push({ sku: swatch.sku_suffix!, error: `Hero upload failed pic ${picIdx + 1}` });
-          continue;
-        }
-
-        const shotType = picIdx === 0 ? 'main' : 'lifestyle';
-        const { data: hero } = await supabase
-          .from('hero_shots')
-          .insert({
-            project_id: projectId,
-            filename: `${swatch.sku_suffix}_brand_${picIdx + 1}.${ext}`,
-            storage_path: heroPath,
-            shot_type: shotType,
-            display_order: nextHeroOrder++,
-            mime_type: contentType,
-          })
-          .select('id')
-          .single();
-
-        if (!hero) continue;
-
-        // Save same image as a dedicated swatch for this job
-        const swatchUuid = crypto.randomUUID();
-        const swatchPath = `projects/${projectId}/swatches/${swatchUuid}.${ext}`;
-        await supabase.storage
-          .from('images')
-          .upload(swatchPath, imageBuffer, { contentType, upsert: true });
-
-        const { data: newSwatch } = await supabase
-          .from('swatches')
-          .insert({
-            project_id: projectId,
-            name: `${swatch.name} (brand-regen pic ${picIdx + 1})`,
-            sku_suffix: swatch.sku_suffix,
-            storage_path: swatchPath,
-            color_description: swatch.name,
-            display_order: nextSwatchOrder++,
-          })
-          .select('id')
-          .single();
-
-        if (!newSwatch) continue;
-
-        jobRows.push({ heroId: hero.id, swatchId: newSwatch.id });
-      }
-    } catch (err) {
-      errors.push({ sku: swatch.sku_suffix!, error: err instanceof Error ? err.message : String(err) });
-    }
+    if (!swatch) continue;
+    jobRows.push({ heroId: hero.id, swatchId: swatch.id });
   }
 
   if (jobRows.length === 0) {
-    return NextResponse.json({ error: 'Could not fetch any ML images', details: errors }, { status: 400 });
+    return NextResponse.json({ error: 'Failed to create job pairs' }, { status: 500 });
   }
 
-  // 5. Create batch
+  // 4. Create batch
   const { data: batch, error: batchError } = await supabase
     .from('generation_batches')
     .insert({
@@ -242,7 +141,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: batchError?.message || 'Failed to create batch' }, { status: 500 });
   }
 
-  // 6. Create jobs with BRAND_ONLY flag
+  // 5. Create jobs with BRAND_ONLY flag
   const jobs = jobRows.map((pair) => ({
     batch_id: batch.id,
     hero_shot_id: pair.heroId,
@@ -257,7 +156,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: jobsError.message }, { status: 500 });
   }
 
-  // 7. Start processing
+  // 6. Start processing
   after(async () => {
     try {
       await startBatchProcessing(batch.id);
@@ -270,8 +169,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     batch_id: batch.id,
     brand: brand.name,
     total_jobs: jobRows.length,
-    ml_images_fetched: jobRows.length,
-    variants_processed: swatchesWithSku.length,
-    errors: errors.length > 0 ? errors : undefined,
+    heroes_processed: heroes.length,
   }, { status: 201 });
 }
