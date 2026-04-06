@@ -451,8 +451,9 @@ Image 2 is the SAME image as reference — do NOT use it to change colors or pat
 IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text colors to match the brand palette below
 - CHANGE all visible text typography/fonts to match the brand fonts below
-- Keep the same text content and position, only change the COLOR and FONT of the text
-These text changes are MANDATORY, not optional.
+- SHIFT all text elements DOWN by approximately 80 pixels to leave clear space in the top-left corner for the brand logo (which is added in post-process)
+- Keep the same text content, only change COLOR, FONT, and shift POSITION down
+These changes are MANDATORY, not optional.
 
 Everything else (product, background, people, objects) must remain as in Image 1.
 
