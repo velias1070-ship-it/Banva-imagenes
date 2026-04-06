@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,6 +22,96 @@ interface ProductGroup {
     color: string;
     color_slug: string;
   }[];
+}
+
+function ProductCombobox({
+  productos,
+  loading,
+  selectedSlug,
+  onSelect,
+}: {
+  productos: ProductGroup[];
+  loading: boolean;
+  selectedSlug: string;
+  onSelect: (slug: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selected = productos.find((p) => p.slug === selectedSlug);
+
+  const filtered = productos.filter((p) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (
+      p.base_name.toLowerCase().includes(q) ||
+      p.slug.toLowerCase().includes(q) ||
+      p.tamano.toLowerCase().includes(q) ||
+      p.categoria.toLowerCase().includes(q) ||
+      p.variantes.some((v) => v.sku.toLowerCase().includes(q) || v.color.toLowerCase().includes(q))
+    );
+  });
+
+  return (
+    <div className="space-y-2">
+      <Label>Producto del catalogo</Label>
+      <div ref={wrapperRef} className="relative">
+        <Input
+          value={open ? query : selected ? `${selected.base_name} — ${selected.tamano}` : ''}
+          onChange={(e) => { setQuery(e.target.value); if (!open) setOpen(true); }}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          placeholder={loading ? 'Cargando...' : 'Buscar por nombre, SKU, color...'}
+          className={open ? 'ring-2 ring-ring' : ''}
+        />
+        {selected && !open && (
+          <button
+            type="button"
+            onClick={() => { onSelect(''); setQuery(''); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            ✕
+          </button>
+        )}
+        {open && (
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[280px] overflow-y-auto rounded-md border bg-popover shadow-lg">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-muted-foreground">Sin resultados</div>
+            ) : (
+              filtered.map((p) => (
+                <button
+                  key={p.slug}
+                  type="button"
+                  onClick={() => { onSelect(p.slug); setOpen(false); setQuery(''); }}
+                  className={`block w-full px-3 py-2 text-left text-sm hover:bg-accent ${p.slug === selectedSlug ? 'bg-accent' : ''}`}
+                >
+                  <div className="font-medium">{p.base_name} — {p.tamano}</div>
+                  <div className="text-xs text-muted-foreground">{p.variantes.length} variantes · {p.categoria}</div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+      {selectedSlug && selected && (
+        <div className="mt-2 rounded-md bg-muted p-3 text-sm">
+          {selected.variantes.map((v) => (
+            <span key={v.sku} className="mr-2 inline-block rounded bg-background px-2 py-0.5 text-xs">
+              {v.color} <span className="text-muted-foreground">({v.sku})</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function NewProjectPage() {
@@ -132,33 +222,12 @@ export default function NewProjectPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'catalog' && (
-              <div className="space-y-2">
-                <Label>Producto del catalogo</Label>
-                <Select
-                  value={selectedProducto}
-                  onValueChange={handleProductoSelect}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={loadingProductos ? 'Cargando...' : 'Selecciona un producto'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {productos.map((p) => (
-                      <SelectItem key={p.slug} value={p.slug}>
-                        {p.base_name} — {p.tamano} ({p.variantes.length} vars)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedProducto && (
-                  <div className="mt-2 rounded-md bg-muted p-3 text-sm">
-                    {productos.find((p) => p.slug === selectedProducto)?.variantes.map((v) => (
-                      <span key={v.sku} className="mr-2 inline-block rounded bg-background px-2 py-0.5 text-xs">
-                        {v.color} <span className="text-muted-foreground">({v.sku})</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <ProductCombobox
+                productos={productos}
+                loading={loadingProductos}
+                selectedSlug={selectedProducto}
+                onSelect={handleProductoSelect}
+              />
             )}
 
             <div className="space-y-2">
