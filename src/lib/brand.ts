@@ -92,8 +92,8 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   const isInfoShot = shotType === 'infografia';
-  // Tell Gemini to shift text away from logo zone so it doesn't overlap
-  const needsTextShift = brand.apply_logo_overlay && !!brand.logo_storage_path;
+  // No need for Gemini to shift text — logo has its own background for contrast
+  const needsTextShift = false;
   const hasTextElements = textElements && textElements.length > 0;
 
   if (!hasTypography && !hasGuidelines && !needsTextShift && !hasColors) {
@@ -392,15 +392,30 @@ export async function overlayBrandLogo(
       break;
   }
 
+  // Create semi-transparent white background with rounded corners behind logo
+  const padding = 14;
+  const bgWidth = logoWidth + padding * 2;
+  const bgHeight = logoHeight + padding * 2;
+  const bgLeft = Math.max(0, left - padding);
+  const bgTop = Math.max(0, top - padding);
+  const radius = 12;
+
+  const roundedRectSvg = Buffer.from(
+    `<svg width="${bgWidth}" height="${bgHeight}">
+      <rect x="0" y="0" width="${bgWidth}" height="${bgHeight}" rx="${radius}" ry="${radius}" fill="rgba(255,255,255,0.8)"/>
+    </svg>`
+  );
+
+  const logoBg = await sharp(roundedRectSvg).png().toBuffer();
+
   const result = await sharp(imageBuffer)
-    .composite([{
-      input: resizedLogo,
-      left: Math.max(0, left),
-      top: Math.max(0, top),
-    }])
+    .composite([
+      { input: logoBg, left: bgLeft, top: bgTop },
+      { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
+    ])
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${chosenCorner}`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${chosenCorner} (with background)`);
   return result;
 }
