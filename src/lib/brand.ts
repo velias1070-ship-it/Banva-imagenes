@@ -390,24 +390,8 @@ export async function overlayBrandLogo(
       break;
   }
 
-  // Semi-transparent background behind logo for contrast
-  const padding = 10;
-  const bgWidth = logoWidth + padding * 2;
-  const bgHeight = logoHeight + padding * 2;
-  const bgLeft = Math.max(0, left - padding);
-  const bgTop = Math.max(0, top - padding);
-  const radius = 8;
-
-  const roundedRectSvg = Buffer.from(
-    `<svg width="${bgWidth}" height="${bgHeight}">
-      <rect x="0" y="0" width="${bgWidth}" height="${bgHeight}" rx="${radius}" ry="${radius}" fill="rgba(255,255,255,0.55)"/>
-    </svg>`
-  );
-  const logoBg = await sharp(roundedRectSvg).png().toBuffer();
-
   const result = await sharp(imageBuffer)
     .composite([
-      { input: logoBg, left: bgLeft, top: bgTop },
       { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
     ])
     .png()
