@@ -444,11 +444,17 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     if (isBrandOnly) {
       // BRAND_ONLY mode: reproduce image with brand applied
       // Brand is loaded below — we build logo clearance instructions after loading it
-      prompt = `Reproduce Image 1 EXACTLY as it is — same product, same colors, same composition, same background, same lighting, same angle. Do NOT change anything about the product or scene.
+      prompt = `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
 
 Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
 
-The ONLY changes allowed are those specified in the brand instructions below (text colors, typography). Everything else must remain IDENTICAL to Image 1.
+IMPORTANT — You MUST apply the brand changes specified below:
+- CHANGE all visible text colors to match the brand palette below
+- CHANGE all visible text typography/fonts to match the brand fonts below
+- Keep the same text content and position, only change the COLOR and FONT of the text
+These text changes are MANDATORY, not optional.
+
+Everything else (product, background, people, objects) must remain as in Image 1.
 
 Output: ${projectSettings.generation.resolution}x${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[process-next] BRAND_ONLY mode — reproducing image with brand guidelines`);
