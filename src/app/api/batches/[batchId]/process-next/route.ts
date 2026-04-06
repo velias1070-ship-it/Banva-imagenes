@@ -423,30 +423,47 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       `${swatchColorDescription ? `, color: ${swatchColorDescription}` : ''}`
     );
 
-    // ── Preprocessing ──
-    if (strategy.preprocessing.flatten_hero) {
-      const flattenedHero = await flattenHeroEmboss(heroBuffer);
-      heroBase64 = flattenedHero.toString('base64');
-      console.log(`[process-next] Flattened hero emboss for ${category}`);
-    }
-    if (strategy.preprocessing.crop_swatch) {
-      const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
-      swatchBase64 = croppedSwatch.toString('base64');
+    // ── Preprocessing (skip for BRAND_ONLY — we want the image unchanged) ──
+    const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
+    if (!isBrandOnly) {
+      if (strategy.preprocessing.flatten_hero) {
+        const flattenedHero = await flattenHeroEmboss(heroBuffer);
+        heroBase64 = flattenedHero.toString('base64');
+        console.log(`[process-next] Flattened hero emboss for ${category}`);
+      }
+      if (strategy.preprocessing.crop_swatch) {
+        const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
+        swatchBase64 = croppedSwatch.toString('base64');
+      }
     }
 
-    // ── Build prompt (with hex color anchor for color fidelity) ──
+    // ── Build prompt ──
     const swatchHex = job.swatch.dominant_color_hex || null;
-    let prompt = buildPromptForMode(
-      effectiveMode,
-      strategy,
-      job.swatch.name,
-      swatchColorDescription,
-      effectiveShotType,
-      darkSwatch,
-      qaFeedback,
-      projectSettings.generation.resolution,
-      swatchHex
-    );
+    let prompt: string;
+
+    if (isBrandOnly) {
+      // BRAND_ONLY mode: reproduce image identically, only apply brand guidelines
+      prompt = `Reproduce Image 1 EXACTLY as it is — same product, same colors, same composition, same background, same lighting, same angle. Do NOT change anything about the product or scene.
+
+Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
+
+The ONLY changes allowed are those specified in the brand instructions below (text colors, typography). Everything else must remain IDENTICAL to Image 1.
+
+Output: ${projectSettings.generation.resolution}x${projectSettings.generation.resolution}px, RGB, PNG.`;
+      console.log(`[process-next] BRAND_ONLY mode — reproducing image with brand guidelines`);
+    } else {
+      prompt = buildPromptForMode(
+        effectiveMode,
+        strategy,
+        job.swatch.name,
+        swatchColorDescription,
+        effectiveShotType,
+        darkSwatch,
+        qaFeedback,
+        projectSettings.generation.resolution,
+        swatchHex
+      );
+    }
 
     // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
     const skipBrand = job.prompt_adjustment === 'SKIP_BRAND';
