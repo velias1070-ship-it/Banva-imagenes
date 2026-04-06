@@ -242,7 +242,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
       // Get position 1 (first picture)
       const pic = item.pictures[0];
-      const imageUrl = pic.secure_url;
+      // Use -F suffix for full quality (1200x1200) instead of -O (500x500)
+      const imageUrl = pic.secure_url.replace(/-O\.(\w+)$/, '-F.$1');
 
       // Download the image
       const imgRes = await fetch(imageUrl);
