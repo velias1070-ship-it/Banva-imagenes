@@ -400,7 +400,7 @@ export async function overlayBrandLogo(
 
   const roundedRectSvg = Buffer.from(
     `<svg width="${bgWidth}" height="${bgHeight}">
-      <rect x="0" y="0" width="${bgWidth}" height="${bgHeight}" rx="${radius}" ry="${radius}" fill="rgba(255,255,255,0.85)"/>
+      <rect x="0" y="0" width="${bgWidth}" height="${bgHeight}" rx="${radius}" ry="${radius}" fill="rgba(255,255,255,0.55)"/>
     </svg>`
   );
   const logoBg = await sharp(roundedRectSvg).png().toBuffer();
