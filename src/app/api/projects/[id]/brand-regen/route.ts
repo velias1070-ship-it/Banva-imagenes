@@ -86,39 +86,31 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'No hero shots found. Upload images first.' }, { status: 400 });
   }
 
-  // 3. For each hero, create a temporary swatch (same image) for the pipeline
-  const jobRows: { heroId: string; swatchId: string }[] = [];
+  // 3. Get target swatch (the variant these heroes belong to)
+  const targetSwatchId: string | undefined = body.target_swatch_id;
 
-  const { data: existingSwatches } = await supabase
-    .from('swatches')
-    .select('display_order')
-    .eq('project_id', projectId)
-    .order('display_order', { ascending: false })
-    .limit(1);
+  let targetSwatch: { id: string; storage_path: string | null } | null = null;
 
-  let nextSwatchOrder = (existingSwatches?.[0]?.display_order ?? -1) + 1;
-
-  for (const hero of heroes) {
-    // Create swatch pointing to the SAME storage path (no duplicate upload)
-    const { data: swatch } = await supabase
-      .from('swatches')
-      .insert({
-        project_id: projectId,
-        name: `_brand_regen_${hero.filename}`,
-        storage_path: hero.storage_path,
-        color_description: 'brand-regen',
-        display_order: nextSwatchOrder++,
-      })
-      .select('id')
-      .single();
-
-    if (!swatch) continue;
-    jobRows.push({ heroId: hero.id, swatchId: swatch.id });
+  if (targetSwatchId) {
+    const { data } = await supabase.from('swatches').select('id, storage_path').eq('id', targetSwatchId).single();
+    targetSwatch = data;
+  } else {
+    // Fall back to first swatch in project
+    const { data } = await supabase.from('swatches').select('id, storage_path').eq('project_id', projectId).order('display_order').limit(1).single();
+    targetSwatch = data;
   }
 
-  if (jobRows.length === 0) {
-    return NextResponse.json({ error: 'Failed to create job pairs' }, { status: 500 });
+  if (!targetSwatch) {
+    return NextResponse.json({ error: 'No target swatch found' }, { status: 400 });
   }
+
+  // Ensure swatch has a storage_path (use first hero's image if missing)
+  if (!targetSwatch.storage_path && heroes.length > 0) {
+    await supabase.from('swatches').update({ storage_path: heroes[0].storage_path }).eq('id', targetSwatch.id);
+  }
+
+  // Pair all heroes with the same target swatch
+  const jobRows = heroes.map((hero) => ({ heroId: hero.id, swatchId: targetSwatch!.id }));
 
   // 4. Create batch
   const { data: batch, error: batchError } = await supabase

@@ -5,12 +5,19 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sparkles, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface Hero {
   id: string;
   filename: string;
   shot_type: string;
+}
+
+interface Swatch {
+  id: string;
+  name: string;
+  sku_suffix: string | null;
 }
 
 interface Props {
@@ -25,22 +32,30 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [heroes, setHeroes] = useState<Hero[]>([]);
+  const [swatches, setSwatches] = useState<Swatch[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loadingHeroes, setLoadingHeroes] = useState(false);
+  const [targetSwatchId, setTargetSwatchId] = useState('');
+  const [loadingData, setLoadingData] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (expanded && heroes.length === 0) {
-      setLoadingHeroes(true);
-      fetch(`/api/projects/${projectId}/heroes`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (Array.isArray(data)) {
-            setHeroes(data);
-            setSelected(new Set(data.map((h: Hero) => h.id)));
+      setLoadingData(true);
+      Promise.all([
+        fetch(`/api/projects/${projectId}/heroes`).then((r) => r.json()),
+        fetch(`/api/projects/${projectId}/swatches`).then((r) => r.json()),
+      ])
+        .then(([heroData, swatchData]) => {
+          if (Array.isArray(heroData)) {
+            setHeroes(heroData);
+            setSelected(new Set(heroData.map((h: Hero) => h.id)));
+          }
+          if (Array.isArray(swatchData)) {
+            setSwatches(swatchData);
+            if (swatchData.length === 1) setTargetSwatchId(swatchData[0].id);
           }
         })
-        .finally(() => setLoadingHeroes(false));
+        .finally(() => setLoadingData(false));
     }
   }, [expanded, projectId, heroes.length]);
 
@@ -62,6 +77,10 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
       setResult({ ok: false, message: 'Selecciona al menos una imagen.' });
       return;
     }
+    if (!targetSwatchId) {
+      setResult({ ok: false, message: 'Selecciona la variante destino.' });
+      return;
+    }
 
     setLoading(true);
     setResult(null);
@@ -72,6 +91,7 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           hero_ids: selected.size === heroes.length ? undefined : Array.from(selected),
+          target_swatch_id: targetSwatchId,
         }),
       });
 
@@ -126,6 +146,23 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
                 Brand: <span className="font-medium text-foreground">{brandName}</span>
               </div>
 
+              {/* Target variant */}
+              <div className="mb-4">
+                <label className="mb-2 block text-sm font-medium">Variante destino</label>
+                <Select value={targetSwatchId} onValueChange={setTargetSwatchId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="¿Para qué variante son estas imágenes?" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {swatches.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}{s.sku_suffix ? ` (${s.sku_suffix})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="mb-4">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-sm font-medium">Seleccionar imagenes</span>
@@ -135,7 +172,7 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
                   </div>
                 </div>
 
-                {loadingHeroes ? (
+                {loadingData ? (
                   <div className="py-4 text-center text-sm text-muted-foreground">Cargando imagenes...</div>
                 ) : (
                   <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4">
