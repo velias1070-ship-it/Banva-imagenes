@@ -92,8 +92,8 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   const isInfoShot = shotType === 'infografia';
-  // Text shift no longer needed — overlayBrandLogo auto-detects the least busy corner
-  const needsTextShift = false;
+  // Always shift text away from logo corner so logo doesn't overlap content
+  const needsTextShift = brand.apply_logo_overlay && !!brand.logo_storage_path;
   const hasTextElements = textElements && textElements.length > 0;
 
   if (!hasTypography && !hasGuidelines && !needsTextShift && !hasColors) {
@@ -370,17 +370,8 @@ export async function overlayBrandLogo(
 
   const margin = brand.logo_margin_px;
 
-  // Smart corner detection: prefer text-based (reliable), fallback to pixel analysis
-  let chosenCorner: string;
-  if (textElements?.length) {
-    chosenCorner = findBestCornerFromText(textElements, brand.logo_position);
-  } else {
-    chosenCorner = await findBestCorner(
-      imageBuffer, imgWidth, imgHeight,
-      logoWidth, logoHeight, margin,
-      brand.logo_position
-    );
-  }
+  // Always use configured position — Gemini shifts text away in the prompt
+  const chosenCorner = brand.logo_position;
 
   let left = margin;
   let top = margin;
