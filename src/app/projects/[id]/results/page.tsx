@@ -12,7 +12,7 @@ import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
   ImageIcon, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
-  Globe, ExternalLink, GripVertical, X, Plus, Save,
+  Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -92,6 +92,9 @@ export default function ResultsPage() {
   const [mlPictures, setMlPictures] = useState<Map<string, EditorPicture[]>>(new Map());
   const [mlDirty, setMlDirty] = useState<Map<string, boolean>>(new Map());
   const [mlSaving, setMlSaving] = useState<Map<string, boolean>>(new Map());
+
+  // Swap state: click generated image → click ML position to replace
+  const [swapSource, setSwapSource] = useState<{ swatchId: string; url: string; shotType?: string } | null>(null);
 
   // Drag state for ML panel
   const [dragging, setDragging] = useState(false);
@@ -264,6 +267,38 @@ export default function ResultsPage() {
       return next;
     });
     setMlDirty((prev) => new Map(prev).set(swatchId, true));
+  }
+
+  // ── Swap: click generated → click ML position ──
+  function selectForSwap(swatchId: string, job: JobWithRelations) {
+    if (!job.output_storage_path) return;
+    const url = getStorageUrl(job.output_storage_path);
+    // Toggle: click same image again to deselect
+    if (swapSource?.url === url) {
+      setSwapSource(null);
+    } else {
+      setSwapSource({ swatchId, url, shotType: job.hero_shot?.shot_type });
+    }
+  }
+
+  function swapWithMlPosition(swatchId: string, posIdx: number) {
+    if (!swapSource || swapSource.swatchId !== swatchId) return;
+    setMlPictures((prev) => {
+      const next = new Map(prev);
+      const current = [...(next.get(swatchId) || [])];
+      // Replace the picture at posIdx with the generated image
+      current[posIdx] = {
+        type: 'generated',
+        url: swapSource.url,
+        source_url: swapSource.url,
+        shot_type: swapSource.shotType,
+      };
+      next.set(swatchId, current);
+      return next;
+    });
+    setMlDirty((prev) => new Map(prev).set(swatchId, true));
+    setSwapSource(null);
+    toast.success(`Posición ${posIdx + 1} reemplazada`);
   }
 
   // ── ML Panel drag & drop ──
@@ -793,17 +828,28 @@ export default function ResultsPage() {
                   Editar
                 </Button>
               )}
-              {/* Add to ML button when panel is open */}
+              {/* Add to ML / Swap buttons when panel is open */}
               {isPanelOpen && isApproved && hasListing && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs text-green-600"
-                  onClick={() => addJobToMlPanel(swatchId, job)}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  ML
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs text-green-600"
+                    onClick={() => addJobToMlPanel(swatchId, job)}
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    ML
+                  </Button>
+                  <Button
+                    variant={swapSource?.url === getStorageUrl(job.output_storage_path!) ? 'default' : 'outline'}
+                    size="sm"
+                    className={`h-7 text-xs ${swapSource?.url === getStorageUrl(job.output_storage_path!) ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'text-amber-600'}`}
+                    onClick={() => selectForSwap(swatchId, job)}
+                  >
+                    <ArrowLeftRight className="h-3 w-3 mr-1" />
+                    Swap
+                  </Button>
+                </>
               )}
               {(job.status === 'flagged' || job.status === 'error') && (
                 <Button
@@ -898,11 +944,18 @@ export default function ResultsPage() {
           <span className="text-[10px] text-muted-foreground">{pics.length}/10</span>
         </div>
 
+        {/* Swap hint */}
+        {swapSource?.swatchId === swatchId && (
+          <div className="mb-2 rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-[11px] text-amber-700">
+            Click en la posición que quieres reemplazar
+          </div>
+        )}
+
         {/* Picture list with drag-drop */}
         <div
           className={`flex-1 min-h-[60px] rounded-lg p-1 transition-colors overflow-y-auto ${
             dragging && dragRef.current?.swatchId === swatchId ? 'bg-blue-50/50' : ''
-          }`}
+          } ${swapSource?.swatchId === swatchId ? 'ring-2 ring-amber-300' : ''}`}
           onDragOver={(e) => handleMlContainerDragOver(e, swatchId)}
           onDragLeave={() => { setDropSwatchId(null); setDropPosition(null); }}
           onDrop={(e) => handleMlContainerDrop(e, swatchId)}
@@ -918,10 +971,11 @@ export default function ResultsPage() {
                 <div
                   className={`flex items-center gap-1.5 rounded-md border p-1 group transition-all mb-1 ${
                     isDragSource ? 'opacity-30 scale-95' : 'opacity-100'
-                  }`}
-                  draggable
-                  onDragStart={(e) => handleMlDragStart(e, { kind: 'reorder', swatchId, picIdx })}
+                  } ${swapSource?.swatchId === swatchId ? 'cursor-pointer hover:border-amber-400 hover:bg-amber-50' : ''}`}
+                  draggable={!swapSource}
+                  onDragStart={(e) => !swapSource && handleMlDragStart(e, { kind: 'reorder', swatchId, picIdx })}
                   onDragEnd={handleMlDragEnd}
+                  onClick={() => swapSource?.swatchId === swatchId && swapWithMlPosition(swatchId, picIdx)}
                 >
                   <GripVertical className="h-3 w-3 text-muted-foreground/40 flex-shrink-0 cursor-grab active:cursor-grabbing" />
                   <div className="w-4 text-center text-[10px] font-bold text-muted-foreground flex-shrink-0">{picIdx + 1}</div>
