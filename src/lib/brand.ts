@@ -378,7 +378,7 @@ export async function overlayBrandLogo(
   // Shift image to make room for logo: scale down and reposition
   const scaledHeight = imgHeight - logoSpace;
   const scaledImage = await sharp(imageBuffer)
-    .resize(imgWidth, scaledHeight, { fit: 'cover', position: isTop ? 'top' : 'bottom' })
+    .resize(imgWidth, scaledHeight, { fit: 'fill' })
     .png()
     .toBuffer();
 
