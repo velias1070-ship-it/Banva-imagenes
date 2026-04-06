@@ -37,6 +37,15 @@ function extractBaseName(nombre: string, color: string): string {
   return base;
 }
 
+function stripSizeFromName(name: string): string {
+  return name
+    .replace(/\b(Super\s+)?King\b/gi, '')
+    .replace(/\b\d+(\.\d+)?\s*P(lazas?)?\b/gi, '')
+    .replace(/\b(1|1\.5|2|2\.5|3|Queen|Twin|Full|Single|Double)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -218,7 +227,38 @@ export async function GET() {
     });
   }
 
-  // 4. Build response — only groups with 2+ variants
+  // 4. Merge singleton groups that share the same base product (different sizes, same product)
+  const singletons = new Map<string, string[]>(); // normalized_name -> [keys]
+  for (const [key, group] of groups) {
+    if (group.variantes.size === 1) {
+      const normalized = stripSizeFromName(group.base);
+      if (!normalized) continue;
+      if (!singletons.has(normalized)) singletons.set(normalized, []);
+      singletons.get(normalized)!.push(key);
+    }
+  }
+  for (const [normalized, keys] of singletons) {
+    if (keys.length < 2) continue;
+    // Merge all singletons into the first group
+    const primary = groups.get(keys[0])!;
+    for (let i = 1; i < keys.length; i++) {
+      const other = groups.get(keys[i])!;
+      for (const [sku, v] of other.variantes) {
+        const sizeLabel = other.tamano || v.color;
+        primary.variantes.set(sku, { ...v, color: sizeLabel });
+      }
+      groups.delete(keys[i]);
+    }
+    // Update primary's own variant label to its size too
+    const firstVariant = primary.variantes.values().next().value!;
+    if (primary.tamano) {
+      primary.variantes.set(firstVariant.sku, { ...firstVariant, color: primary.tamano });
+    }
+    primary.base = normalized;
+    primary.tamano = '';
+  }
+
+  // 5. Build response — only groups with 2+ variants
   const result: ProductGroup[] = [];
 
   for (const [, group] of groups) {
