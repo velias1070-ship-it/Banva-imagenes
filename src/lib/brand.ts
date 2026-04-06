@@ -369,53 +369,84 @@ export async function overlayBrandLogo(
   const logoHeight = logoMetadata.height || brand.logo_size_px;
 
   const margin = brand.logo_margin_px;
+  const isTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+  const isBottom = brand.logo_position === 'bottom-left' || brand.logo_position === 'bottom-right';
 
-  // Always use configured position — Gemini clears the zone in the prompt
-  const chosenCorner = brand.logo_position;
+  // Calculate how much space the logo needs
+  const logoSpace = logoHeight + margin * 2;
 
-  let left = margin;
-  let top = margin;
+  // Shift image to make room for logo: scale down and reposition
+  const scaledHeight = imgHeight - logoSpace;
+  const scaledImage = await sharp(imageBuffer)
+    .resize(imgWidth, scaledHeight, { fit: 'cover', position: isTop ? 'bottom' : 'top' })
+    .png()
+    .toBuffer();
 
-  switch (chosenCorner) {
+  // Sample the edge color for the strip background
+  const edgeY = isTop ? 0 : imgHeight - 1;
+  const edgeStrip = await sharp(imageBuffer)
+    .extract({ left: 0, top: edgeY, width: imgWidth, height: 1 })
+    .resize(1, 1)
+    .raw()
+    .toBuffer();
+  const stripR = edgeStrip[0], stripG = edgeStrip[1], stripB = edgeStrip[2];
+
+  // Build canvas: strip + scaled image
+  const stripBuffer = await sharp({
+    create: {
+      width: imgWidth,
+      height: logoSpace,
+      channels: 4,
+      background: { r: stripR, g: stripG, b: stripB, alpha: 1 },
+    },
+  }).png().toBuffer();
+
+  // Compose: strip at top/bottom, image fills the rest
+  const imageY = isTop ? logoSpace : 0;
+  const stripY = isTop ? 0 : scaledHeight;
+
+  const canvas = await sharp({
+    create: {
+      width: imgWidth,
+      height: imgHeight,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 1 },
+    },
+  })
+    .composite([
+      { input: stripBuffer, left: 0, top: stripY },
+      { input: scaledImage, left: 0, top: imageY },
+    ])
+    .png()
+    .toBuffer();
+
+  // Place logo in the strip
+  let logoLeft = margin;
+  let logoTop = margin;
+
+  switch (brand.logo_position) {
     case 'top-right':
-      left = imgWidth - logoWidth - margin;
+      logoLeft = imgWidth - logoWidth - margin;
       break;
     case 'bottom-left':
-      top = imgHeight - logoHeight - margin;
+      logoTop = scaledHeight + margin;
       break;
     case 'bottom-right':
-      left = imgWidth - logoWidth - margin;
-      top = imgHeight - logoHeight - margin;
+      logoLeft = imgWidth - logoWidth - margin;
+      logoTop = scaledHeight + margin;
       break;
     case 'top-left':
     default:
       break;
   }
 
-  // Create semi-transparent white background with rounded corners behind logo
-  const padding = 14;
-  const bgWidth = logoWidth + padding * 2;
-  const bgHeight = logoHeight + padding * 2;
-  const bgLeft = Math.max(0, left - padding);
-  const bgTop = Math.max(0, top - padding);
-  const radius = 12;
-
-  const roundedRectSvg = Buffer.from(
-    `<svg width="${bgWidth}" height="${bgHeight}">
-      <rect x="0" y="0" width="${bgWidth}" height="${bgHeight}" rx="${radius}" ry="${radius}" fill="rgba(255,255,255,0.8)"/>
-    </svg>`
-  );
-
-  const logoBg = await sharp(roundedRectSvg).png().toBuffer();
-
-  const result = await sharp(imageBuffer)
+  const result = await sharp(canvas)
     .composite([
-      { input: logoBg, left: bgLeft, top: bgTop },
-      { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
+      { input: resizedLogo, left: Math.max(0, logoLeft), top: Math.max(0, logoTop) },
     ])
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${chosenCorner} (with background)`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (shifted image ${logoSpace}px)`);
   return result;
 }
