@@ -369,84 +369,50 @@ export async function overlayBrandLogo(
   const logoHeight = logoMetadata.height || brand.logo_size_px;
 
   const margin = brand.logo_margin_px;
-  const isTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-  const isBottom = brand.logo_position === 'bottom-left' || brand.logo_position === 'bottom-right';
 
-  // Calculate how much space the logo needs
-  const logoSpace = logoHeight + margin * 2;
-
-  // Shift image to make room for logo: scale down and reposition
-  const scaledHeight = imgHeight - logoSpace;
-  const scaledImage = await sharp(imageBuffer)
-    .resize(imgWidth, scaledHeight, { fit: 'fill' })
-    .png()
-    .toBuffer();
-
-  // Sample the edge color for the strip background
-  const edgeY = isTop ? 0 : imgHeight - 1;
-  const edgeStrip = await sharp(imageBuffer)
-    .extract({ left: 0, top: edgeY, width: imgWidth, height: 1 })
-    .resize(1, 1)
-    .raw()
-    .toBuffer();
-  const stripR = edgeStrip[0], stripG = edgeStrip[1], stripB = edgeStrip[2];
-
-  // Build canvas: strip + scaled image
-  const stripBuffer = await sharp({
-    create: {
-      width: imgWidth,
-      height: logoSpace,
-      channels: 4,
-      background: { r: stripR, g: stripG, b: stripB, alpha: 1 },
-    },
-  }).png().toBuffer();
-
-  // Compose: strip at top/bottom, image fills the rest
-  const imageY = isTop ? logoSpace : 0;
-  const stripY = isTop ? 0 : scaledHeight;
-
-  const canvas = await sharp({
-    create: {
-      width: imgWidth,
-      height: imgHeight,
-      channels: 4,
-      background: { r: 0, g: 0, b: 0, alpha: 1 },
-    },
-  })
-    .composite([
-      { input: stripBuffer, left: 0, top: stripY },
-      { input: scaledImage, left: 0, top: imageY },
-    ])
-    .png()
-    .toBuffer();
-
-  // Place logo in the strip
-  let logoLeft = margin;
-  let logoTop = margin;
+  // Position logo
+  let left = margin;
+  let top = margin;
 
   switch (brand.logo_position) {
     case 'top-right':
-      logoLeft = imgWidth - logoWidth - margin;
+      left = imgWidth - logoWidth - margin;
       break;
     case 'bottom-left':
-      logoTop = scaledHeight + margin;
+      top = imgHeight - logoHeight - margin;
       break;
     case 'bottom-right':
-      logoLeft = imgWidth - logoWidth - margin;
-      logoTop = scaledHeight + margin;
+      left = imgWidth - logoWidth - margin;
+      top = imgHeight - logoHeight - margin;
       break;
     case 'top-left':
     default:
       break;
   }
 
-  const result = await sharp(canvas)
+  // Semi-transparent background behind logo for contrast
+  const padding = 10;
+  const bgWidth = logoWidth + padding * 2;
+  const bgHeight = logoHeight + padding * 2;
+  const bgLeft = Math.max(0, left - padding);
+  const bgTop = Math.max(0, top - padding);
+  const radius = 8;
+
+  const roundedRectSvg = Buffer.from(
+    `<svg width="${bgWidth}" height="${bgHeight}">
+      <rect x="0" y="0" width="${bgWidth}" height="${bgHeight}" rx="${radius}" ry="${radius}" fill="rgba(255,255,255,0.85)"/>
+    </svg>`
+  );
+  const logoBg = await sharp(roundedRectSvg).png().toBuffer();
+
+  const result = await sharp(imageBuffer)
     .composite([
-      { input: resizedLogo, left: Math.max(0, logoLeft), top: Math.max(0, logoTop) },
+      { input: logoBg, left: bgLeft, top: bgTop },
+      { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
     ])
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (shifted image ${logoSpace}px)`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px)`);
   return result;
 }
