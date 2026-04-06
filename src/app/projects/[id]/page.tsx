@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Upload, Play, ImageIcon, Settings, Globe } from 'lucide-react';
+import { ArrowLeft, Upload, Play, ImageIcon, Settings, Globe, Sparkles } from 'lucide-react';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
+import { BrandRegenButton } from './brand-regen-button';
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -23,15 +24,19 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   if (!project) notFound();
 
-  const [{ count: heroCount }, { count: swatchCount }, { data: latestBatch }] = await Promise.all([
+  const [{ count: heroCount }, { count: swatchCount }, { data: latestBatch }, { data: brandData }] = await Promise.all([
     supabase.from('hero_shots').select('*', { count: 'exact', head: true }).eq('project_id', id),
     supabase.from('swatches').select('*', { count: 'exact', head: true }).eq('project_id', id),
     supabase.from('generation_batches').select('approved_count').eq('project_id', id).order('created_at', { ascending: false }).limit(1),
+    project.brand_id
+      ? supabase.from('brands').select('id, name').eq('id', project.brand_id).single()
+      : Promise.resolve({ data: null }),
   ]);
 
   const heroes = heroCount || 0;
   const swatches = swatchCount || 0;
   const approved = latestBatch?.[0]?.approved_count || 0;
+  const brandName = brandData?.name || null;
 
   return (
     <div className="p-8">
@@ -138,6 +143,18 @@ export default async function ProjectDetailPage({ params }: Props) {
           </Card>
         </Link>
       </div>
+
+      {/* Brand Regen */}
+      {swatches > 0 && (
+        <div className="mt-8">
+          <BrandRegenButton
+            projectId={id}
+            brandName={brandName}
+            hasBrand={!!project.brand_id}
+            swatchCount={swatches}
+          />
+        </div>
+      )}
     </div>
   );
 }
