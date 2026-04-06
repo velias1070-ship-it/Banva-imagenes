@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Sparkles, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Sparkles, Loader2, ChevronDown, ChevronUp, Download, ImageIcon } from 'lucide-react';
 
 interface Hero {
   id: string;
@@ -35,11 +35,12 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
   const [swatches, setSwatches] = useState<Swatch[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetSwatchId, setTargetSwatchId] = useState('');
+  const [source, setSource] = useState<'heroes' | 'ml'>('heroes');
   const [loadingData, setLoadingData] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
-    if (expanded && heroes.length === 0) {
+    if (expanded && swatches.length === 0) {
       setLoadingData(true);
       Promise.all([
         fetch(`/api/projects/${projectId}/heroes`).then((r) => r.json()),
@@ -57,7 +58,7 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
         })
         .finally(() => setLoadingData(false));
     }
-  }, [expanded, projectId, heroes.length]);
+  }, [expanded, projectId, swatches.length]);
 
   function toggleHero(id: string) {
     setSelected((prev) => {
@@ -68,17 +69,20 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
     });
   }
 
+  const selectedSwatch = swatches.find((s) => s.id === targetSwatchId);
+  const canUseML = selectedSwatch?.sku_suffix;
+
   async function handleBrandRegen() {
     if (!hasBrand) {
       setResult({ ok: false, message: 'Asigna un Brand Book en Configuracion primero.' });
       return;
     }
-    if (selected.size === 0) {
-      setResult({ ok: false, message: 'Selecciona al menos una imagen.' });
-      return;
-    }
     if (!targetSwatchId) {
       setResult({ ok: false, message: 'Selecciona la variante destino.' });
+      return;
+    }
+    if (source === 'heroes' && selected.size === 0) {
+      setResult({ ok: false, message: 'Selecciona al menos una imagen.' });
       return;
     }
 
@@ -86,13 +90,19 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
     setResult(null);
 
     try {
+      const bodyPayload: Record<string, unknown> = {
+        target_swatch_id: targetSwatchId,
+        source,
+      };
+
+      if (source === 'heroes') {
+        bodyPayload.hero_ids = selected.size === heroes.length ? undefined : Array.from(selected);
+      }
+
       const res = await fetch(`/api/projects/${projectId}/brand-regen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          hero_ids: selected.size === heroes.length ? undefined : Array.from(selected),
-          target_swatch_id: targetSwatchId,
-        }),
+        body: JSON.stringify(bodyPayload),
       });
 
       const data = await res.json();
@@ -104,7 +114,7 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
 
       setResult({
         ok: true,
-        message: `Batch creado: ${data.total_jobs} imagenes con brand "${data.brand}".`,
+        message: `Batch creado: ${data.total_jobs} imagenes de "${data.variant}" con brand "${data.brand}".`,
       });
 
       setTimeout(() => router.push(`/projects/${projectId}/generate`), 2000);
@@ -125,7 +135,7 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
         <div className="flex-1">
           <CardTitle className="text-base">Regenerar con Brand</CardTitle>
           <CardDescription>
-            Toma las imagenes hero existentes y las regenera aplicando el Brand Book
+            Aplica el Brand Book a imagenes existentes o descargadas de ML
           </CardDescription>
         </div>
         {expanded ? <ChevronUp className="h-5 w-5 text-muted-foreground" /> : <ChevronDown className="h-5 w-5 text-muted-foreground" />}
@@ -136,20 +146,18 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
             <div className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-500">
               Sin Brand Book asignado. Configuralo en la seccion de Configuracion.
             </div>
-          ) : heroCount === 0 ? (
-            <div className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-500">
-              No hay imagenes hero. Sube imagenes primero en la seccion Hero Shots.
-            </div>
+          ) : loadingData ? (
+            <div className="py-4 text-center text-sm text-muted-foreground">Cargando datos...</div>
           ) : (
             <>
               <div className="mb-3 text-sm text-muted-foreground">
                 Brand: <span className="font-medium text-foreground">{brandName}</span>
               </div>
 
-              {/* Target variant */}
+              {/* Step 1: Target variant */}
               <div className="mb-4">
-                <label className="mb-2 block text-sm font-medium">Variante destino</label>
-                <Select value={targetSwatchId} onValueChange={setTargetSwatchId}>
+                <label className="mb-2 block text-sm font-medium">1. Variante destino</label>
+                <Select value={targetSwatchId} onValueChange={(v) => { setTargetSwatchId(v); setSource('heroes'); }}>
                   <SelectTrigger>
                     <SelectValue placeholder="¿Para qué variante son estas imágenes?" />
                   </SelectTrigger>
@@ -163,18 +171,55 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
                 </Select>
               </div>
 
-              <div className="mb-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-sm font-medium">Seleccionar imagenes</span>
+              {/* Step 2: Source */}
+              {targetSwatchId && (
+                <div className="mb-4">
+                  <label className="mb-2 block text-sm font-medium">2. Origen de las imágenes</label>
                   <div className="flex gap-2">
-                    <button onClick={() => setSelected(new Set(heroes.map((h) => h.id)))} className="text-xs text-primary hover:underline">Todas</button>
-                    <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground hover:underline">Ninguna</button>
+                    <Button
+                      type="button"
+                      variant={source === 'ml' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setSource('ml')}
+                      disabled={!canUseML}
+                    >
+                      <Download className="mr-1.5 h-3.5 w-3.5" />
+                      Traer de ML
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={source === 'heroes' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setSource('heroes')}
+                      disabled={heroes.length === 0}
+                    >
+                      <ImageIcon className="mr-1.5 h-3.5 w-3.5" />
+                      Heroes existentes ({heroes.length})
+                    </Button>
                   </div>
+                  {source === 'ml' && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Descargará todas las fotos de la publicación ML de {selectedSwatch?.name} en 1200x1200
+                    </p>
+                  )}
+                  {!canUseML && (
+                    <p className="mt-2 text-xs text-amber-500">
+                      Esta variante no tiene SKU vinculado — no se puede traer de ML
+                    </p>
+                  )}
                 </div>
+              )}
 
-                {loadingData ? (
-                  <div className="py-4 text-center text-sm text-muted-foreground">Cargando imagenes...</div>
-                ) : (
+              {/* Step 3: Hero selection (only for source='heroes') */}
+              {targetSwatchId && source === 'heroes' && heroes.length > 0 && (
+                <div className="mb-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-medium">3. Seleccionar imagenes</span>
+                    <div className="flex gap-2">
+                      <button onClick={() => setSelected(new Set(heroes.map((h) => h.id)))} className="text-xs text-primary hover:underline">Todas</button>
+                      <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground hover:underline">Ninguna</button>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4">
                     {heroes.map((h) => (
                       <label
@@ -194,30 +239,35 @@ export function BrandRegenButton({ projectId, brandName, hasBrand, heroCount }: 
                       </label>
                     ))}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  {selected.size} de {heroes.length} seleccionadas
-                </span>
-                <Button
-                  onClick={handleBrandRegen}
-                  disabled={loading || selected.size === 0}
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Procesando...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      Regenerar {selected.size > 0 ? `(${selected.size})` : ''}
-                    </>
-                  )}
-                </Button>
-              </div>
+              {/* Action */}
+              {targetSwatchId && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    {source === 'ml'
+                      ? `Descargará fotos de ML → ${selectedSwatch?.name}`
+                      : `${selected.size} imagenes → ${selectedSwatch?.name}`}
+                  </span>
+                  <Button
+                    onClick={handleBrandRegen}
+                    disabled={loading || (source === 'heroes' && selected.size === 0)}
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        {source === 'ml' ? 'Descargando de ML...' : 'Procesando...'}
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        Regenerar con Brand
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </>
           )}
 
