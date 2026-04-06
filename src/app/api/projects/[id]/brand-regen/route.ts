@@ -87,12 +87,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
   }
 
-  // 2. Get swatches with sku_suffix
-  const { data: swatches } = await supabase
+  // 2. Get swatches with sku_suffix (optionally filtered by swatch_ids)
+  const swatchIds: string[] | undefined = body.swatch_ids;
+
+  let swatchQuery = supabase
     .from('swatches')
     .select('id, name, sku_suffix, storage_path')
-    .eq('project_id', projectId)
-    .order('display_order');
+    .eq('project_id', projectId);
+
+  if (swatchIds?.length) {
+    swatchQuery = swatchQuery.in('id', swatchIds);
+  }
+
+  const { data: swatches } = await swatchQuery.order('display_order');
 
   if (!swatches?.length) {
     return NextResponse.json({ error: 'No swatches found in project' }, { status: 400 });
