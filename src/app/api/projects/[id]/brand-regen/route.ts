@@ -142,52 +142,55 @@ export async function POST(request: NextRequest, context: RouteContext) {
         continue;
       }
 
-      // Download first picture as hero
-      const pic = item.pictures[0];
-      const imgRes = await fetch(pic.secure_url);
-      if (!imgRes.ok) {
-        errors.push({ sku: swatch.sku_suffix!, error: `Download failed: ${imgRes.status}` });
-        continue;
+      // Download ALL pictures from the listing as heroes
+      for (let picIdx = 0; picIdx < item.pictures.length; picIdx++) {
+        const pic = item.pictures[picIdx];
+        const imgRes = await fetch(pic.secure_url);
+        if (!imgRes.ok) {
+          errors.push({ sku: swatch.sku_suffix!, error: `Download failed pic ${picIdx + 1}: ${imgRes.status}` });
+          continue;
+        }
+
+        const imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+        const heroId = crypto.randomUUID();
+        const ext = pic.secure_url.includes('.webp') ? 'webp' : 'jpg';
+        const storagePath = `projects/${projectId}/heroes/${heroId}.${ext}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('images')
+          .upload(storagePath, imageBuffer, {
+            contentType: ext === 'webp' ? 'image/webp' : 'image/jpeg',
+            upsert: true,
+          });
+
+        if (uploadError) {
+          errors.push({ sku: swatch.sku_suffix!, error: `Upload failed pic ${picIdx + 1}: ${uploadError.message}` });
+          continue;
+        }
+
+        // Infer shot type from position: first = main, rest = lifestyle
+        const shotType = picIdx === 0 ? 'main' : 'lifestyle';
+
+        const { data: hero, error: heroError } = await supabase
+          .from('hero_shots')
+          .insert({
+            project_id: projectId,
+            filename: `${swatch.sku_suffix}_ml_${picIdx + 1}.${ext}`,
+            storage_path: storagePath,
+            shot_type: shotType,
+            display_order: nextOrder++,
+            mime_type: ext === 'webp' ? 'image/webp' : 'image/jpeg',
+          })
+          .select('id')
+          .single();
+
+        if (heroError || !hero) {
+          errors.push({ sku: swatch.sku_suffix!, error: `Hero insert failed pic ${picIdx + 1}: ${heroError?.message}` });
+          continue;
+        }
+
+        heroSwatchPairs.push({ heroId: hero.id, swatchId: swatch.id });
       }
-
-      const imageBuffer = Buffer.from(await imgRes.arrayBuffer());
-      const heroId = crypto.randomUUID();
-      const ext = pic.secure_url.includes('.webp') ? 'webp' : 'jpg';
-      const storagePath = `projects/${projectId}/heroes/${heroId}.${ext}`;
-
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
-        .from('images')
-        .upload(storagePath, imageBuffer, {
-          contentType: ext === 'webp' ? 'image/webp' : 'image/jpeg',
-          upsert: true,
-        });
-
-      if (uploadError) {
-        errors.push({ sku: swatch.sku_suffix!, error: `Upload failed: ${uploadError.message}` });
-        continue;
-      }
-
-      // Create hero_shots record
-      const { data: hero, error: heroError } = await supabase
-        .from('hero_shots')
-        .insert({
-          project_id: projectId,
-          filename: `${swatch.sku_suffix}_ml.${ext}`,
-          storage_path: storagePath,
-          shot_type: 'main',
-          display_order: nextOrder++,
-          mime_type: ext === 'webp' ? 'image/webp' : 'image/jpeg',
-        })
-        .select('id')
-        .single();
-
-      if (heroError || !hero) {
-        errors.push({ sku: swatch.sku_suffix!, error: `Hero insert failed: ${heroError?.message}` });
-        continue;
-      }
-
-      heroSwatchPairs.push({ heroId: hero.id, swatchId: swatch.id });
     } catch (err) {
       errors.push({ sku: swatch.sku_suffix!, error: err instanceof Error ? err.message : String(err) });
     }
