@@ -81,6 +81,9 @@ export default function HeroShotsPage() {
     if (res.ok) {
       setHeroes((prev) => prev.filter((h) => h.id !== heroId));
       toast.success('Hero shot eliminado');
+    } else {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      toast.error(`Error eliminando: ${err.error || res.status}`);
     }
   }
 

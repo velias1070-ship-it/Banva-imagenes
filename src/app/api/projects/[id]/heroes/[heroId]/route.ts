@@ -20,7 +20,28 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Hero not found' }, { status: 404 });
   }
 
-  // Delete from storage
+  // Delete associated generation jobs first (FK constraint)
+  const { data: jobs } = await supabase
+    .from('generation_jobs')
+    .select('id, output_storage_path')
+    .eq('hero_shot_id', heroId);
+
+  if (jobs?.length) {
+    // Delete generated images from storage
+    const generatedPaths = jobs
+      .map(j => j.output_storage_path)
+      .filter(Boolean) as string[];
+    if (generatedPaths.length) {
+      await supabase.storage.from('images').remove(generatedPaths);
+    }
+    // Delete jobs
+    await supabase
+      .from('generation_jobs')
+      .delete()
+      .eq('hero_shot_id', heroId);
+  }
+
+  // Delete hero from storage
   if (hero.storage_path) {
     const { error: storageErr } = await supabase.storage.from('images').remove([hero.storage_path]);
     if (storageErr) {
@@ -28,7 +49,7 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
     }
   }
 
-  // Delete from DB
+  // Delete hero from DB
   const { error } = await supabase
     .from('hero_shots')
     .delete()
