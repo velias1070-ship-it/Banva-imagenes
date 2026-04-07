@@ -114,9 +114,7 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   }
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
-  if (mode === 'full') {
-    parts.push(`PROHIBIDO: NO generar logotipos, nombres de marca, ni watermarks en la imagen. NUNCA escribir "${brand.name}" ni ninguna marca en la imagen. El logo se compone automaticamente en post-proceso — si lo generas, quedara DUPLICADO y MAL POSICIONADO.`);
-  }
+  parts.push(`Si la imagen original tiene un logotipo o nombre de marca visible, MANTENLO exactamente como esta — misma posicion, mismo tamaño. NO lo agrandes, NO lo muevas, NO lo rediseñes. El logo se ajusta en post-proceso.`);
 
   if (hasTextElements && hasColors) {
     // ── SPECIFIC per-element color instructions ──
