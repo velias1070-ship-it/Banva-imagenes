@@ -15,6 +15,7 @@ import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
 import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
+import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -212,6 +213,56 @@ async function regenerateJob(
       swatchBase64 = croppedSwatch.toString('base64');
     }
 
+    // AI-based swatch flattening — generates flat pattern view for detailed textiles
+    if (strategy.preprocessing.flatten_swatch_ai && !isBrandOnly) {
+      // Check cache first: look for flat version in swatch_images
+      const { data: flatCache } = await supabase
+        .from('swatch_images')
+        .select('storage_path')
+        .eq('swatch_id', swatch.id)
+        .eq('label', 'flat')
+        .limit(1)
+        .single();
+
+      if (flatCache?.storage_path) {
+        // Use cached flat swatch
+        const { data: flatData } = await supabase.storage.from('images').download(flatCache.storage_path);
+        if (flatData) {
+          const flatBuffer = Buffer.from(await flatData.arrayBuffer());
+          swatchBase64 = flatBuffer.toString('base64');
+          console.log(`[regenerateJob] Using cached flat swatch for ${swatch.name}`);
+        }
+      } else {
+        // Generate flat swatch with AI
+        console.log(`[regenerateJob] Generating flat swatch for ${swatch.name}...`);
+        const flatBuffer = await flattenSwatchWithAI(
+          swatchBase64,
+          'image/png',
+          swatch.color_description || undefined
+        );
+        if (flatBuffer) {
+          swatchBase64 = flatBuffer.toString('base64');
+          // Cache for future jobs (non-blocking)
+          const flatPath = `projects/${projectId}/swatches/${swatch.id}_flat.png`;
+          supabase.storage.from('images').upload(flatPath, flatBuffer, { contentType: 'image/png', upsert: true }).then(({ error }) => {
+            if (!error) {
+              supabase.from('swatch_images').insert({
+                id: crypto.randomUUID(),
+                swatch_id: swatch.id,
+                storage_path: flatPath,
+                label: 'flat',
+                file_size_kb: Math.round(flatBuffer.length / 1024),
+                display_order: 99,
+              }).then(() => {});
+            }
+          });
+          console.log(`[regenerateJob] Flat swatch generated and cached for ${swatch.name}`);
+        } else {
+          console.log(`[regenerateJob] Flat swatch generation failed, using cropped swatch`);
+        }
+      }
+    }
+
     // Build prompt — use BRAND_ONLY prompt if original job was BRAND_ONLY
     let prompt: string;
 
@@ -316,6 +367,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       temperature,
       dark_swatch: darkSwatch,
       crop_swatch: strategy.preprocessing.crop_swatch,
+      flatten_swatch_ai: strategy.preprocessing.flatten_swatch_ai || false,
       swatch_color: swatchColorDescription,
       qa_feedback_used: qaFeedback ? true : false,
       manual_regeneration: true,

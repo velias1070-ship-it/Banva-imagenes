@@ -14,6 +14,7 @@ export interface CategoryStrategy {
   preprocessing: {
     crop_swatch: boolean;
     flatten_hero: boolean;
+    flatten_swatch_ai?: boolean;
   };
   prompt: {
     product_context: string;
@@ -41,7 +42,7 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     label: 'Quilts',
     generation_mode: 'reference',
     retry_escalation: 'reference',
-    preprocessing: { crop_swatch: true, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false, flatten_swatch_ai: true },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
