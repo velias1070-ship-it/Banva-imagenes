@@ -16,6 +16,7 @@ import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZo
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
+import { verifySwatch } from '@/lib/swatch-verifier';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -746,6 +747,33 @@ La imagen generada DEBE coincidir con esta descripción. Si el resultado no coin
       }
     } else {
       console.log(`[process-next] No brand for project ${project.id}`);
+    }
+
+    // ── Swatch Fidelity Verification (Gemini 2.5 Pro) ──
+    if (!isBrandOnly) {
+      try {
+        const generatedB64 = imageBuffer.toString('base64');
+        const verification = await verifySwatch(
+          swatchBase64,
+          generatedB64,
+          heroBase64,
+          job.swatch.name,
+          swatchPatternDescription,
+        );
+        if (verification) {
+          promptMetadata.verification_score = verification.score;
+          promptMetadata.verification_pass = verification.pass;
+          promptMetadata.verification_issues = verification.issues;
+          if (!verification.pass) {
+            console.log(`[process-next] ⚠ Verification FAILED for ${job.swatch.name}: ${verification.feedback} (score: ${verification.score})`);
+            promptMetadata.verification_feedback = verification.feedback;
+          } else {
+            console.log(`[process-next] ✓ Verification passed for ${job.swatch.name} (score: ${verification.score})`);
+          }
+        }
+      } catch (verifyErr) {
+        console.error('[process-next] Verification failed (non-blocking):', verifyErr);
+      }
     }
 
     // Upload result — name includes SKU + color + shot type for searchability

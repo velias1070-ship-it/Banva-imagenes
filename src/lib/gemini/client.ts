@@ -1,6 +1,7 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
 const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview').trim();
 const GEMINI_ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-2.0-flash';
+const GEMINI_VERIFY_MODEL = process.env.GEMINI_VERIFY_MODEL || 'gemini-2.5-pro-preview-06-05';
 const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const MAX_RETRIES = 3;
@@ -288,4 +289,50 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
     errorCode: 'MAX_RETRIES',
     durationMs: Date.now() - start,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pro model verification — uses Gemini 2.5 Pro for high-quality visual analysis
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function analyzeWithProModel(request: GeminiAnalysisRequest): Promise<GeminiAnalysisResult> {
+  const url = `${GEMINI_ENDPOINT}/${GEMINI_VERIFY_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const start = Date.now();
+
+  const parts: Array<Record<string, unknown>> = [];
+  for (const img of request.images) {
+    parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
+  }
+  parts.push({ text: request.promptText });
+
+  const body = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseModalities: ['TEXT'],
+      temperature: request.temperature ?? 0.1,
+    },
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { success: false, error: errorData?.error?.message || `HTTP ${response.status}`, durationMs: Date.now() - start };
+    }
+
+    const data = await response.json();
+    const textResponse = data?.candidates?.[0]?.content?.parts
+      ?.filter((p: Record<string, unknown>) => p.text)
+      .map((p: Record<string, string>) => p.text)
+      .join('\n') || '';
+
+    return { success: true, textResponse, durationMs: Date.now() - start };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error', durationMs: Date.now() - start };
+  }
 }
