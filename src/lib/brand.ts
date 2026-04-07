@@ -164,7 +164,7 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
 
   // When hero is infografia (has text) and logo goes at the top, tell Gemini to shift text down
   if (needsTextShift) {
-    const clearSpace = brand.logo_size_px + brand.logo_margin_px + 20;
+    const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
     const side = brand.logo_position === 'top-left' ? 'superior izquierda' : 'superior derecha';
     parts.push(`LOGO EN POST-PROCESO: Se va a agregar un logo de marca en la esquina ${side} de la imagen (aproximadamente ${clearSpace}px desde la esquina). Si el texto del hero original esta en esa zona, DESPLAZA todo el texto hacia abajo para que NO quede en los primeros ${clearSpace}px superiores del lado ${brand.logo_position === 'top-left' ? 'izquierdo' : 'derecho'}. El texto debe quedar DEBAJO del espacio reservado para el logo.`);
   }
@@ -423,7 +423,7 @@ export async function clearLogoZone(
   const topTextElements = textElements.filter(el => el.position === 'top');
   if (topTextElements.length === 0) return imageBuffer;
 
-  const clearSpace = brand.logo_size_px + brand.logo_margin_px + 30;
+  const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
   const isLeft = brand.logo_position === 'top-left';
   const side = isLeft ? 'izquierdo' : 'derecho';
   const textList = topTextElements.map(el => `"${el.text}"`).join(', ');
