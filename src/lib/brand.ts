@@ -83,7 +83,7 @@ const ROLE_TYPOGRAPHY_MAP: Record<TextElement['role'], keyof Pick<BrandConfig, '
  * When textElements are provided (detected from the hero image), generates
  * SPECIFIC per-element color and typography instructions instead of generic ones.
  */
-export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, textElements?: TextElement[] | null): string {
+export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, textElements?: TextElement[] | null, mode: 'full' | 'light' = 'full'): string {
   // If no typography and no guidelines configured, don't inject anything into prompt
   // (logo overlay will still be applied separately by Sharp)
   const hasPerRoleTypography = brand.typography_title?.trim() || brand.typography_subtitle?.trim() || brand.typography_subsubtitle?.trim();
@@ -114,7 +114,9 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   }
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
-  parts.push(`PROHIBIDO: NO generar logotipos, nombres de marca, ni watermarks en la imagen. NUNCA escribir "${brand.name}" ni ninguna marca en la imagen. El logo se compone automaticamente en post-proceso — si lo generas, quedara DUPLICADO y MAL POSICIONADO.`);
+  if (mode === 'full') {
+    parts.push(`PROHIBIDO: NO generar logotipos, nombres de marca, ni watermarks en la imagen. NUNCA escribir "${brand.name}" ni ninguna marca en la imagen. El logo se compone automaticamente en post-proceso — si lo generas, quedara DUPLICADO y MAL POSICIONADO.`);
+  }
 
   if (hasTextElements && hasColors) {
     // ── SPECIFIC per-element color instructions ──

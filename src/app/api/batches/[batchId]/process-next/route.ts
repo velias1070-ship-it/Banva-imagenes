@@ -547,12 +547,12 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           }
         }
 
-        // Only inject brand prompt section for BRAND_ONLY jobs
-        // (brand data is still loaded above for logo overlay post-processing)
-        if (isBrandOnly) {
-          const brandSection = buildBrandPromptSection(brand, effectiveShotType, textElements);
+        // Inject brand prompt: 'full' for BRAND_ONLY (includes logo prohibition), 'light' for normal (colors + typography only)
+        const brandMode = isBrandOnly ? 'full' : 'light';
+        const brandSection = buildBrandPromptSection(brand, effectiveShotType, textElements, brandMode);
 
-          // If text overlaps logo zone, prepend shift instruction to START of prompt
+        // If text overlaps logo zone, prepend shift instruction (BRAND_ONLY only)
+        if (isBrandOnly) {
           const hasTopText = textElements?.some(el => el.position === 'top');
           const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
           if (hasTopText && logoAtTop) {
@@ -562,9 +562,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             prompt = `FIRST PRIORITY: A ${brand.logo_size_px}px logo goes at top-${side}. Move ALL text in the top ${clearSpace}px down below that line. Texts to move: ${topTexts}. Do NOT add white boxes or backgrounds — keep the natural image background. Do NOT invent new text.\n\n${prompt}`;
             console.log(`[process-next] Prepended shift instruction for top texts`);
           }
-
-          prompt += brandSection;
         }
+
+        prompt += brandSection;
         console.log(`[process-next] Brand loaded: ${brand.name}`);
       } else {
         console.log(`[process-next] Brand ${projectBrandId} not found in DB`);
