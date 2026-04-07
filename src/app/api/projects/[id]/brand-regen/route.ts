@@ -129,6 +129,21 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'No pictures found on ML listing' }, { status: 400 });
     }
 
+    // Check if heroes from this SKU already exist — reuse them instead of re-downloading
+    const skuPrefix = `${targetSwatch.sku_suffix}_ml_`;
+    const { data: existingMlHeroes } = await supabase
+      .from('hero_shots')
+      .select('id, filename')
+      .eq('project_id', projectId)
+      .like('filename', `${skuPrefix}%`)
+      .order('display_order');
+
+    if (existingMlHeroes && existingMlHeroes.length > 0) {
+      console.log(`[brand-regen] Reusing ${existingMlHeroes.length} existing ML heroes for ${targetSwatch.sku_suffix}`);
+      heroIds = existingMlHeroes.map((h) => h.id);
+    } else {
+      // No existing heroes — download from ML
+
     // Get current max display_order
     const { data: existingHeroes } = await supabase
       .from('hero_shots')
@@ -181,6 +196,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (heroIds.length === 0) {
       return NextResponse.json({ error: 'Failed to download any ML images' }, { status: 400 });
     }
+    } // end else (no existing heroes)
   } else {
     // Use existing heroes
     const heroFilterIds: string[] | undefined = body.hero_ids;
