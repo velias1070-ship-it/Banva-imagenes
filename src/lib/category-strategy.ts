@@ -49,9 +49,10 @@ There are NO sheets and NO fitted sheets in this product.`,
 
       what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
 
-      what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces in Image 1.
+      what_to_change_detail: `Apply the color, pattern AND quilted texture from Image 2 to ALL visible fabric surfaces in Image 1.
+The swatch (Image 2) shows a QUILTED fabric — the generated image MUST reproduce the quilting stitching (channel or diamond pattern visible on the surface). The fabric must NOT look flat or smooth like a sheet.
 Maintain EXACTLY the same fabric folds, creases, draping, and disposition as Image 1.
-The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern changes.
+The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern/texture changes.
 If Image 1 shows a comparison (left vs right), apply the new pattern to BOTH sides.
 DO NOT change the fabric's physical form, folds, or arrangement.`,
 
