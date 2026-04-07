@@ -60,8 +60,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
     composition_match: 0.20,
     visual_quality: 0.15,
     resolution: 0.05,
-    aspect_ratio: 0.05,
-    ml_compliance: 0.05,
+    aspect_ratio: 0.00,
+    ml_compliance: 0.10,
   },
   batch: {
     halt_flagged_percent: 0.20,

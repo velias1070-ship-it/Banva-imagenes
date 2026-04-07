@@ -35,6 +35,9 @@ export interface QACriteria {
 
   color_accuracy_blocker: boolean;    // If true, low color accuracy → flag regardless of score
   color_accuracy_blocker_threshold: number; // Below this → flag (catches temperature shifts)
+
+  ml_compliance_blocker: boolean;     // If true, low ml_compliance → flag regardless of score
+  ml_compliance_blocker_threshold: number; // Below this → flag (catches unwanted text/logo generation)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,8 +58,8 @@ const DEFAULT_CRITERIA: QACriteria = {
     composition_match: 0.20,
     visual_quality: 0.15,
     resolution: 0.05,
-    aspect_ratio: 0.05,
-    ml_compliance: 0.05,
+    aspect_ratio: 0.00,
+    ml_compliance: 0.10,
   },
 
   product_fidelity_blocker: true,
@@ -64,6 +67,9 @@ const DEFAULT_CRITERIA: QACriteria = {
 
   color_accuracy_blocker: true,
   color_accuracy_blocker_threshold: 0.45,
+
+  ml_compliance_blocker: true,
+  ml_compliance_blocker_threshold: 0.40,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +97,10 @@ export function getQACriteria(settings?: ProjectSettings): QACriteria {
     // Color accuracy blocker — always use system defaults (not overridable per-project yet)
     color_accuracy_blocker: DEFAULT_CRITERIA.color_accuracy_blocker,
     color_accuracy_blocker_threshold: DEFAULT_CRITERIA.color_accuracy_blocker_threshold,
+
+    // ML compliance blocker — always use system defaults (not overridable per-project yet)
+    ml_compliance_blocker: DEFAULT_CRITERIA.ml_compliance_blocker,
+    ml_compliance_blocker_threshold: DEFAULT_CRITERIA.ml_compliance_blocker_threshold,
   };
 }
 
@@ -157,6 +167,18 @@ export function determineAction(
       action: 'flag',
       escalate: false,
       reason: `Color accuracy ${(detail.color_accuracy * 100).toFixed(0)}% below blocker threshold ${(criteria.color_accuracy_blocker_threshold * 100).toFixed(0)}% — likely color temperature shift`,
+    };
+  }
+
+  // 1c. ML compliance blocker — unwanted text/logo generated = flag immediately
+  if (
+    criteria.ml_compliance_blocker &&
+    detail.ml_compliance < criteria.ml_compliance_blocker_threshold
+  ) {
+    return {
+      action: 'flag',
+      escalate: false,
+      reason: `ML compliance ${(detail.ml_compliance * 100).toFixed(0)}% below blocker threshold ${(criteria.ml_compliance_blocker_threshold * 100).toFixed(0)}% — unwanted text/logo generated`,
     };
   }
 
