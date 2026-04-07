@@ -146,23 +146,25 @@ export default function HeroShotsPage() {
                 <div className="space-y-3">
                   {heroes.map((hero) => (
                     <div key={hero.id} className="flex items-center gap-3 rounded-lg border p-2">
-                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100">
+                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100 relative">
                         {hero.storage_path ? (
                           <img
                             src={`${SUPABASE_URL}/storage/v1/object/public/images/${hero.storage_path}`}
                             alt={hero.filename}
                             className="h-full w-full object-cover"
+                            loading="lazy"
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
                               target.style.display = 'none';
-                              target.parentElement!.innerHTML = `<div class="flex h-full items-center justify-center text-xs text-red-400">${hero.shot_type}</div>`;
+                              if (target.nextElementSibling) {
+                                (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                              }
                             }}
                           />
-                        ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-gray-400">
-                            {hero.shot_type}
-                          </div>
-                        )}
+                        ) : null}
+                        <div className={`h-full items-center justify-center text-xs text-gray-400 ${hero.storage_path ? 'hidden' : 'flex'}`}>
+                          {hero.shot_type}
+                        </div>
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="truncate text-sm font-medium">{hero.filename}</p>
