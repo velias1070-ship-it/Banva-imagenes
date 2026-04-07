@@ -440,19 +440,16 @@ export async function clearLogoZone(
       swatchMimeType: 'image/png',
       promptText: `Reproduce this image EXACTLY with ONE change:
 
-The top-${isLeft ? 'left' : 'right'} corner (~${clearSpace}x${clearSpace}px) must be CLEAR — no text there. A brand logo will be placed in that corner.
+A brand logo (${brand.logo_size_px}px wide) will be placed at the top-${isLeft ? 'left' : 'right'}, at ${brand.logo_margin_px}px from the edges.
 
-These texts overlap with that zone: ${textList}
+ALL text that is currently in the top ${clearSpace}px of the image must move DOWN so it starts BELOW ${clearSpace}px from the top. This includes: ${textList}
 
-Fix the overlap by EITHER:
-- Moving the text down so it starts below ~${clearSpace}px from the top
-- OR reducing the text size slightly so it fits below the logo zone
-- Whichever looks more natural
+Move the text down just enough — keep it close to the ${clearSpace}px line, not in the middle of the image.
 
 RULES:
-- Do NOT change anything else: product, background, other text elements, layout
-- Keep the same text content and colors
-- ONLY adjust position or size of the overlapping text
+- Keep ALL text content, colors, fonts, and sizes identical
+- Keep the product, background, people, and all non-text elements unchanged
+- ONLY shift the vertical position of text in the top ${clearSpace}px
 
 Output: same resolution, RGB, PNG.`,
       temperature: 0.15,
