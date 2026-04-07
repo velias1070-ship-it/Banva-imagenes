@@ -391,16 +391,17 @@ export async function overlayBrandLogo(
       break;
   }
 
-  // Build logo with semi-transparent background pill for contrast over busy areas
-  const padX = 12;
-  const padY = 8;
+  // Build logo with opaque white background to guarantee clean logo area
+  // The pill is fully opaque so it covers any text/content behind the logo
+  const padX = 16;
+  const padY = 12;
   const pillW = logoWidth + padX * 2;
   const pillH = logoHeight + padY * 2;
-  const pillRadius = Math.min(12, Math.floor(pillH / 4));
+  const pillRadius = Math.min(14, Math.floor(pillH / 4));
 
   const pillSvg = Buffer.from(
     `<svg width="${pillW}" height="${pillH}">
-      <rect x="0" y="0" width="${pillW}" height="${pillH}" rx="${pillRadius}" ry="${pillRadius}" fill="white" fill-opacity="0.65"/>
+      <rect x="0" y="0" width="${pillW}" height="${pillH}" rx="${pillRadius}" ry="${pillRadius}" fill="white" fill-opacity="0.95"/>
     </svg>`
   );
 
