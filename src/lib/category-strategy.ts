@@ -18,6 +18,8 @@ export interface CategoryStrategy {
   prompt: {
     product_context: string;
     what_to_change: string;
+    /** Shot-type-aware instruction for detail/infografia shots where fabric form must be preserved */
+    what_to_change_detail?: string;
     final_check: string;
     dark_swatch_note: string;
   };
@@ -46,6 +48,12 @@ The quilt product set includes: the quilt itself (bed cover) + matching pillowca
 There are NO sheets and NO fitted sheets in this product.`,
 
       what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
+
+      what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces in Image 1.
+Maintain EXACTLY the same fabric folds, creases, draping, and disposition as Image 1.
+The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern changes.
+If Image 1 shows a comparison (left vs right), apply the new pattern to BOTH sides.
+DO NOT change the fabric's physical form, folds, or arrangement.`,
 
       final_check: `Verifica: ¿el quilt tiene el diseño de la imagen 2 y NO el patrón original?`,
 
@@ -104,6 +112,10 @@ DO NOT change:
 * Non-textile elements (walls, furniture, floor, props)
 * Persons, hands, or clothing`,
 
+      what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces.
+Maintain EXACTLY the same fabric folds, creases, and disposition as Image 1.
+Only change the color/pattern — the physical form of the fabric must be identical.`,
+
       final_check: `Before outputting, verify:
 1. Do the PILLOWCASES match the pillowcase pattern from Image 2?
 2. Does the FITTED SHEET match the fitted sheet pattern from Image 2? (NOT gray unless the swatch shows gray)
@@ -147,6 +159,10 @@ DO NOT change:
 * Non-textile elements (walls, furniture, floor, props)
 * Persons, hands, or clothing`,
 
+      what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces.
+Maintain EXACTLY the same fabric folds, creases, and disposition as Image 1.
+Only change the color/pattern — the physical form of the fabric must be identical.`,
+
       final_check: `Before outputting, verify:
 1. Does the BEDSPREAD match the pattern/color from Image 2?
 2. Do any PILLOW SHAMS match Image 2?
@@ -186,6 +202,10 @@ DO NOT change:
 * Non-textile elements (walls, furniture, floor, props)
 * Persons, hands, or clothing
 * The bed underneath the plumon`,
+
+      what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces.
+Maintain EXACTLY the same fabric folds, creases, and disposition as Image 1.
+Only change the color/pattern — the physical form of the fabric must be identical.`,
 
       final_check: `Before outputting, verify:
 1. Does the PLUMON color match Image 2?
@@ -299,6 +319,10 @@ DEBE SER IDENTICO a la Imagen 1:
 NO CAMBIAR NADA excepto el color de la tela de las toallas.
 NO inventar fondo, props, escena ni composicion nueva.
 NO agregar ni quitar elementos.`,
+
+      what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces.
+Maintain EXACTLY the same fabric folds, creases, and disposition as Image 1.
+Only change the color/pattern — the physical form of the fabric must be identical.`,
 
       final_check: `Before outputting, verify:
 1. Do ALL towels match Image 2's COLOR (not composition)?
@@ -787,7 +811,13 @@ export function buildEditPrompt(
     shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO INFOGRAFIA: La Imagen 1 tiene TEXTO SUPERPUESTO, iconos y/o elementos graficos. La salida DEBE mantener EXACTAMENTE el mismo texto, iconos, posicion del texto, fuente, y layout grafico. Solo cambia el diseño/color del producto textil visible. El texto, los iconos y el fondo deben ser IDENTICOS a la Imagen 1.`;
   }
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${strategy.prompt.what_to_change} No agregues marcas de agua ni logos.${darkNote}${colorAnchor}${learnings}${shotNote}${qaNote}
+  // Use shot-type-aware instructions if available for detail/infografia shots
+  const whatToChange = (isDetailShot || isInfoShot)
+    && strategy.prompt.what_to_change_detail
+    ? strategy.prompt.what_to_change_detail
+    : strategy.prompt.what_to_change;
+
+  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${whatToChange} No agregues marcas de agua ni logos.${darkNote}${colorAnchor}${learnings}${shotNote}${qaNote}
 
 REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.
 
@@ -833,11 +863,19 @@ Genera una imagen fotorrealista de ${resolution}.`;
     ? `\n\n${strategy.reference_instruction}`
     : '';
 
+  const isInfoShot = shotType === 'infografia';
+
+  // Use shot-type-aware instructions if available for detail/infografia shots
+  const whatToChange = (isDetailShot || isInfoShot)
+    && strategy.prompt.what_to_change_detail
+    ? strategy.prompt.what_to_change_detail
+    : strategy.prompt.what_to_change;
+
   return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
 
 Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
 
-${strategy.prompt.what_to_change} No agregues marcas de agua ni logos.${referenceNote}${colorAnchor}${darkNote}${qaNote}${learnings}
+${whatToChange} No agregues marcas de agua ni logos.${referenceNote}${colorAnchor}${darkNote}${qaNote}${learnings}
 
 IDIOMA: TODO texto visible en la imagen generada DEBE estar en ESPAÑOL. Si hay texto en ingles, traducirlo. El mercado es MercadoLibre Chile.
 
