@@ -588,12 +588,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       );
     }
 
-    // ── Inject swatch pattern description into prompt ──
-    if (swatchPatternDescription) {
-      prompt += `\n\nDESCRIPCIÓN DETALLADA DEL PATRÓN DEL SWATCH (REPRODUCIR EXACTAMENTE):
-${swatchPatternDescription}
-La imagen generada DEBE coincidir con esta descripción. Si el resultado no coincide con lo descrito arriba, está MAL.`;
-    }
+    // NOTE: swatch pattern description is NOT injected into the generation prompt.
+    // The visual swatch image is the sole reference — text descriptions cause Gemini
+    // to "interpret" rather than copy. The description is used by the verifier (2.5 Pro) only.
 
     // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
     const skipBrand = job.prompt_adjustment === 'SKIP_BRAND';
