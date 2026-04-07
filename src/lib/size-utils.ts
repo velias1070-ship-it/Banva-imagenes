@@ -84,18 +84,16 @@ export function buildSizePromptNote(
 AJUSTE DE TAMAÑO — ESTE PRODUCTO ES DE ${sizeLabel.toUpperCase()}:
 La imagen generada debe reflejar un producto de ${sizeLabel}, NO de 2 plazas ni Queen.
 
-CAMBIOS OBLIGATORIOS EN TEXTO:
-- Si hay texto que dice "Queen", "2 Plazas", "Full", o cualquier referencia a tamaño mayor → CAMBIAR a "${sizeLabel}"
-- Si hay texto que dice "2 Pillow Cases" o "2 Fundas de Almohada" → CAMBIAR a "1 Funda de Almohada"
-- Si hay texto en ingles sobre cantidades → traducir a español y ajustar a ${sizeLabel}
+PROHIBIDO: NO agregar texto nuevo a la imagen. NO escribir "1.5 Plazas", "Set 3 Piezas", ni NINGUN otro texto que no exista ya en la imagen original. Solo modificar texto que YA EXISTE en el hero.
 
-CAMBIOS OBLIGATORIOS VISUALES (MUY IMPORTANTE):
-- El set de ${sizeLabel} tiene SOLO 3 PIEZAS: 1 sabana bajera + 1 sabana superior + 1 funda de almohada
-- Si la imagen muestra 4 piezas apiladas/dobladas (porque el hero es de 2 plazas con 2 fundas) → QUITAR una pieza. Deben verse solo 3 piezas apiladas.
+SI la imagen original tiene texto visible sobre tamaño:
+- Cambiar "Queen", "2 Plazas", "Full" → "${sizeLabel}"
+- Cambiar "2 Pillow Cases" o "2 Fundas de Almohada" → "1 Funda de Almohada"
+SI la imagen original NO tiene texto sobre tamaño → NO agregar ninguno.
+
+CAMBIOS VISUALES (solo si aplica):
 - Si la imagen muestra una cama con 2 almohadas → mostrar solo 1 almohada centrada
-- Si hay flechas o lineas que apuntan a "2 fundas" → debe apuntar a solo 1 funda
 - La cama debe ser ${isOneP ? 'individual (1 plaza)' : 'de 1.5 plazas (twin)'}, mas angosta
 
-MANTENER: mismo diseño, color, patron, textura, estilo fotografico, fondo, y composicion general.
-Solo ajustar lo relacionado al TAMAÑO y CANTIDAD DE PIEZAS del set.`;
+MANTENER: mismo diseño, color, patron, textura, estilo fotografico, fondo, y composicion general.`;
 }
