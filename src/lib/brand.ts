@@ -1,6 +1,5 @@
 import sharp from 'sharp';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImage } from '@/lib/gemini/client';
 
 export interface BrandConfig {
   id: string;
@@ -417,61 +416,7 @@ export async function clearLogoZone(
   _brand: BrandConfig,
   _textElements: TextElement[] | null | undefined
 ): Promise<Buffer> {
-  // DISABLED: Flash model invents text ("Sueño Perfecto", etc.)
-  // Text shift is now handled in the FIRST generation via buildBrandPromptSection
+  // DISABLED: Gemini Flash invents text ("Sueño Perfecto", etc.)
+  // Text shift is handled in the FIRST generation via buildBrandPromptSection
   return imageBuffer;
-
-  const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-  if (!logoAtTop) return imageBuffer;
-
-  const topTextElements = textElements.filter(el => el.position === 'top');
-  if (topTextElements.length === 0) return imageBuffer;
-
-  const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
-  const isLeft = brand.logo_position === 'top-left';
-  const side = isLeft ? 'izquierdo' : 'derecho';
-  const textList = topTextElements.map(el => `"${el.text}"`).join(', ');
-
-  console.log(`[brand] clearLogoZone: ${topTextElements.length} text at top overlaps logo — shifting`);
-
-  try {
-    const base64 = imageBuffer.toString('base64');
-
-    const result = await generateImage({
-      heroImageBase64: base64,
-      heroMimeType: 'image/png',
-      swatchImageBase64: base64,
-      swatchMimeType: 'image/png',
-      promptText: `Reproduce this image EXACTLY with ONE change:
-
-A brand logo (${brand.logo_size_px}px wide) will be placed at the top-${isLeft ? 'left' : 'right'}, at ${brand.logo_margin_px}px from the edges.
-
-ALL text that is currently in the top ${clearSpace}px of the image must move DOWN so it starts BELOW ${clearSpace}px from the top. This includes: ${textList}
-
-Move the text down just enough — keep it close to the ${clearSpace}px line, not in the middle of the image.
-
-RULES:
-- Do NOT invent, add, or create any new text, logos, watermarks, or elements
-- Do NOT change any text content — keep the EXACT same words
-- Keep ALL colors, fonts, and sizes identical
-- Keep the product, background, people, and all non-text elements unchanged
-- ONLY shift the vertical position of text in the top ${clearSpace}px
-- The output must have the SAME elements as the input, nothing more, nothing less
-
-Output: same resolution, RGB, PNG.`,
-      temperature: 0.15,
-    });
-
-    if (!result.success || !result.imageBase64) {
-      console.error(`[brand] clearLogoZone failed: ${result.error}`);
-      return imageBuffer;
-    }
-
-    console.log(`[brand] clearLogoZone OK (${result.durationMs}ms)`);
-    const { ensureOutputSpec } = await import('@/lib/image-processing');
-    return await ensureOutputSpec(Buffer.from(result.imageBase64, 'base64'), 1200);
-  } catch (err) {
-    console.error('[brand] clearLogoZone error:', err instanceof Error ? err.message : err);
-    return imageBuffer;
-  }
 }
