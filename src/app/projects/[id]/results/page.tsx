@@ -1305,23 +1305,39 @@ export default function ResultsPage() {
                         </div>
                       </button>
 
-                      {/* ML panel toggle button (outside the collapse click area) */}
+                      {/* ML buttons (outside the collapse click area) */}
                       {group.ml_listing && (
-                        <Button
-                          variant={isPanelOpen ? 'default' : 'ghost'}
-                          size="sm"
-                          className={`h-8 gap-1.5 text-xs flex-shrink-0 ${isPanelOpen ? '' : 'text-muted-foreground'}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleMlPanel(swatchId);
-                          }}
-                          title={isPanelOpen ? 'Cerrar panel ML' : 'Abrir panel ML'}
-                        >
-                          <Globe className="h-3.5 w-3.5" />
-                          {!isPanelOpen && mlPicCount > 0 && (
-                            <span>{mlPicCount}</span>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {group.ml_listing.permalink && (
+                            <a
+                              href={group.ml_listing.permalink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Ver publicación en MercadoLibre"
+                            >
+                              <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-muted-foreground">
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Publicación</span>
+                              </Button>
+                            </a>
                           )}
-                        </Button>
+                          <Button
+                            variant={isPanelOpen ? 'default' : 'ghost'}
+                            size="sm"
+                            className={`h-8 gap-1.5 text-xs ${isPanelOpen ? '' : 'text-muted-foreground'}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleMlPanel(swatchId);
+                            }}
+                            title={isPanelOpen ? 'Cerrar panel ML' : 'Abrir panel ML'}
+                          >
+                            <Globe className="h-3.5 w-3.5" />
+                            {!isPanelOpen && mlPicCount > 0 && (
+                              <span>{mlPicCount}</span>
+                            )}
+                          </Button>
+                        </div>
                       )}
                     </div>
 
