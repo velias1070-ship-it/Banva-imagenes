@@ -1,6 +1,5 @@
 import sharp from 'sharp';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImage } from '@/lib/gemini/client';
 
 export interface BrandConfig {
   id: string;
@@ -414,57 +413,9 @@ export async function overlayBrandLogo(
  */
 export async function clearLogoZone(
   imageBuffer: Buffer,
-  brand: BrandConfig,
-  textElements: TextElement[] | null | undefined
+  _brand: BrandConfig,
+  _textElements: TextElement[] | null | undefined
 ): Promise<Buffer> {
-  if (!textElements?.length) return imageBuffer;
-
-  const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-  if (!logoAtTop) return imageBuffer;
-
-  const topTextElements = textElements.filter(el => el.position === 'top');
-  if (topTextElements.length === 0) return imageBuffer;
-
-  const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
-  const isLeft = brand.logo_position === 'top-left';
-  const textList = topTextElements.map(el => `"${el.text}"`).join(', ');
-
-  console.log(`[brand] clearLogoZone: ${topTextElements.length} text at top — shifting`);
-
-  try {
-    const base64 = imageBuffer.toString('base64');
-
-    const result = await generateImage({
-      heroImageBase64: base64,
-      heroMimeType: 'image/png',
-      swatchImageBase64: base64,
-      swatchMimeType: 'image/png',
-      promptText: `Reproduce this image EXACTLY with ONE small change:
-
-A ${brand.logo_size_px}px brand logo will be placed at the top-${isLeft ? 'left' : 'right'}. Move ALL text in the top ${clearSpace}px down so it starts below ${clearSpace}px from the top.
-
-Texts to move: ${textList}
-
-CRITICAL RULES:
-- Reproduce the EXACT same text — do NOT change, add, remove, or invent any words
-- Keep all colors, fonts, sizes identical — ONLY change vertical position
-- Keep product, background, people unchanged
-- Do NOT add any logos, watermarks, or new elements
-
-Output: same resolution, RGB, PNG.`,
-      temperature: 0.1,
-    });
-
-    if (!result.success || !result.imageBase64) {
-      console.error(`[brand] clearLogoZone failed: ${result.error}`);
-      return imageBuffer;
-    }
-
-    console.log(`[brand] clearLogoZone OK (${result.durationMs}ms)`);
-    const { ensureOutputSpec } = await import('@/lib/image-processing');
-    return await ensureOutputSpec(Buffer.from(result.imageBase64, 'base64'), 1200);
-  } catch (err) {
-    console.error('[brand] clearLogoZone error:', err instanceof Error ? err.message : err);
-    return imageBuffer;
-  }
+  // DISABLED permanently: Gemini Flash invents logos/text in second pass
+  return imageBuffer;
 }
