@@ -15,6 +15,7 @@ import { getProjectSettings } from '@/lib/project-settings';
 import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
+import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -527,6 +528,30 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
     }
 
+    // ── Swatch Pattern Analysis (Planner) — describes pattern for generation prompt ──
+    let swatchPatternDescription: string | null = null;
+    if (!isBrandOnly) {
+      // Use cached analysis from swatch.color_description if it's detailed enough (>100 chars)
+      const cached = job.swatch.color_description;
+      if (cached && cached.length > 100) {
+        swatchPatternDescription = cached;
+        console.log(`[process-next] Using cached swatch pattern analysis for ${job.swatch.name}`);
+      } else {
+        swatchPatternDescription = await analyzeSwatchPattern(
+          swatchBase64,
+          'image/png',
+          job.swatch.name,
+        );
+        if (swatchPatternDescription) {
+          // Cache for future jobs (non-blocking)
+          supabase.from('swatches')
+            .update({ color_description: swatchPatternDescription })
+            .eq('id', job.swatch.id)
+            .then(() => {});
+        }
+      }
+    }
+
     // ── Build prompt ──
     const swatchHex = job.swatch.dominant_color_hex || null;
     let prompt: string;
@@ -560,6 +585,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         projectSettings.generation.resolution,
         swatchHex
       );
+    }
+
+    // ── Inject swatch pattern description into prompt ──
+    if (swatchPatternDescription) {
+      prompt += `\n\nDESCRIPCIÓN DETALLADA DEL PATRÓN DEL SWATCH (REPRODUCIR EXACTAMENTE):
+${swatchPatternDescription}
+La imagen generada DEBE coincidir con esta descripción. Si el resultado no coincide con lo descrito arriba, está MAL.`;
     }
 
     // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
@@ -659,6 +691,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         accent: brand.accent_color,
       } : null,
       logo_overlay_expected: brand?.apply_logo_overlay || false,
+      swatch_pattern_analyzed: !!swatchPatternDescription,
     };
 
     // Mark as generating

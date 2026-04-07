@@ -16,6 +16,7 @@ import { getProjectSettings } from '@/lib/project-settings';
 import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
+import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -327,6 +328,30 @@ async function regenerateJob(
       }
     }
 
+    // ── Swatch Pattern Analysis (Planner) — describes pattern for generation prompt ──
+    let swatchPatternDescription: string | null = null;
+    if (!isBrandOnly) {
+      // Use cached analysis from swatch.color_description if it's detailed enough (>100 chars)
+      const cached = swatch.color_description;
+      if (cached && cached.length > 100) {
+        swatchPatternDescription = cached;
+        console.log(`[regenerateJob] Using cached swatch pattern analysis for ${swatch.name}`);
+      } else {
+        swatchPatternDescription = await analyzeSwatchPattern(
+          swatchBase64,
+          'image/png',
+          swatch.name,
+        );
+        if (swatchPatternDescription) {
+          // Cache for future jobs (non-blocking)
+          supabase.from('swatches')
+            .update({ color_description: swatchPatternDescription })
+            .eq('id', swatch.id)
+            .then(() => {});
+        }
+      }
+    }
+
     // Build prompt — use BRAND_ONLY prompt if original job was BRAND_ONLY
     let prompt: string;
 
@@ -356,6 +381,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         qaFeedback,
         projectSettings.generation.resolution
       );
+    }
+
+    // ── Inject swatch pattern description into prompt ──
+    if (swatchPatternDescription) {
+      prompt += `\n\nDESCRIPCIÓN DETALLADA DEL PATRÓN DEL SWATCH (REPRODUCIR EXACTAMENTE):
+${swatchPatternDescription}
+La imagen generada DEBE coincidir con esta descripción. Si el resultado no coincide con lo descrito arriba, está MAL.`;
     }
 
     // Add brand guidelines if project has a brand
@@ -438,6 +470,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       qa_feedback_used: qaFeedback ? true : false,
       manual_regeneration: true,
       detected_shot_type: effectiveShotType,
+      swatch_pattern_analyzed: !!swatchPatternDescription,
     };
 
     // Generate
