@@ -110,7 +110,7 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
     const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
     const side = brand.logo_position === 'top-left' ? 'superior izquierda' : 'superior derecha';
     const sideShort = brand.logo_position === 'top-left' ? 'izquierdo' : 'derecho';
-    parts.push(`POSICION DE TEXTO — CRITICO: Un logo de ${brand.logo_size_px}px se agrega en post-proceso en la esquina ${side}. TODO texto que este en los primeros ${clearSpace}px superiores del lado ${sideShort} DEBE bajar para empezar DEBAJO de los ${clearSpace}px. Mover el texto lo justo, NO al centro de la imagen.`);
+    parts.push(`POSICION DE TEXTO — CRITICO: Un logo de ${brand.logo_size_px}px se agrega en post-proceso en la esquina ${side}. TODO texto que este en los primeros ${clearSpace}px superiores del lado ${sideShort} DEBE bajar para empezar DEBAJO de los ${clearSpace}px. Mover el texto lo justo, NO al centro de la imagen. NO agregar fondo blanco, rectángulo ni caja en la zona del logo — dejar el fondo natural de la imagen.`);
   }
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
