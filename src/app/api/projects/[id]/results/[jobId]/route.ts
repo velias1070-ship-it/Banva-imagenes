@@ -128,9 +128,11 @@ async function regenerateJob(
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
     const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
-    // Auto-detect shot type BEFORE determining mode (skip for BRAND_ONLY — saves ~2s)
-    let effectiveShotType = heroShot.shot_type || 'lifestyle';
-    if (!isBrandOnly) {
+    // Auto-detect shot type — use cache, skip for BRAND_ONLY
+    let effectiveShotType = (heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle';
+    if (isBrandOnly) {
+      // BRAND_ONLY: skip detection entirely
+    } else if (!(heroShot as Record<string, unknown>).detected_shot_type) {
       const heroBase64ForDetection = heroBuffer.toString('base64');
       try {
         const detection = await detectShotType(heroBase64ForDetection, heroShot.mime_type || 'image/png');
@@ -141,6 +143,7 @@ async function regenerateJob(
           );
           effectiveShotType = detection.detected_type;
         }
+        supabase.from('hero_shots').update({ detected_shot_type: effectiveShotType }).eq('id', heroShot.id).then(() => {});
       } catch (err) {
         console.error('[regenerateJob] Shot type detection failed:', err);
       }
@@ -252,17 +255,24 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
       if (brandData) {
         brand = brandData as BrandConfig;
 
-        // Detect text elements for precise brand application
+        // Detect text elements — use cache from hero_shots if available
         if (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color) {
-          try {
-            const heroB64 = heroBuffer.toString('base64');
-            const textAnalysis = await analyzeTextElements(heroB64, heroShot.mime_type || 'image/png');
-            if (textAnalysis?.elements?.length) {
-              textElements = textAnalysis.elements;
-              console.log(`[regenerateJob] Detected ${textElements.length} text elements`);
+          const cachedElements = (heroShot as Record<string, unknown>).text_elements;
+          if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
+            textElements = cachedElements as import('@/lib/brand').TextElement[];
+            console.log(`[regenerateJob] Using ${textElements.length} cached text elements`);
+          } else {
+            try {
+              const heroB64 = heroBuffer.toString('base64');
+              const textAnalysis = await analyzeTextElements(heroB64, heroShot.mime_type || 'image/png');
+              if (textAnalysis?.elements?.length) {
+                textElements = textAnalysis.elements;
+                console.log(`[regenerateJob] Detected ${textElements.length} text elements (caching)`);
+                supabase.from('hero_shots').update({ text_elements: textElements }).eq('id', heroShot.id).then(() => {});
+              }
+            } catch (err) {
+              console.error('[regenerateJob] Text analysis failed (non-blocking):', err);
             }
-          } catch (err) {
-            console.error('[regenerateJob] Text analysis failed (non-blocking):', err);
           }
         }
 
@@ -341,28 +351,34 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
         upsert: true,
       });
 
-    // Mark as qa_pending (QA will evaluate asynchronously)
+    // BRAND_ONLY: auto-approve (skip QA). Regular: send to QA.
+    const finalStatus = isBrandOnly ? 'approved' : 'qa_pending';
+
     await supabase
       .from('generation_jobs')
       .update({
-        status: 'qa_pending',
+        status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,
         updated_at: new Date().toISOString(),
+        ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })
       .eq('id', jobId);
 
-    // Trigger QA for this job
+    // Trigger QA for this job (skip for BRAND_ONLY — already approved)
+    if (isBrandOnly) {
+      console.log(`[regenerateJob] BRAND_ONLY — auto-approved, skipping QA`);
+    }
+
     const baseUrl = process.env.APP_URL
       || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
       || 'http://localhost:3000';
 
-    // Get batch_id from the job to invoke QA chain
     const batchId = job.batch_id as string;
-    if (batchId) {
+    if (batchId && !isBrandOnly) {
       try {
         await fetch(`${baseUrl}/api/batches/${batchId}/process-qa`, {
           method: 'POST',

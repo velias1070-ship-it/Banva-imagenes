@@ -415,21 +415,27 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Retry with QA feedback: "${qaFeedback}"`);
     }
 
-    // ── Auto-detect shot type FIRST (affects mode selection) — skip for BRAND_ONLY ──
-    let effectiveShotType = job.hero_shot.shot_type || 'lifestyle';
+    // ── Auto-detect shot type — use cache from hero_shots if available ──
+    let effectiveShotType = job.hero_shot.detected_shot_type || job.hero_shot.shot_type || 'lifestyle';
     if (isBrandOnly) {
-      console.log(`[process-next] BRAND_ONLY — skipping shot type detection, using: ${effectiveShotType}`);
-    } else try {
-      const detection = await detectShotType(heroBase64, job.hero_shot.mime_type || 'image/png');
-      if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
-        console.log(
-          `[process-next] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
-          `(confidence: ${(detection.confidence * 100).toFixed(0)}%, desc: "${detection.description}")`
-        );
-        effectiveShotType = detection.detected_type;
+      console.log(`[process-next] BRAND_ONLY — using shot type: ${effectiveShotType}`);
+    } else if (!job.hero_shot.detected_shot_type) {
+      try {
+        const detection = await detectShotType(heroBase64, job.hero_shot.mime_type || 'image/png');
+        if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
+          console.log(
+            `[process-next] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
+            `(confidence: ${(detection.confidence * 100).toFixed(0)}%, desc: "${detection.description}")`
+          );
+          effectiveShotType = detection.detected_type;
+        }
+        // Cache in hero_shots (non-blocking)
+        supabase.from('hero_shots').update({ detected_shot_type: effectiveShotType }).eq('id', job.hero_shot.id).then(() => {});
+      } catch (err) {
+        console.error('[process-next] Shot type detection failed (non-blocking):', err);
       }
-    } catch (err) {
-      console.error('[process-next] Shot type detection failed (non-blocking):', err);
+    } else {
+      console.log(`[process-next] Using cached shot type: ${effectiveShotType}`);
     }
 
     // ── Determine effective generation mode ──
@@ -519,17 +525,24 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
       if (brandData) {
         brand = brandData as BrandConfig;
 
-        // Detect text elements for precise brand color/typography application
-        // Runs for any shot with brand (not just infografia) — text can appear in lifestyle, packaging, etc.
+        // Detect text elements — use cache from hero_shots if available
         if (brand && (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color)) {
-          try {
-            const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
-            if (textAnalysis?.elements?.length) {
-              textElements = textAnalysis.elements;
-              console.log(`[process-next] Detected ${textElements.length} text elements in ${effectiveShotType} hero`);
+          const cachedElements = job.hero_shot.text_elements;
+          if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
+            textElements = cachedElements as import('@/lib/brand').TextElement[];
+            console.log(`[process-next] Using ${textElements.length} cached text elements`);
+          } else {
+            try {
+              const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
+              if (textAnalysis?.elements?.length) {
+                textElements = textAnalysis.elements;
+                console.log(`[process-next] Detected ${textElements.length} text elements (caching)`);
+                // Cache in hero_shots (non-blocking)
+                supabase.from('hero_shots').update({ text_elements: textElements }).eq('id', job.hero_shot.id).then(() => {});
+              }
+            } catch (err) {
+              console.error('[process-next] Text element analysis failed (non-blocking):', err);
             }
-          } catch (err) {
-            console.error('[process-next] Text element analysis failed (non-blocking):', err);
           }
         }
 
@@ -645,15 +658,19 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
         upsert: true,
       });
 
-    // Mark job as qa_pending (NOT approved — QA will decide)
+    // BRAND_ONLY: auto-approve (skip QA — saves 1 Flash call + 3 image downloads)
+    // Regular: send to QA for evaluation
+    const finalStatus = isBrandOnly ? 'approved' : 'qa_pending';
+
     await supabase
       .from('generation_jobs')
       .update({
-        status: 'qa_pending',
+        status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
         gemini_model_used: process.env.GEMINI_MODEL || 'gemini-3-pro-image-preview',
         updated_at: new Date().toISOString(),
+        ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })
       .eq('id', job.id);
 
@@ -664,10 +681,10 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
         .eq('id', job.id)
     ).catch(() => {});
 
-    console.log(`[process-next] Job ${job.id.substring(0, 8)} done — status: qa_pending`);
+    console.log(`[process-next] Job ${job.id.substring(0, 8)} done — status: ${finalStatus}`);
 
-    // Signal: chain to next + trigger QA
-    return { chain: true, triggerQA: true };
+    // Signal: chain to next + trigger QA (skip QA trigger for BRAND_ONLY)
+    return { chain: true, triggerQA: !isBrandOnly };
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
