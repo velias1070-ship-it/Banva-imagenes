@@ -929,7 +929,7 @@ export default function ResultsPage() {
 
     return (
       <div className="flex flex-col h-full">
-        {/* Header info */}
+        {/* Header info + Save button */}
         <div className="flex items-center justify-between mb-2 px-1">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-xs font-medium truncate">
@@ -941,7 +941,26 @@ export default function ResultsPage() {
               </a>
             )}
           </div>
-          <span className="text-[10px] text-muted-foreground">{pics.length}/10</span>
+          <div className="flex items-center gap-1.5">
+            {isDirty && (
+              <Button
+                size="sm"
+                className="h-6 text-[10px] px-2"
+                onClick={() => saveSwatchML(swatchId)}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <>
+                    <Save className="h-3 w-3 mr-1" />
+                    Guardar
+                  </>
+                )}
+              </Button>
+            )}
+            <span className="text-[10px] text-muted-foreground">{pics.length}/10</span>
+          </div>
         </div>
 
         {/* Swap hint */}
