@@ -444,7 +444,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       : getEffectiveMode(strategy, job.attempt);
 
     // Detail/infografia shots MUST use edit mode — reference/from_scratch invent scenes
-    if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
+    if (effectiveShotType === 'detail' || effectiveShotType === 'infografia' || effectiveShotType === 'doblada') {
       if (effectiveMode !== 'edit') {
         console.log(`[process-next] Forcing edit mode for ${effectiveShotType} shot (was ${effectiveMode})`);
         effectiveMode = 'edit';

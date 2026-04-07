@@ -62,7 +62,7 @@ export function needsQuiltPreprocessing(category: string): boolean {
  * When a swatch is a full lifestyle photo (bedroom scene), this extracts just
  * the quilt fabric area, avoiding furniture, walls, and background.
  *
- * Crop zone: y 40%-75% of height, x 10%-90% of width
+ * Crop zone: y 30%-70% of height, x 15%-85% of width
  * Output: 800x800 square (Gemini prefers square input)
  */
 export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
@@ -70,11 +70,13 @@ export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
   const width = metadata.width || 800;
   const height = metadata.height || 800;
 
-  // Central fabric zone — avoids top (headboard/pillows) and bottom (bed frame/floor)
-  const cropLeft = Math.round(width * 0.10);
-  const cropTop = Math.round(height * 0.40);
-  const cropWidth = Math.round(width * 0.80);   // 10% to 90%
-  const cropHeight = Math.round(height * 0.35);  // 40% to 75%
+  // Central fabric zone — aggressive crop to isolate fabric, avoiding headboard/pillows/bed frame
+  const cropLeft = Math.round(width * 0.15);
+  const cropTop = Math.round(height * 0.30);
+  const cropWidth = Math.round(width * 0.70);   // 15% to 85%
+  const cropHeight = Math.round(height * 0.40);  // 30% to 70%
+
+  console.log(`[image-processing] Cropping swatch: original ${width}x${height}, crop region x=${cropLeft}-${cropLeft + cropWidth} y=${cropTop}-${cropTop + cropHeight}`);
 
   const cropped = await sharp(imageBuffer)
     .extract({

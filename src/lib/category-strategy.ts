@@ -39,7 +39,7 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     label: 'Quilts',
     generation_mode: 'reference',
     retry_escalation: 'reference',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
@@ -83,7 +83,7 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
     label: 'Sabanas',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a bed sheet set (juego de sabanas).
 The set includes: pillowcases + flat/top sheet + fitted sheet (sabana bajera).`,
@@ -131,7 +131,7 @@ Do NOT lighten the fabric to make the pattern visible — dark fabric stays dark
     label: 'Cubrecamas',
     generation_mode: 'edit',
     retry_escalation: 'reference',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a bedspread (cubrecama) — a decorative bed cover.
 The product typically includes the bedspread itself, sometimes with matching pillow shams.`,
@@ -171,7 +171,7 @@ Do NOT lighten the fabric. Texture should be subtle on dark surfaces.`,
     label: 'Plumones',
     generation_mode: 'edit',
     retry_escalation: 'reference',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a duvet/comforter (plumon) — a thick, puffy bed covering filled with down or synthetic fill.
 The plumon typically has a quilted/channel stitch pattern to keep the fill distributed evenly.`,
@@ -279,7 +279,7 @@ DO NOT change:
     label: 'Toallas',
     generation_mode: 'edit',
     retry_escalation: 'reference',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a towel product (toalla) — could be bath towel, hand towel, or towel set.`,
 
@@ -472,7 +472,7 @@ DO NOT change:
     label: 'Cortinas',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: false, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a curtain product (cortina) — window curtains or drapes.`,
 
