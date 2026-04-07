@@ -12,6 +12,8 @@ import { ArrowLeft, Trash2 } from 'lucide-react';
 import type { HeroShot } from '@/types/database';
 import { toast } from 'sonner';
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
 export default function HeroShotsPage() {
   const { id } = useParams<{ id: string }>();
   const [heroes, setHeroes] = useState<HeroShot[]>([]);
@@ -142,9 +144,17 @@ export default function HeroShotsPage() {
                   {heroes.map((hero) => (
                     <div key={hero.id} className="flex items-center gap-3 rounded-lg border p-2">
                       <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100">
-                        <div className="flex h-full items-center justify-center text-xs text-gray-400">
-                          {hero.shot_type}
-                        </div>
+                        {hero.storage_path ? (
+                          <img
+                            src={`${SUPABASE_URL}/storage/v1/object/public/images/${hero.storage_path}`}
+                            alt={hero.filename}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-xs text-gray-400">
+                            {hero.shot_type}
+                          </div>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="truncate text-sm font-medium">{hero.filename}</p>
