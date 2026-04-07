@@ -105,6 +105,15 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   const parts: string[] = [];
 
   parts.push(`\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`);
+
+  // Text shift instruction FIRST — most important for layout
+  if (needsTextShift) {
+    const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
+    const side = brand.logo_position === 'top-left' ? 'superior izquierda' : 'superior derecha';
+    const sideShort = brand.logo_position === 'top-left' ? 'izquierdo' : 'derecho';
+    parts.push(`POSICION DE TEXTO — CRITICO: Un logo de ${brand.logo_size_px}px se agrega en post-proceso en la esquina ${side}. TODO texto que este en los primeros ${clearSpace}px superiores del lado ${sideShort} DEBE bajar para empezar DEBAJO de los ${clearSpace}px. Mover el texto lo justo, NO al centro de la imagen.`);
+  }
+
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
   parts.push(`PROHIBIDO: NO generar logotipos, nombres de marca, ni watermarks en la imagen. NUNCA escribir "${brand.name}" ni ninguna marca en la imagen. El logo se compone automaticamente en post-proceso — si lo generas, quedara DUPLICADO y MAL POSICIONADO.`);
 
@@ -160,13 +169,6 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
 
   if (hasGuidelines) {
     parts.push(`REGLAS ADICIONALES: ${brand.prompt_guidelines}`);
-  }
-
-  // When hero is infografia (has text) and logo goes at the top, tell Gemini to shift text down
-  if (needsTextShift) {
-    const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
-    const side = brand.logo_position === 'top-left' ? 'superior izquierda' : 'superior derecha';
-    parts.push(`LOGO EN POST-PROCESO: Se va a agregar un logo de marca en la esquina ${side} de la imagen (aproximadamente ${clearSpace}px desde la esquina). Si el texto del hero original esta en esa zona, DESPLAZA todo el texto hacia abajo para que NO quede en los primeros ${clearSpace}px superiores del lado ${brand.logo_position === 'top-left' ? 'izquierdo' : 'derecho'}. El texto debe quedar DEBAJO del espacio reservado para el logo.`);
   }
 
   parts.push(`=== FIN INSTRUCCIONES DE MARCA ===`);
@@ -412,10 +414,12 @@ export async function overlayBrandLogo(
  */
 export async function clearLogoZone(
   imageBuffer: Buffer,
-  brand: BrandConfig,
-  textElements: TextElement[] | null | undefined
+  _brand: BrandConfig,
+  _textElements: TextElement[] | null | undefined
 ): Promise<Buffer> {
-  if (!textElements?.length) return imageBuffer;
+  // DISABLED: Flash model invents text ("Sueño Perfecto", etc.)
+  // Text shift is now handled in the FIRST generation via buildBrandPromptSection
+  return imageBuffer;
 
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   if (!logoAtTop) return imageBuffer;
