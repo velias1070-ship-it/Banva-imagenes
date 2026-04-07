@@ -72,7 +72,7 @@ function getStorageUrl(path: string, attempt?: number): string {
   return `${SUPABASE_URL}/storage/v1/object/public/images/${path}${cacheBuster}`;
 }
 
-type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending';
+type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending' | 'ml_active' | 'ml_paused';
 
 export default function ResultsPage() {
   const { id } = useParams<{ id: string }>();
@@ -182,6 +182,14 @@ export default function ResultsPage() {
   const filteredGroups = useMemo<SwatchResultGroup[]>(() => {
     if (activeTab === 'all') return groups;
 
+    if (activeTab === 'ml_active') {
+      return groups.filter((g) => g.ml_listing?.status === 'active');
+    }
+
+    if (activeTab === 'ml_paused') {
+      return groups.filter((g) => g.ml_listing?.status === 'paused');
+    }
+
     return groups
       .map((g) => ({
         ...g,
@@ -198,6 +206,8 @@ export default function ResultsPage() {
   const flaggedCount = allJobs.filter((j) => j.status === 'flagged').length;
   const errorCount = allJobs.filter((j) => j.status === 'error').length;
   const qaPendingCount = allJobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing').length;
+  const mlActiveCount = groups.filter((g) => g.ml_listing?.status === 'active').length;
+  const mlPausedCount = groups.filter((g) => g.ml_listing?.status === 'paused').length;
 
   // ── Start collapsed ──
   useEffect(() => {
@@ -1277,6 +1287,8 @@ export default function ResultsPage() {
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="all">Todas ({allJobs.length})</TabsTrigger>
+            <TabsTrigger value="ml_active" className="text-xs">ML Activas ({mlActiveCount})</TabsTrigger>
+            <TabsTrigger value="ml_paused" className="text-xs">ML Pausadas ({mlPausedCount})</TabsTrigger>
             <TabsTrigger value="approved">Aprobadas ({approvedCount})</TabsTrigger>
             <TabsTrigger value="retry">Retry ({retryCount})</TabsTrigger>
             <TabsTrigger value="flagged">Flagged ({flaggedCount})</TabsTrigger>
