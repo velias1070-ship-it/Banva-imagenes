@@ -152,6 +152,11 @@ export default function HeroShotsPage() {
                             src={`${SUPABASE_URL}/storage/v1/object/public/images/${hero.storage_path}`}
                             alt={hero.filename}
                             className="h-full w-full object-cover"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                              target.parentElement!.innerHTML = `<div class="flex h-full items-center justify-center text-xs text-red-400">${hero.shot_type}</div>`;
+                            }}
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center text-xs text-gray-400">
@@ -162,7 +167,7 @@ export default function HeroShotsPage() {
                       <div className="flex-1 min-w-0">
                         <p className="truncate text-sm font-medium">{hero.filename}</p>
                         <p className="text-xs text-muted-foreground">
-                          {hero.shot_type} &middot; {hero.file_size_kb}KB
+                          {hero.shot_type}{hero.file_size_kb ? ` · ${hero.file_size_kb}KB` : ''}
                         </p>
                       </div>
                       <Button
