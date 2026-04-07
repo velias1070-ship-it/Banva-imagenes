@@ -154,6 +154,33 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
+    // ── FAST PATH: ML import + BRAND_ONLY = Sharp only (no Gemini) ──
+    if (isBrandOnly && isMLImport && brandId) {
+      console.log(`[regenerateJob] ML + BRAND_ONLY → Sharp-only path (no Gemini)`);
+      const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
+      if (brandData) {
+        const brand = brandData as BrandConfig;
+        let imageBuffer = await ensureOutputSpec(heroBuffer, 1200);
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null);
+
+        const outputPath = `projects/${projectId}/generated/${jobId}.png`;
+        await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
+        await supabase.from('generation_jobs').update({
+          status: 'approved',
+          output_storage_path: outputPath,
+          generation_time_ms: 0,
+          attempt: attempt + 1,
+          prompt_text: 'Sharp-only: logo overlay (no Gemini)',
+          prompt_metadata: { strategy: 'sharp_only', category, manual_regeneration: true },
+          qa_score: 0.95,
+          qa_feedback: 'Auto-approved (BRAND_ONLY Sharp-only)',
+          updated_at: new Date().toISOString(),
+        }).eq('id', jobId);
+        console.log(`[regenerateJob] ML + BRAND_ONLY done — Sharp overlay applied`);
+        return;
+      }
+    }
+
     // Auto-detect shot type — use cache, skip for BRAND_ONLY
     let effectiveShotType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle') : 'lifestyle';
     if (isBrandOnly || !heroShot) {
