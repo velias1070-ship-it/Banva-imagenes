@@ -130,7 +130,7 @@ Do NOT lighten the fabric to make the pattern visible — dark fabric stays dark
     key: 'cubrecamas',
     label: 'Cubrecamas',
     generation_mode: 'edit',
-    retry_escalation: 'reference',
+    retry_escalation: 'edit',
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a bedspread (cubrecama) — a decorative bed cover.
@@ -170,7 +170,7 @@ Do NOT lighten the fabric. Texture should be subtle on dark surfaces.`,
     key: 'plumones',
     label: 'Plumones',
     generation_mode: 'edit',
-    retry_escalation: 'reference',
+    retry_escalation: 'edit',
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a duvet/comforter (plumon) — a thick, puffy bed covering filled with down or synthetic fill.
@@ -278,7 +278,7 @@ DO NOT change:
     key: 'toallas',
     label: 'Toallas',
     generation_mode: 'edit',
-    retry_escalation: 'reference',
+    retry_escalation: 'edit',
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a towel product (toalla) — could be bath towel, hand towel, or towel set.`,
