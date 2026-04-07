@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -24,7 +25,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
-  const supabase = await createServerSupabase();
+  const supabase = createAdminClient();
 
   const formData = await request.formData();
   const file = formData.get('file') as File;
