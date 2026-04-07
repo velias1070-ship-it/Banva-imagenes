@@ -415,11 +415,68 @@ export async function overlayBrandLogo(
  *
  * Returns modified image buffer, or original if no overlap / on failure.
  */
+/**
+ * Shift image content down to make room for the logo.
+ * Pure Sharp — no AI, deterministic, no text invention.
+ *
+ * Only runs when text is detected at the top (overlapping logo zone).
+ * Shifts the entire image down by the logo height, sampling the top
+ * edge to fill the gap. Bottom content is cropped (usually margin).
+ */
 export async function clearLogoZone(
   imageBuffer: Buffer,
-  _brand: BrandConfig,
-  _textElements: TextElement[] | null | undefined
+  brand: BrandConfig,
+  textElements: TextElement[] | null | undefined
 ): Promise<Buffer> {
-  // DISABLED permanently: Gemini Flash invents logos/text in second pass
-  return imageBuffer;
+  if (!textElements?.length) return imageBuffer;
+
+  const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+  if (!logoAtTop) return imageBuffer;
+
+  const hasTopText = textElements.some(el => el.position === 'top');
+  if (!hasTopText) return imageBuffer;
+
+  const metadata = await sharp(imageBuffer).metadata();
+  const imgW = metadata.width || 1200;
+  const imgH = metadata.height || 1200;
+
+  // Calculate shift: logo height + margin (the area the logo occupies vertically)
+  // We only need to shift enough for the logo, not the full logo_size_px (which is max width)
+  // Logo is resized to fit inside logo_size_px x logo_size_px, so height <= logo_size_px
+  const shiftPx = Math.round(brand.logo_size_px * 0.45); // ~45% of logo size = enough clearance
+
+  // Sample the top-left 1px strip to get the background color
+  const topStrip = await sharp(imageBuffer)
+    .extract({ left: 0, top: 0, width: imgW, height: 1 })
+    .resize(1, 1)
+    .raw()
+    .toBuffer();
+
+  const bgR = topStrip[0] || 255;
+  const bgG = topStrip[1] || 255;
+  const bgB = topStrip[2] || 255;
+
+  // Create canvas with sampled background color, paste image shifted down
+  const shifted = await sharp({
+    create: {
+      width: imgW,
+      height: imgH,
+      channels: 3,
+      background: { r: bgR, g: bgG, b: bgB },
+    },
+  })
+    .composite([
+      {
+        input: await sharp(imageBuffer)
+          .extract({ left: 0, top: 0, width: imgW, height: imgH - shiftPx })
+          .toBuffer(),
+        left: 0,
+        top: shiftPx,
+      },
+    ])
+    .png()
+    .toBuffer();
+
+  console.log(`[brand] clearLogoZone: shifted image down ${shiftPx}px (bg: rgb(${bgR},${bgG},${bgB}))`);
+  return shifted;
 }
