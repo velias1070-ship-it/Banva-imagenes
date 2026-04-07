@@ -154,13 +154,25 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
-    // ── FAST PATH: ML import + BRAND_ONLY = Sharp only (no Gemini) ──
-    if (isBrandOnly && isMLImport && brandId) {
-      console.log(`[regenerateJob] ML + BRAND_ONLY → Sharp-only path (no Gemini)`);
+    // ── FAST PATH: BRAND_ONLY = Sharp logo overlay only (no Gemini) ──
+    // Always use the existing output image — don't regenerate from hero
+    if (isBrandOnly && brandId) {
+      console.log(`[regenerateJob] BRAND_ONLY → Sharp-only path (no Gemini)`);
       const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
       if (brandData) {
         const brand = brandData as BrandConfig;
-        let imageBuffer = await ensureOutputSpec(heroBuffer, 1200);
+        // Use existing output if available, otherwise the hero/ML image
+        const existingOutput = job.output_storage_path as string;
+        let sourceBuffer: Buffer;
+        if (existingOutput && !isMLImport) {
+          // Generated result exists — apply brand on top of it
+          const { data: outputData } = await supabase.storage.from('images').download(existingOutput);
+          sourceBuffer = outputData ? Buffer.from(await outputData.arrayBuffer()) : heroBuffer;
+        } else {
+          // ML import or no previous output — use the downloaded image
+          sourceBuffer = heroBuffer;
+        }
+        let imageBuffer = await ensureOutputSpec(sourceBuffer, 1200);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null);
 
         const outputPath = `projects/${projectId}/generated/${jobId}.png`;
@@ -176,7 +188,7 @@ async function regenerateJob(
           qa_feedback: 'Auto-approved (BRAND_ONLY Sharp-only)',
           updated_at: new Date().toISOString(),
         }).eq('id', jobId);
-        console.log(`[regenerateJob] ML + BRAND_ONLY done — Sharp overlay applied`);
+        console.log(`[regenerateJob] BRAND_ONLY done — Sharp overlay on ${isMLImport ? 'ML import' : 'generated result'}`);
         return;
       }
     }
