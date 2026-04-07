@@ -447,9 +447,12 @@ ALL text that is currently in the top ${clearSpace}px of the image must move DOW
 Move the text down just enough — keep it close to the ${clearSpace}px line, not in the middle of the image.
 
 RULES:
-- Keep ALL text content, colors, fonts, and sizes identical
+- Do NOT invent, add, or create any new text, logos, watermarks, or elements
+- Do NOT change any text content — keep the EXACT same words
+- Keep ALL colors, fonts, and sizes identical
 - Keep the product, background, people, and all non-text elements unchanged
 - ONLY shift the vertical position of text in the top ${clearSpace}px
+- The output must have the SAME elements as the input, nothing more, nothing less
 
 Output: same resolution, RGB, PNG.`,
       temperature: 0.15,
