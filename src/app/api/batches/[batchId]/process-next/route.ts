@@ -12,7 +12,7 @@ import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
-import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
+import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, prepareHeroForLogo, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
@@ -531,6 +531,14 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
         }
 
         prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
+
+        // White out logo zone on hero so Gemini places text below it
+        const preparedHero = await prepareHeroForLogo(heroBuffer, brand, textElements);
+        if (preparedHero !== heroBuffer) {
+          heroBase64 = preparedHero.toString('base64');
+          console.log(`[process-next] Hero modified: logo zone whited out`);
+        }
+
         console.log(`[process-next] Brand loaded: ${brand.name}`);
       } else {
         console.log(`[process-next] Brand ${projectBrandId} not found in DB`);
@@ -615,15 +623,12 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: clear logo zone + overlay logo
+    // Overlay brand logo (Sharp only — no extra Gemini call)
     if (brand) {
       try {
-        // Second-pass: shift text away from logo zone if needed
-        imageBuffer = await clearLogoZone(imageBuffer, 'image/png', brand, textElements);
-        // Overlay logo with opaque pill
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, textElements);
       } catch (brandErr) {
-        console.error('[process-next] Brand processing failed (non-blocking):', brandErr);
+        console.error('[process-next] Brand overlay failed (non-blocking):', brandErr);
       }
     } else {
       console.log(`[process-next] No brand for project ${project.id}`);

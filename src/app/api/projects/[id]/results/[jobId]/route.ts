@@ -13,7 +13,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
-import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
+import { buildBrandPromptSection, overlayBrandLogo, prepareHeroForLogo, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
@@ -124,7 +124,7 @@ async function regenerateJob(
       throw new Error(`Storage download failed`);
     }
 
-    const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
+    let heroBuffer: Buffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
     // Auto-detect shot type BEFORE determining mode
@@ -198,24 +198,46 @@ async function regenerateJob(
       console.log(`[regenerateJob] Using QA feedback: "${qaFeedback}"`);
     }
 
-    // Preprocessing
+    // Check if original job was BRAND_ONLY
+    const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
+
+    // Preprocessing (skip for BRAND_ONLY — image stays unchanged)
     let swatchBase64 = swatchBuffer.toString('base64');
-    if (strategy.preprocessing.crop_swatch) {
+    if (!isBrandOnly && strategy.preprocessing.crop_swatch) {
       const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
       swatchBase64 = croppedSwatch.toString('base64');
     }
 
-    // Build prompt
-    let prompt = buildPromptForMode(
-      mode,
-      strategy,
-      swatch.name,
-      swatchColorDescription,
-      effectiveShotType,
-      darkSwatch,
-      qaFeedback,
-      projectSettings.generation.resolution
-    );
+    // Build prompt — use BRAND_ONLY prompt if original job was BRAND_ONLY
+    let prompt: string;
+
+    if (isBrandOnly) {
+      prompt = `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
+
+Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
+
+IMPORTANT — You MUST apply the brand changes specified below:
+- CHANGE all visible text colors to match the brand palette below
+- CHANGE all visible text typography/fonts to match the brand fonts below
+- Keep the same text content, only change COLOR and FONT
+These changes are MANDATORY, not optional.
+
+Everything else (product, background, people, objects) must remain as in Image 1.
+
+Output: ${projectSettings.generation.resolution}x${projectSettings.generation.resolution}px, RGB, PNG.`;
+      console.log(`[regenerateJob] BRAND_ONLY mode — reproducing image with brand guidelines`);
+    } else {
+      prompt = buildPromptForMode(
+        mode,
+        strategy,
+        swatch.name,
+        swatchColorDescription,
+        effectiveShotType,
+        darkSwatch,
+        qaFeedback,
+        projectSettings.generation.resolution
+      );
+    }
 
     // Add brand guidelines if project has a brand
     let brand: BrandConfig | null = null;
@@ -241,6 +263,13 @@ async function regenerateJob(
           } catch (err) {
             console.error('[regenerateJob] Text analysis failed (non-blocking):', err);
           }
+        }
+
+        // White out logo zone on hero so Gemini places text below it
+        const preparedHero = await prepareHeroForLogo(heroBuffer, brand, textElements);
+        if (preparedHero !== heroBuffer) {
+          heroBuffer = preparedHero;
+          console.log(`[regenerateJob] Hero modified: logo zone whited out`);
         }
 
         prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
@@ -298,13 +327,12 @@ async function regenerateJob(
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: clear logo zone + overlay logo
+    // Overlay brand logo (Sharp only — no extra Gemini call)
     if (brand) {
       try {
-        imageBuffer = await clearLogoZone(imageBuffer, 'image/png', brand, textElements);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, textElements);
       } catch (brandErr) {
-        console.error('[regenerateJob] Brand processing failed (non-blocking):', brandErr);
+        console.error('[regenerateJob] Brand overlay failed (non-blocking):', brandErr);
       }
     }
 
