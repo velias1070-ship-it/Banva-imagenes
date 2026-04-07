@@ -494,7 +494,7 @@ These changes are MANDATORY, not optional.
 
 Everything else (product, background, people, objects) must remain as in Image 1.
 
-Output: ${projectSettings.generation.resolution}x${projectSettings.generation.resolution}px, RGB, PNG.`;
+Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[process-next] BRAND_ONLY mode — reproducing image with brand guidelines`);
     } else {
       prompt = buildPromptForMode(
@@ -568,11 +568,13 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
       console.log(`[process-next] No brand_id on project`);
     }
 
-    // Add size-aware note for 1P/1.5P bed products
-    const sizeNote = buildSizePromptNote(job.swatch.sku_suffix, category);
-    if (sizeNote) {
-      prompt += sizeNote;
-      console.log(`[process-next] Size adjustment added for SKU ${job.swatch.sku_suffix} (${category})`);
+    // Add size-aware note for 1P/1.5P bed products (skip for BRAND_ONLY — don't modify product)
+    if (!isBrandOnly) {
+      const sizeNote = buildSizePromptNote(job.swatch.sku_suffix, category);
+      if (sizeNote) {
+        prompt += sizeNote;
+        console.log(`[process-next] Size adjustment added for SKU ${job.swatch.sku_suffix} (${category})`);
+      }
     }
 
     // Add collage note if swatch has multiple reference images
