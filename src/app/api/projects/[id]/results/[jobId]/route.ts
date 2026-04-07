@@ -280,7 +280,20 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
           }
         }
 
-        prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
+        const brandSection = buildBrandPromptSection(brand, effectiveShotType, textElements);
+
+        // If text overlaps logo zone, prepend shift instruction to START of prompt
+        const hasTopText = textElements?.some(el => el.position === 'top');
+        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+        if (hasTopText && logoAtTop && isBrandOnly) {
+          const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
+          const side = brand.logo_position === 'top-left' ? 'left' : 'right';
+          const topTexts = textElements!.filter(el => el.position === 'top').map(el => `"${el.text}"`).join(', ');
+          prompt = `FIRST PRIORITY: A ${brand.logo_size_px}px logo goes at top-${side}. Move ALL text in the top ${clearSpace}px down below that line. Texts to move: ${topTexts}. Do NOT add white boxes or backgrounds — keep the natural image background. Do NOT invent new text.\n\n${prompt}`;
+          console.log(`[regenerateJob] Prepended shift instruction for ${textElements!.filter(el => el.position === 'top').length} top texts`);
+        }
+
+        prompt += brandSection;
         console.log(`[regenerateJob] Brand loaded: ${brand.name}`);
       }
     }
