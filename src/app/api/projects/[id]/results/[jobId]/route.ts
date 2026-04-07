@@ -94,6 +94,8 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       .from('generation_jobs')
       .update({ prompt_adjustment: 'BRAND_ONLY' })
       .eq('id', jobId);
+    // Update the in-memory job object so regenerateJob sees it
+    job.prompt_adjustment = 'BRAND_ONLY';
   }
 
   // Mark as generating (prevents QA from writing stale results)
