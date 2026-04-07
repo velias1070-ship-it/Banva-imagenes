@@ -443,12 +443,13 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       ? projectSettings.generation.mode
       : getEffectiveMode(strategy, job.attempt);
 
-    // Detail/infografia shots MUST use edit mode — reference/from_scratch invent scenes
-    if (effectiveShotType === 'detail' || effectiveShotType === 'infografia' || effectiveShotType === 'doblada') {
-      if (effectiveMode !== 'edit') {
-        console.log(`[process-next] Forcing edit mode for ${effectiveShotType} shot (was ${effectiveMode})`);
-        effectiveMode = 'edit';
-      }
+    // Detail/doblada shots use edit mode to preserve composition.
+    // Infografia: only force edit if category default is edit (quilts need reference for pattern change).
+    const forceEdit = effectiveShotType === 'detail' || effectiveShotType === 'doblada'
+      || (effectiveShotType === 'infografia' && strategy.generation_mode === 'edit');
+    if (forceEdit && effectiveMode !== 'edit') {
+      console.log(`[process-next] Forcing edit mode for ${effectiveShotType} shot (was ${effectiveMode})`);
+      effectiveMode = 'edit';
     }
 
     const baseTemperature = getEffectiveTemperature(strategy, effectiveMode, job.attempt);
