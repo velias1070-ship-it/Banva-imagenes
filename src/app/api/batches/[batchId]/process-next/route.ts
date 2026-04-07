@@ -12,7 +12,7 @@ import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
-import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, prepareHeroForLogo, type BrandConfig } from '@/lib/brand';
+import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
@@ -330,6 +330,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     return { chain: true, triggerQA: false };
   }
 
+  const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
+
   try {
     // Download hero and swatch
     const [heroRes, swatchRes] = await Promise.all([
@@ -378,10 +380,10 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Dark swatch: "${job.swatch.name}"`);
     }
 
-    // ── Auto-analyze swatch color if missing ──
+    // ── Auto-analyze swatch color if missing (skip for BRAND_ONLY — not changing product) ──
     // Uses Gemini Flash (~2s) to detect color, then caches in DB for future jobs
     let swatchColorDescription = job.swatch.color_description;
-    if (!swatchColorDescription) {
+    if (!swatchColorDescription && !isBrandOnly) {
       console.log(`[process-next] Swatch "${job.swatch.name}" has no color_description — auto-analyzing...`);
       try {
         const colorAnalysis = await analyzeSwatchColor(
@@ -413,9 +415,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Retry with QA feedback: "${qaFeedback}"`);
     }
 
-    // ── Auto-detect shot type FIRST (affects mode selection) ──
+    // ── Auto-detect shot type FIRST (affects mode selection) — skip for BRAND_ONLY ──
     let effectiveShotType = job.hero_shot.shot_type || 'lifestyle';
-    try {
+    if (isBrandOnly) {
+      console.log(`[process-next] BRAND_ONLY — skipping shot type detection, using: ${effectiveShotType}`);
+    } else try {
       const detection = await detectShotType(heroBase64, job.hero_shot.mime_type || 'image/png');
       if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
         console.log(
@@ -453,7 +457,6 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     );
 
     // ── Preprocessing (skip for BRAND_ONLY — we want the image unchanged) ──
-    const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
     if (!isBrandOnly) {
       if (strategy.preprocessing.flatten_hero) {
         const flattenedHero = await flattenHeroEmboss(heroBuffer);
@@ -531,14 +534,6 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
         }
 
         prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
-
-        // White out logo zone on hero so Gemini places text below it
-        const preparedHero = await prepareHeroForLogo(heroBuffer, brand, textElements);
-        if (preparedHero !== heroBuffer) {
-          heroBase64 = preparedHero.toString('base64');
-          console.log(`[process-next] Hero modified: logo zone whited out`);
-        }
-
         console.log(`[process-next] Brand loaded: ${brand.name}`);
       } else {
         console.log(`[process-next] Brand ${projectBrandId} not found in DB`);
@@ -623,12 +618,13 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Overlay brand logo (Sharp only — no extra Gemini call)
+    // Brand post-processing: shift overlapping text + overlay logo
     if (brand) {
       try {
+        imageBuffer = await clearLogoZone(imageBuffer, brand, textElements);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, textElements);
       } catch (brandErr) {
-        console.error('[process-next] Brand overlay failed (non-blocking):', brandErr);
+        console.error('[process-next] Brand processing failed (non-blocking):', brandErr);
       }
     } else {
       console.log(`[process-next] No brand for project ${project.id}`);

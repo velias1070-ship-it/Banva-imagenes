@@ -13,7 +13,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
-import { buildBrandPromptSection, overlayBrandLogo, prepareHeroForLogo, type BrandConfig } from '@/lib/brand';
+import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
@@ -124,49 +124,54 @@ async function regenerateJob(
       throw new Error(`Storage download failed`);
     }
 
-    let heroBuffer: Buffer = Buffer.from(await heroRes.data.arrayBuffer());
+    const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
+    const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
-    // Auto-detect shot type BEFORE determining mode
-    const heroBase64ForDetection = heroBuffer.toString('base64');
+    // Auto-detect shot type BEFORE determining mode (skip for BRAND_ONLY — saves ~2s)
     let effectiveShotType = heroShot.shot_type || 'lifestyle';
-    try {
-      const detection = await detectShotType(heroBase64ForDetection, heroShot.mime_type || 'image/png');
-      if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
-        console.log(
-          `[regenerateJob] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
-          `(confidence: ${(detection.confidence * 100).toFixed(0)}%)`
-        );
-        effectiveShotType = detection.detected_type;
+    if (!isBrandOnly) {
+      const heroBase64ForDetection = heroBuffer.toString('base64');
+      try {
+        const detection = await detectShotType(heroBase64ForDetection, heroShot.mime_type || 'image/png');
+        if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
+          console.log(
+            `[regenerateJob] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
+            `(confidence: ${(detection.confidence * 100).toFixed(0)}%)`
+          );
+          effectiveShotType = detection.detected_type;
+        }
+      } catch (err) {
+        console.error('[regenerateJob] Shot type detection failed:', err);
       }
-    } catch (err) {
-      console.error('[regenerateJob] Shot type detection failed:', err);
     }
 
     // Determine mode — detail/infografia shots ALWAYS use edit (reference invents scenes)
     let mode: GenerationMode = strategy.generation_mode;
-    if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
-      mode = 'edit';
-      console.log(`[regenerateJob] ${effectiveShotType} shot detected — forcing edit mode`);
-    } else if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
-      mode = strategy.retry_escalation;
-      console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);
-    } else if (attempt > 0 && strategy.retry_escalation) {
-      mode = strategy.retry_escalation;
-      console.log(`[regenerateJob] Retry attempt ${attempt} — using ${mode}`);
+    if (!isBrandOnly) {
+      if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
+        mode = 'edit';
+        console.log(`[regenerateJob] ${effectiveShotType} shot detected — forcing edit mode`);
+      } else if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
+        mode = strategy.retry_escalation;
+        console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);
+      } else if (attempt > 0 && strategy.retry_escalation) {
+        mode = strategy.retry_escalation;
+        console.log(`[regenerateJob] Retry attempt ${attempt} — using ${mode}`);
+      }
     }
 
-    const temperature = getEffectiveTemperature(strategy, mode, attempt);
+    const temperature = isBrandOnly ? 0.2 : getEffectiveTemperature(strategy, mode, attempt);
 
-    // Detect dark swatches for prompt adjustments
-    const darkSwatch = await isSwatchDark(swatchBuffer);
+    // Detect dark swatches for prompt adjustments (skip for BRAND_ONLY)
+    const darkSwatch = isBrandOnly ? false : await isSwatchDark(swatchBuffer);
     if (darkSwatch) {
       console.log(`[regenerateJob] Dark swatch detected: "${swatch.name}"`);
     }
 
-    // ── Auto-analyze swatch color if missing ──
+    // ── Auto-analyze swatch color if missing (skip for BRAND_ONLY — saves ~2s) ──
     let swatchColorDescription = swatch.color_description || null;
-    if (!swatchColorDescription) {
+    if (!swatchColorDescription && !isBrandOnly) {
       console.log(`[regenerateJob] Swatch "${swatch.name}" has no color_description — auto-analyzing...`);
       try {
         const colorAnalysis = await analyzeSwatchColor(
@@ -176,7 +181,6 @@ async function regenerateJob(
         if (colorAnalysis) {
           swatchColorDescription = colorAnalysis.colorDescription;
           console.log(`[regenerateJob] Auto-detected color: "${swatchColorDescription}"`);
-          // Cache in DB (non-blocking)
           Promise.resolve(
             supabase
               .from('swatches')
@@ -197,9 +201,6 @@ async function regenerateJob(
     if (qaFeedback) {
       console.log(`[regenerateJob] Using QA feedback: "${qaFeedback}"`);
     }
-
-    // Check if original job was BRAND_ONLY
-    const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
     // Preprocessing (skip for BRAND_ONLY — image stays unchanged)
     let swatchBase64 = swatchBuffer.toString('base64');
@@ -265,13 +266,6 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
           }
         }
 
-        // White out logo zone on hero so Gemini places text below it
-        const preparedHero = await prepareHeroForLogo(heroBuffer, brand, textElements);
-        if (preparedHero !== heroBuffer) {
-          heroBuffer = preparedHero;
-          console.log(`[regenerateJob] Hero modified: logo zone whited out`);
-        }
-
         prompt += buildBrandPromptSection(brand, effectiveShotType, textElements);
         console.log(`[regenerateJob] Brand loaded: ${brand.name}`);
       }
@@ -327,12 +321,13 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Overlay brand logo (Sharp only — no extra Gemini call)
+    // Brand post-processing: shift overlapping text + overlay logo
     if (brand) {
       try {
+        imageBuffer = await clearLogoZone(imageBuffer, brand, textElements);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, textElements);
       } catch (brandErr) {
-        console.error('[regenerateJob] Brand overlay failed (non-blocking):', brandErr);
+        console.error('[regenerateJob] Brand processing failed (non-blocking):', brandErr);
       }
     }
 

@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { generateImage } from '@/lib/gemini/client';
 
 export interface BrandConfig {
   id: string;
@@ -431,66 +432,70 @@ export async function overlayBrandLogo(
 }
 
 /**
- * Prepare hero image for logo overlay by whiting out the logo corner zone.
- * Gemini sees the white zone in Image 1 and naturally places text below it.
- * This is a Sharp-only operation (~50ms) — no extra Gemini call needed.
+ * Second-pass Gemini call: move text that overlaps with the logo zone.
+ * Only runs when text elements are detected at the logo corner position.
+ * Runs AFTER generation, BEFORE logo overlay.
  *
- * Only modifies the hero when text elements overlap with the logo corner.
- * Returns the modified hero buffer, or the original if no modification needed.
+ * Returns modified image buffer, or original if no overlap / on failure.
  */
-export async function prepareHeroForLogo(
-  heroBuffer: Buffer,
+export async function clearLogoZone(
+  imageBuffer: Buffer,
   brand: BrandConfig,
   textElements: TextElement[] | null | undefined
 ): Promise<Buffer> {
-  if (!textElements?.length) return heroBuffer;
+  if (!textElements?.length) return imageBuffer;
 
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-  if (!logoAtTop) return heroBuffer;
+  if (!logoAtTop) return imageBuffer;
 
-  // Check if any text elements are in the logo zone
-  const hasTopText = textElements.some(el => el.position === 'top');
-  if (!hasTopText) return heroBuffer;
+  const topTextElements = textElements.filter(el => el.position === 'top');
+  if (topTextElements.length === 0) return imageBuffer;
 
-  const clearW = brand.logo_size_px + brand.logo_margin_px * 2 + 40;
-  const clearH = brand.logo_size_px + brand.logo_margin_px * 2 + 20;
-
-  const metadata = await sharp(heroBuffer).metadata();
-  const imgW = metadata.width || 1200;
-  const imgH = metadata.height || 1200;
-
-  // Clamp to image size
-  const rectW = Math.min(clearW, Math.floor(imgW * 0.35));
-  const rectH = Math.min(clearH, Math.floor(imgH * 0.2));
-
+  const clearSpace = brand.logo_size_px + brand.logo_margin_px + 30;
   const isLeft = brand.logo_position === 'top-left';
-  const rectX = isLeft ? 0 : imgW - rectW;
+  const side = isLeft ? 'izquierdo' : 'derecho';
+  const textList = topTextElements.map(el => `"${el.text}"`).join(', ');
 
-  // Create white rectangle with soft gradient fade at the edges
-  const gradientSvg = Buffer.from(
-    `<svg width="${rectW}" height="${rectH}">
-      <defs>
-        <linearGradient id="fadeBottom" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0.7" stop-color="white" stop-opacity="1"/>
-          <stop offset="1" stop-color="white" stop-opacity="0"/>
-        </linearGradient>
-        <linearGradient id="fadeSide" x1="${isLeft ? '0' : '1'}" y1="0" x2="${isLeft ? '1' : '0'}" y2="0">
-          <stop offset="0.6" stop-color="white" stop-opacity="1"/>
-          <stop offset="1" stop-color="white" stop-opacity="0"/>
-        </linearGradient>
-      </defs>
-      <rect width="${rectW}" height="${rectH}" fill="url(#fadeBottom)"/>
-      <rect width="${rectW}" height="${rectH}" fill="url(#fadeSide)" style="mix-blend-mode: multiply"/>
-    </svg>`
-  );
+  console.log(`[brand] clearLogoZone: ${topTextElements.length} text at top overlaps logo — shifting`);
 
-  const result = await sharp(heroBuffer)
-    .composite([
-      { input: gradientSvg, left: rectX, top: 0 },
-    ])
-    .png()
-    .toBuffer();
+  try {
+    const base64 = imageBuffer.toString('base64');
 
-  console.log(`[brand] prepareHeroForLogo: whited out ${rectW}x${rectH}px at top-${isLeft ? 'left' : 'right'} for logo zone`);
-  return result;
+    const result = await generateImage({
+      heroImageBase64: base64,
+      heroMimeType: 'image/png',
+      swatchImageBase64: base64,
+      swatchMimeType: 'image/png',
+      promptText: `Reproduce this image EXACTLY with ONE change:
+
+The top-${isLeft ? 'left' : 'right'} corner (~${clearSpace}x${clearSpace}px) must be CLEAR — no text there. A brand logo will be placed in that corner.
+
+These texts overlap with that zone: ${textList}
+
+Fix the overlap by EITHER:
+- Moving the text down so it starts below ~${clearSpace}px from the top
+- OR reducing the text size slightly so it fits below the logo zone
+- Whichever looks more natural
+
+RULES:
+- Do NOT change anything else: product, background, other text elements, layout
+- Keep the same text content and colors
+- ONLY adjust position or size of the overlapping text
+
+Output: same resolution, RGB, PNG.`,
+      temperature: 0.15,
+    });
+
+    if (!result.success || !result.imageBase64) {
+      console.error(`[brand] clearLogoZone failed: ${result.error}`);
+      return imageBuffer;
+    }
+
+    console.log(`[brand] clearLogoZone OK (${result.durationMs}ms)`);
+    const { ensureOutputSpec } = await import('@/lib/image-processing');
+    return await ensureOutputSpec(Buffer.from(result.imageBase64, 'base64'), 1200);
+  } catch (err) {
+    console.error('[brand] clearLogoZone error:', err instanceof Error ? err.message : err);
+    return imageBuffer;
+  }
 }
