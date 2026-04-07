@@ -27,6 +27,7 @@ export interface HeroShot {
   height: number | null;
   file_size_kb: number | null;
   mime_type: string | null;
+  source: string | null;
   created_at: string;
 }
 

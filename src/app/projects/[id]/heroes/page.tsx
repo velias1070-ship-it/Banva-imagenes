@@ -132,19 +132,20 @@ export default function HeroShotsPage() {
           </Card>
         </div>
 
-        <div>
+        <div className="space-y-6">
+          {/* Heroes subidos manualmente */}
           <Card>
             <CardHeader>
-              <CardTitle>Heroes Subidos ({heroes.length})</CardTitle>
+              <CardTitle>Heroes Subidos ({heroes.filter(h => h.source !== 'ml').length})</CardTitle>
             </CardHeader>
             <CardContent>
-              {heroes.length === 0 ? (
+              {heroes.filter(h => h.source !== 'ml').length === 0 ? (
                 <p className="text-center text-sm text-muted-foreground py-8">
-                  Sin hero shots aun
+                  Sin hero shots subidos
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {heroes.map((hero) => (
+                  {heroes.filter(h => h.source !== 'ml').map((hero) => (
                     <div key={hero.id} className="flex items-center gap-3 rounded-lg border p-2">
                       <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100 relative">
                         {hero.storage_path ? (
@@ -186,6 +187,58 @@ export default function HeroShotsPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Heroes de ML (Branding) */}
+          {heroes.filter(h => h.source === 'ml').length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Heroes ML — Branding ({heroes.filter(h => h.source === 'ml').length})</CardTitle>
+                <p className="text-xs text-muted-foreground">Descargados de MercadoLibre para aplicar Brand Book</p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {heroes.filter(h => h.source === 'ml').map((hero) => (
+                    <div key={hero.id} className="flex items-center gap-3 rounded-lg border p-2">
+                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-gray-100 relative">
+                        {hero.storage_path ? (
+                          <img
+                            src={`${SUPABASE_URL}/storage/v1/object/public/images/${hero.storage_path}`}
+                            alt={hero.filename}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                              if (target.nextElementSibling) {
+                                (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                              }
+                            }}
+                          />
+                        ) : null}
+                        <div className={`h-full items-center justify-center text-xs text-gray-400 ${hero.storage_path ? 'hidden' : 'flex'}`}>
+                          {hero.shot_type}
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm font-medium">{hero.filename}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {hero.shot_type}{hero.file_size_kb ? ` · ${hero.file_size_kb}KB` : ''}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(hero.id)}
+                        className="h-8 w-8 text-red-500 hover:text-red-700"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>

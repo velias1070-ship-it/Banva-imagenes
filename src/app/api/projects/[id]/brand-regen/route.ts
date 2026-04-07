@@ -186,6 +186,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           shot_type: shotType,
           display_order: nextOrder++,
           mime_type: ext === 'webp' ? 'image/webp' : 'image/jpeg',
+          source: 'ml',
         })
         .select('id')
         .single();
