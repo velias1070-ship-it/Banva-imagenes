@@ -257,7 +257,11 @@ Output: ${projectSettings.generation.resolution}x${projectSettings.generation.re
 
         // Detect text elements — use cache from hero_shots if available
         if (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color) {
-          const cachedElements = (heroShot as Record<string, unknown>).text_elements;
+          // Read cache directly from job data (avoid type cast issues)
+          const heroData = job.hero_shot as Record<string, unknown>;
+          const cachedElements = heroData?.text_elements;
+          console.log(`[regenerateJob] text_elements cache: ${cachedElements ? JSON.stringify(cachedElements).substring(0, 100) : 'null'}`);
+
           if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
             textElements = cachedElements as import('@/lib/brand').TextElement[];
             console.log(`[regenerateJob] Using ${textElements.length} cached text elements`);
