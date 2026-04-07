@@ -275,10 +275,39 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   const projectSettings = getProjectSettings(project?.metadata as Record<string, unknown> | null);
   const maxRetries = projectSettings.qa.max_retries;
 
-  // ── ANTI-LOOP: if attempt >= max retries, flag directly ──
+  // ── ANTI-LOOP: if attempt >= max retries, check if already QA-approved before flagging ──
   if (job.attempt >= maxRetries) {
+    // If the job already has a passing QA score (from a previous attempt that was
+    // reset by stale recovery), approve it instead of flagging.
+    const autoApproveThreshold = projectSettings.qa.auto_approve_threshold;
+    const existingScore = job.qa_score ? parseFloat(job.qa_score) : 0;
+    if (existingScore >= autoApproveThreshold) {
+      console.log(
+        `[process-next] Job ${job.id.substring(0, 8)} — attempt ${job.attempt} >= max ${maxRetries}, ` +
+        `but QA score ${(existingScore * 100).toFixed(0)}% >= ${(autoApproveThreshold * 100).toFixed(0)}% — approving`
+      );
+      await supabase
+        .from('generation_jobs')
+        .update({
+          status: 'approved',
+          error_message: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id);
+
+      await supabase
+        .from('generation_batches')
+        .update({
+          completed_count: (batch.completed_count || 0) + 1,
+          approved_count: (batch.approved_count || 0) + 1,
+        })
+        .eq('id', batchId);
+
+      return { chain: true, triggerQA: false };
+    }
+
     console.log(
-      `[process-next] Job ${job.id.substring(0, 8)} — attempt ${job.attempt} >= max ${MAX_QA_RETRIES}, flagging directly`
+      `[process-next] Job ${job.id.substring(0, 8)} — attempt ${job.attempt} >= max ${maxRetries}, flagging directly`
     );
     await supabase
       .from('generation_jobs')
