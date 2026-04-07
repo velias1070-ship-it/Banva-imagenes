@@ -13,7 +13,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
-import { buildBrandPromptSection, overlayBrandLogo, type BrandConfig } from '@/lib/brand';
+import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
@@ -298,12 +298,13 @@ async function regenerateJob(
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Overlay brand logo if project has a brand
+    // Brand post-processing: clear logo zone + overlay logo
     if (brand) {
       try {
+        imageBuffer = await clearLogoZone(imageBuffer, 'image/png', brand, textElements);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, textElements);
       } catch (brandErr) {
-        console.error('[regenerateJob] Brand overlay failed (non-blocking):', brandErr);
+        console.error('[regenerateJob] Brand processing failed (non-blocking):', brandErr);
       }
     }
 

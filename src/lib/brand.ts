@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { generateImage } from '@/lib/gemini/client';
 
 export interface BrandConfig {
   id: string;
@@ -428,4 +429,75 @@ export async function overlayBrandLogo(
 
   console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px, with bg pill)`);
   return result;
+}
+
+/**
+ * Second-pass Gemini call: shift text elements away from the logo zone.
+ * Only runs when text elements overlap with the logo corner.
+ * Takes the generated image and asks Gemini to move ONLY the overlapping text.
+ *
+ * Returns the modified image buffer, or the original if no shift was needed or it failed.
+ */
+export async function clearLogoZone(
+  imageBuffer: Buffer,
+  imageMimeType: string,
+  brand: BrandConfig,
+  textElements: TextElement[] | null | undefined
+): Promise<Buffer> {
+  if (!textElements?.length) return imageBuffer;
+
+  const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+  const logoAtLeft = brand.logo_position === 'top-left' || brand.logo_position === 'bottom-left';
+
+  if (!logoAtTop) return imageBuffer;
+
+  // Check if any text elements are in the logo zone (top position)
+  const topTextElements = textElements.filter(el => el.position === 'top');
+  if (topTextElements.length === 0) return imageBuffer;
+
+  const clearSpace = brand.logo_size_px + brand.logo_margin_px + 30;
+  const side = logoAtLeft ? 'izquierdo' : 'derecho';
+  const sideEn = logoAtLeft ? 'left' : 'right';
+
+  const textList = topTextElements.map(el => `"${el.text}"`).join(', ');
+
+  console.log(`[brand] clearLogoZone: ${topTextElements.length} text element(s) at top overlap with logo — running second pass`);
+
+  try {
+    const imageBase64 = imageBuffer.toString('base64');
+
+    const result = await generateImage({
+      heroImageBase64: imageBase64,
+      heroMimeType: imageMimeType,
+      swatchImageBase64: imageBase64,
+      swatchMimeType: imageMimeType,
+      promptText: `Reproduce this image EXACTLY as-is, with ONE change:
+
+Move these text elements DOWN so they start BELOW the ${clearSpace}px mark from the top on the ${sideEn} side: ${textList}
+
+RULES:
+- Shift ONLY the text that is in the top ~${clearSpace}px of the image on the ${side} side
+- Keep the text content, color, font, and size IDENTICAL — only change vertical position
+- Move them down just enough to clear the top ${clearSpace}px — approximately ${clearSpace - 20}px to ${clearSpace + 40}px from the top edge
+- Do NOT change anything else: product, background, other text elements, layout
+- The top-${sideEn} corner (${clearSpace}x${clearSpace}px area) must be CLEAR of any text
+
+Output: same resolution, RGB, PNG.`,
+      temperature: 0.15,
+    });
+
+    if (!result.success || !result.imageBase64) {
+      console.error(`[brand] clearLogoZone failed: ${result.error}`);
+      return imageBuffer;
+    }
+
+    console.log(`[brand] clearLogoZone: text shifted successfully (${result.durationMs}ms)`);
+
+    // Ensure output spec matches
+    const { ensureOutputSpec } = await import('@/lib/image-processing');
+    return await ensureOutputSpec(Buffer.from(result.imageBase64, 'base64'), 1200);
+  } catch (err) {
+    console.error('[brand] clearLogoZone error:', err instanceof Error ? err.message : err);
+    return imageBuffer;
+  }
 }
