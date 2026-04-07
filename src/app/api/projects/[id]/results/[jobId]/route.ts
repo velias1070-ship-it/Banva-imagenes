@@ -137,7 +137,9 @@ async function regenerateJob(
   try {
     // For ML-imported images (no hero_shot), use the generated output as the hero
     const heroPath = heroShot?.storage_path || (job.output_storage_path as string);
-    const swatchPath = swatch.storage_path;
+    // For BRAND_ONLY on ML imports: use same image as swatch too (prevents Gemini from changing product)
+    const isMLImport = !heroShot;
+    const swatchPath = (isBrandOnly && isMLImport) ? heroPath : swatch.storage_path;
 
     // Download hero and swatch FIRST (needed for shot type detection)
     const [heroRes, swatchRes] = await Promise.all([
