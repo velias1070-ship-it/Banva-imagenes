@@ -92,9 +92,10 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   const isInfoShot = shotType === 'infografia';
-  // No need for Gemini to shift text — logo has its own background for contrast
-  const needsTextShift = false;
   const hasTextElements = textElements && textElements.length > 0;
+  // Shift text when logo is at top AND hero has text in the top zone
+  const hasTopText = hasTextElements && textElements!.some(el => el.position === 'top');
+  const needsTextShift = logoAtTop && (hasTopText || isInfoShot);
 
   if (!hasTypography && !hasGuidelines && !needsTextShift && !hasColors) {
     return '';
@@ -370,7 +371,7 @@ export async function overlayBrandLogo(
 
   const margin = brand.logo_margin_px;
 
-  // Position logo
+  // Position logo — always use configured position (brand requirement)
   let left = margin;
   let top = margin;
 
@@ -390,13 +391,40 @@ export async function overlayBrandLogo(
       break;
   }
 
-  const result = await sharp(imageBuffer)
+  // Build logo with semi-transparent background pill for contrast over busy areas
+  const padX = 12;
+  const padY = 8;
+  const pillW = logoWidth + padX * 2;
+  const pillH = logoHeight + padY * 2;
+  const pillRadius = Math.min(12, Math.floor(pillH / 4));
+
+  const pillSvg = Buffer.from(
+    `<svg width="${pillW}" height="${pillH}">
+      <rect x="0" y="0" width="${pillW}" height="${pillH}" rx="${pillRadius}" ry="${pillRadius}" fill="white" fill-opacity="0.65"/>
+    </svg>`
+  );
+
+  const logoWithBg = await sharp({
+    create: { width: pillW, height: pillH, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
     .composite([
-      { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
+      { input: pillSvg, left: 0, top: 0 },
+      { input: resizedLogo, left: padX, top: padY },
     ])
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px)`);
+  // Adjust position so the pill is within bounds
+  const finalLeft = Math.max(0, Math.min(left - padX, imgWidth - pillW));
+  const finalTop = Math.max(0, Math.min(top - padY, imgHeight - pillH));
+
+  const result = await sharp(imageBuffer)
+    .composite([
+      { input: logoWithBg, left: finalLeft, top: finalTop },
+    ])
+    .png()
+    .toBuffer();
+
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px, with bg pill)`);
   return result;
 }
