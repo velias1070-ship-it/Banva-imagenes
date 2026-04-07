@@ -395,8 +395,23 @@ export async function overlayBrandLogo(
       break;
   }
 
+  // Extract the logo region, blur it, then composite blurred bg + logo
+  const padX = 14;
+  const padY = 10;
+  const regionLeft = Math.max(0, left - padX);
+  const regionTop = Math.max(0, top - padY);
+  const regionW = Math.min(logoWidth + padX * 2, imgWidth - regionLeft);
+  const regionH = Math.min(logoHeight + padY * 2, imgHeight - regionTop);
+
+  const blurredRegion = await sharp(imageBuffer)
+    .extract({ left: regionLeft, top: regionTop, width: regionW, height: regionH })
+    .blur(18)
+    .png()
+    .toBuffer();
+
   const result = await sharp(imageBuffer)
     .composite([
+      { input: blurredRegion, left: regionLeft, top: regionTop },
       { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
     ])
     .png()
