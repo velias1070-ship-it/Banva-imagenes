@@ -123,33 +123,37 @@ async function regenerateJob(
   brandId?: string | null
 ) {
   const supabase = createAdminClient();
-  const heroShot = job.hero_shot as Record<string, string>;
+  const heroShot = job.hero_shot as Record<string, string> | null;
   const swatch = job.swatch as Record<string, string>;
   const strategy = getCategoryStrategy(category);
   const projectSettings = getProjectSettings(projectMetadata);
 
   const qaDetail = job.qa_detail as Record<string, number> | null;
   const attempt = (job.attempt as number) || 0;
+  const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
   try {
+    // For ML-imported images (no hero_shot), use the generated output as the hero
+    const heroPath = heroShot?.storage_path || (job.output_storage_path as string);
+    const swatchPath = swatch.storage_path;
+
     // Download hero and swatch FIRST (needed for shot type detection)
     const [heroRes, swatchRes] = await Promise.all([
-      supabase.storage.from('images').download(heroShot.storage_path),
-      supabase.storage.from('images').download(swatch.storage_path),
+      supabase.storage.from('images').download(heroPath),
+      supabase.storage.from('images').download(swatchPath),
     ]);
 
     if (heroRes.error || swatchRes.error) {
-      throw new Error(`Storage download failed`);
+      throw new Error(`Storage download failed: hero=${heroRes.error?.message}, swatch=${swatchRes.error?.message}`);
     }
 
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
-    const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
     // Auto-detect shot type — use cache, skip for BRAND_ONLY
-    let effectiveShotType = (heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle';
-    if (isBrandOnly) {
-      // BRAND_ONLY: skip detection entirely
+    let effectiveShotType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle') : 'lifestyle';
+    if (isBrandOnly || !heroShot) {
+      // BRAND_ONLY or ML-imported (no hero): skip detection entirely
     } else if (!(heroShot as Record<string, unknown>).detected_shot_type) {
       const heroBase64ForDetection = heroBuffer.toString('base64');
       try {
@@ -336,11 +340,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           } else {
             try {
               const heroB64 = heroBuffer.toString('base64');
-              const textAnalysis = await analyzeTextElements(heroB64, heroShot.mime_type || 'image/png');
+              const textAnalysis = await analyzeTextElements(heroB64, heroShot?.mime_type || 'image/png');
               if (textAnalysis?.elements?.length) {
                 textElements = textAnalysis.elements;
                 console.log(`[regenerateJob] Detected ${textElements.length} text elements (caching)`);
-                supabase.from('hero_shots').update({ text_elements: textElements }).eq('id', heroShot.id).then(() => {});
+                if (heroShot?.id) {
+                  supabase.from('hero_shots').update({ text_elements: textElements }).eq('id', heroShot.id).then(() => {});
+                }
               }
             } catch (err) {
               console.error('[regenerateJob] Text analysis failed (non-blocking):', err);
@@ -405,7 +411,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       const heroBase64 = heroBuffer.toString('base64');
       result = await generateImage({
         heroImageBase64: heroBase64,
-        heroMimeType: heroShot.mime_type || 'image/png',
+        heroMimeType: heroShot?.mime_type || 'image/png',
         swatchImageBase64: swatchBase64,
         swatchMimeType: 'image/png',
         promptText: prompt,
