@@ -57,6 +57,15 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   const { id, jobId } = await context.params;
   const supabase = createAdminClient();
 
+  // Parse optional body
+  let mode: string | undefined;
+  try {
+    const body = await _request.json();
+    mode = body?.mode;
+  } catch {
+    // No body or invalid JSON — normal regeneration
+  }
+
   // Get job with relations
   const { data: job, error: jobError } = await supabase
     .from('generation_jobs')
@@ -78,6 +87,14 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     .select('category, metadata, brand_id')
     .eq('id', id)
     .single();
+
+  // If brand_only mode, set prompt_adjustment so regenerateJob detects it
+  if (mode === 'brand_only') {
+    await supabase
+      .from('generation_jobs')
+      .update({ prompt_adjustment: 'BRAND_ONLY' })
+      .eq('id', jobId);
+  }
 
   // Mark as generating (prevents QA from writing stale results)
   await supabase

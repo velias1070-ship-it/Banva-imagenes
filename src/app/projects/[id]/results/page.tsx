@@ -13,6 +13,7 @@ import {
   ImageIcon, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
   Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
+  Palette,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -93,6 +94,12 @@ export default function ResultsPage() {
   const [mlDirty, setMlDirty] = useState<Map<string, boolean>>(new Map());
   const [mlSaving, setMlSaving] = useState<Map<string, boolean>>(new Map());
 
+  // ML import state
+  const [mlImporting, setMlImporting] = useState<Set<string>>(new Set());
+
+  // Project brand
+  const [projectBrandId, setProjectBrandId] = useState<string | null>(null);
+
   // Swap state: click generated image → click ML position to replace
   const [swapSource, setSwapSource] = useState<{ swatchId: string; url: string; shotType?: string } | null>(null);
 
@@ -142,6 +149,16 @@ export default function ResultsPage() {
   useEffect(() => {
     fetchResults();
   }, [fetchResults]);
+
+  // Fetch project brand_id once
+  useEffect(() => {
+    fetch(`/api/projects/${id}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.brand_id) setProjectBrandId(data.brand_id);
+      })
+      .catch(() => {});
+  }, [id]);
 
   // ── AUTO-POLL + HEALTH CHECK ──
   const hasActiveJobs = allJobs.some((j) =>
@@ -417,6 +434,33 @@ export default function ResultsPage() {
     }
   }
 
+  // ── Import ML pictures as results ──
+  async function handleImportMlPictures(swatchId: string) {
+    setMlImporting((prev) => new Set(prev).add(swatchId));
+    try {
+      const res = await fetch(`/api/projects/${id}/import-ml-pictures`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ swatch_id: swatchId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`${data.imported} fotos importadas de ML para ${data.swatch}`);
+        fetchResults();
+      } else {
+        toast.error(data.error || `Error importando`);
+      }
+    } catch {
+      toast.error('Error de conexión');
+    } finally {
+      setMlImporting((prev) => {
+        const next = new Set(prev);
+        next.delete(swatchId);
+        return next;
+      });
+    }
+  }
+
   // ── Job actions ──
   async function handleDownloadAll() {
     toast.info('Preparando descarga ZIP...');
@@ -478,6 +522,53 @@ export default function ResultsPage() {
         }, 5000);
       } else {
         toast.error('Error iniciando regeneracion');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    }
+  }
+
+  async function handleBrandRegen(jobId: string) {
+    toast.info('Regenerando con Brand...');
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'brand_only' }),
+      });
+      if (res.ok) {
+        // Optimistic update
+        setGroups((prev) =>
+          prev.map((g) => ({
+            ...g,
+            jobs: g.jobs.map((j) =>
+              j.id === jobId ? { ...j, status: 'generating' } : j
+            ),
+          }))
+        );
+        toast.success('Regenerando con Brand — se actualizara automaticamente');
+        const poll = setInterval(async () => {
+          try {
+            const updated = await fetch(`/api/projects/${id}/results-with-listings`);
+            if (updated.ok) {
+              const data: SwatchResultGroup[] = await updated.json();
+              const thisJob = data.flatMap((g) => g.jobs).find((j) => j.id === jobId);
+              setGroups(data);
+              if (thisJob && thisJob.status !== 'generating' && thisJob.status !== 'qa_pending' && thisJob.status !== 'qa_processing') {
+                clearInterval(poll);
+                if (thisJob.status === 'approved') {
+                  toast.success('Brand regen completada y aprobada');
+                } else if (thisJob.status === 'flagged') {
+                  toast.error('Brand regen completada pero rechazada por QA');
+                } else {
+                  toast.error(`Brand regen termino con estado: ${thisJob.status}`);
+                }
+              }
+            }
+          } catch { /* ignore */ }
+        }, 5000);
+      } else {
+        toast.error('Error iniciando brand regen');
       }
     } catch {
       toast.error('Error de conexion');
@@ -749,7 +840,7 @@ export default function ResultsPage() {
           <div className="mb-2">
             <p className="text-sm font-medium truncate">{job.swatch?.name || 'Variante'}</p>
             <p className="text-xs text-muted-foreground truncate">
-              {job.hero_shot?.filename || 'Hero'} &middot; {job.hero_shot?.shot_type}
+              {job.hero_shot ? `${job.hero_shot.filename} · ${job.hero_shot.shot_type}` : 'Importado de ML'}
             </p>
           </div>
 
@@ -860,6 +951,17 @@ export default function ResultsPage() {
                 >
                   <RotateCcw className="h-3 w-3 mr-1" />
                   Regenerar
+                </Button>
+              )}
+              {projectBrandId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-purple-600"
+                  onClick={() => handleBrandRegen(job.id)}
+                >
+                  <Palette className="h-3 w-3 mr-1" />
+                  Brand
                 </Button>
               )}
               {job.status !== 'approved' && (
@@ -1308,6 +1410,24 @@ export default function ResultsPage() {
                       {/* ML buttons (outside the collapse click area) */}
                       {group.ml_listing && (
                         <div className="flex items-center gap-1 flex-shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 gap-1.5 text-xs text-muted-foreground"
+                            disabled={mlImporting.has(swatchId)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleImportMlPictures(swatchId);
+                            }}
+                            title="Importar fotos actuales de la publicación en ML"
+                          >
+                            {mlImporting.has(swatchId) ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Download className="h-3.5 w-3.5" />
+                            )}
+                            <span className="hidden sm:inline">Traer de ML</span>
+                          </Button>
                           {group.ml_listing.permalink && (
                             <a
                               href={group.ml_listing.permalink}
