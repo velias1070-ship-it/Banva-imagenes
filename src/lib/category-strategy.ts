@@ -98,17 +98,19 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       product_context: `This is a bed sheet set (juego de sabanas).
 The set includes: pillowcases + flat/top sheet + fitted sheet (sabana bajera).`,
 
-      what_to_change: `IMPORTANT — Image 2 may show DIFFERENT patterns for different pieces:
-* The PILLOWCASES in Image 2 have one pattern (could be floral, striped, etc.)
-* The FITTED SHEET (sabana bajera) in Image 2 may have a DIFFERENT pattern (often stripes or solid color)
+      what_to_change: `IMPORTANT — Image 2 shows a bed sheet SET with 3 DISTINCT pieces, each with its own pattern:
 
-Apply each pattern to the correct piece in Image 1:
-* Pillowcases in Image 1 -> use the PILLOWCASE pattern from Image 2
-* The flat surface underneath the pillows (fitted sheet) -> use the FITTED SHEET pattern from Image 2
-* If a top sheet is visible in Image 1 -> use its corresponding pattern from Image 2
+1. PILLOWCASES (fundas) — usually at the top of Image 2, often darker or with a distinct pattern
+2. FITTED/FLAT SHEET (sabana bajera) — the large light-colored surface with its own pattern (often white with small motifs)
+3. TOP SHEET FOLD/BORDER (doblez sabana superior) — the folded band visible between the pillowcases and the flat sheet. This is often a DARK STRIP of fabric that matches the pillowcase material.
 
-If Image 2 shows only ONE pattern for everything -> apply that same pattern to all textiles.
-If you cannot clearly distinguish the fitted sheet pattern in Image 2 -> use the dominant background color/pattern visible beneath the pillows in Image 2.
+Apply EACH pattern to the CORRECT piece in Image 1:
+* Pillowcases in Image 1 → use the PILLOWCASE pattern from Image 2
+* Flat sheet surface in Image 1 → use the FLAT SHEET pattern from Image 2
+* The folded/turned-down border of the top sheet in Image 1 → use the TOP SHEET pattern from Image 2. Look for the dark band/strip visible at the fold between pillows and sheet in Image 2. This border MUST be present in the output.
+
+If Image 2 shows only ONE pattern → apply it to all pieces.
+If you cannot distinguish pieces → use the dominant pattern for sheets and the darker pattern for pillowcases + top sheet fold.
 
 IMPORTANT: Sheets (sabanas) are FLAT, thin fabric — they must lay SMOOTH and FLAT on the bed, just like in Image 1. DO NOT add volume, puffiness, or quilting. Sheets are NOT duvets/comforters.
 
