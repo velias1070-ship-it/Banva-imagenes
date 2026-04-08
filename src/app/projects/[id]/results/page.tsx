@@ -1708,7 +1708,7 @@ export default function ResultsPage() {
             {/* Step 2: Target swatch */}
             {replicateSkuResult && (
               <div className="space-y-2">
-                <Label className="text-sm font-medium">2. Swatch destino (diseno a aplicar)</Label>
+                <Label className="text-sm font-medium">2. Swatch destino (diseño a aplicar)</Label>
                 <Select
                   value={replicateTargetSwatch}
                   onValueChange={setReplicateTargetSwatch}
@@ -1724,7 +1724,7 @@ export default function ResultsPage() {
                             <img
                               src={getStorageUrl(g.swatch.storage_path)}
                               alt=""
-                              className="h-5 w-5 rounded object-cover inline-block"
+                              className="h-8 w-8 rounded object-cover inline-block"
                             />
                           )}
                           {g.swatch.name}
@@ -1736,6 +1736,21 @@ export default function ResultsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {replicateTargetSwatch && (() => {
+                  const selected = groups.find((g) => g.swatch.id === replicateTargetSwatch);
+                  if (!selected?.swatch.storage_path) return null;
+                  return (
+                    <div className="mt-2 p-3 bg-muted rounded-lg">
+                      <p className="text-xs text-muted-foreground mb-2">Imagen del swatch que se usará como diseño:</p>
+                      <img
+                        src={getStorageUrl(selected.swatch.storage_path)}
+                        alt={selected.swatch.name}
+                        className="w-full max-w-[200px] rounded-lg border"
+                      />
+                      <p className="text-xs mt-1 font-medium">{selected.swatch.name}</p>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
