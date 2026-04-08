@@ -239,8 +239,11 @@ async function regenerateJob(
     }
 
     // ── Auto-analyze swatch color if missing (skip for BRAND_ONLY — saves ~2s) ──
-    let swatchColorDescription = swatch.color_description || null;
-    if (!swatchColorDescription && !isBrandOnly) {
+    // Use short color description only (not planner's long analysis)
+    const rawColorDesc = swatch.color_description;
+    let swatchColorDescription: string | null = (rawColorDesc && rawColorDesc.length <= 100) ? rawColorDesc : null;
+    if (!swatchColorDescription) swatchColorDescription = swatch.name;
+    if (!rawColorDesc && !isBrandOnly) {
       console.log(`[regenerateJob] Swatch "${swatch.name}" has no color_description — auto-analyzing...`);
       try {
         const colorAnalysis = await analyzeSwatchColor(
@@ -343,11 +346,14 @@ async function regenerateJob(
           swatch.name,
         );
         if (swatchPatternDescription) {
-          // Cache for future jobs (non-blocking)
-          supabase.from('swatches')
-            .update({ color_description: swatchPatternDescription })
-            .eq('id', swatch.id)
-            .then(() => {});
+          // Cache pattern analysis — only if no short color desc exists yet
+          const existing = swatch.color_description;
+          if (!existing || existing.length > 100) {
+            supabase.from('swatches')
+              .update({ color_description: swatchPatternDescription })
+              .eq('id', swatch.id)
+              .then(() => {});
+          }
         }
       }
     }

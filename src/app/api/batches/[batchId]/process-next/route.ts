@@ -385,8 +385,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     // ── Auto-analyze swatch color if missing (skip for BRAND_ONLY — not changing product) ──
     // Uses Gemini Flash (~2s) to detect color, then caches in DB for future jobs
-    let swatchColorDescription = job.swatch.color_description;
-    if (!swatchColorDescription && !isBrandOnly) {
+    // Use short color description only (not planner's long analysis)
+    const rawColorDesc = job.swatch.color_description;
+    let swatchColorDescription = (rawColorDesc && rawColorDesc.length <= 100) ? rawColorDesc : null;
+    // Fallback: always have at least the swatch name as color reference
+    if (!swatchColorDescription) swatchColorDescription = job.swatch.name;
+    if (!rawColorDesc && !isBrandOnly) {
       console.log(`[process-next] Swatch "${job.swatch.name}" has no color_description — auto-analyzing...`);
       try {
         const colorAnalysis = await analyzeSwatchColor(
@@ -544,11 +548,15 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
           job.swatch.name,
         );
         if (swatchPatternDescription) {
-          // Cache for future jobs (non-blocking)
-          supabase.from('swatches')
-            .update({ color_description: swatchPatternDescription })
-            .eq('id', job.swatch.id)
-            .then(() => {});
+          // Cache pattern analysis — only if no short color desc exists yet
+          // (don't overwrite "Negro" with a paragraph)
+          const existing = job.swatch.color_description;
+          if (!existing || existing.length > 100) {
+            supabase.from('swatches')
+              .update({ color_description: swatchPatternDescription })
+              .eq('id', job.swatch.id)
+              .then(() => {});
+          }
         }
       }
     }
