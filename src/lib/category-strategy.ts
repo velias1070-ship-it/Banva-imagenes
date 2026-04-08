@@ -93,7 +93,7 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
     label: 'Sabanas',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: true, flatten_hero: false },
+    preprocessing: { crop_swatch: false, flatten_hero: false },
     prompt: {
       product_context: `This is a bed sheet set (juego de sabanas).
 The set includes: pillowcases + flat/top sheet + fitted sheet (sabana bajera).`,
@@ -760,12 +760,10 @@ function formatColorAnchor(swatchHex?: string | null, colorDescription?: string 
 
   const lines: string[] = ['\n\nFIDELIDAD DE COLOR (CRÍTICO — NO IGNORAR):'];
 
-  if (swatchHex && colorDescription) {
-    lines.push(`El color dominante del swatch es ${swatchHex} ("${colorDescription}").`);
+  if (colorDescription) {
+    lines.push(`El color del swatch es "${colorDescription}".`);
   } else if (swatchHex) {
     lines.push(`El color dominante del swatch es ${swatchHex}.`);
-  } else if (colorDescription) {
-    lines.push(`El color del swatch es "${colorDescription}".`);
   }
 
   lines.push(
