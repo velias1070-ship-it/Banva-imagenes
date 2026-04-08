@@ -82,7 +82,8 @@ The pillowcase pattern must match Image 2 EXACTLY — same texture, same stripes
 DO NOT change the pillowcases — they are already correct, leave them EXACTLY as they are.
 DO NOT change non-textile elements (walls, furniture, floor, lamp, headboard).
 Keep the exact same composition, camera angle, and lighting.
-The sheet pattern must match Image 2 EXACTLY — same texture, same pattern, same colors.`,
+The sheet pattern must match Image 2 EXACTLY — same texture, same pattern, same colors.
+IMPORTANT: Sheets (sabanas) are FLAT, thin fabric — they must lay SMOOTH and FLAT on the bed. DO NOT add volume, puffiness, or quilting. Sheets are NOT duvets/comforters/plumones.`,
     temperature,
     useProModel,
   });
