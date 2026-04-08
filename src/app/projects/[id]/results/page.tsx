@@ -491,7 +491,7 @@ export default function ResultsPage() {
   const swatchesWithApproved = useMemo(() => {
     const ids = new Set<string>();
     for (const g of groups) {
-      if (g.jobs.some((j) => j.status === 'approved' && j.hero_shot_id)) {
+      if (g.jobs.some((j) => j.status === 'approved')) {
         ids.add(g.swatch.id);
       }
     }
