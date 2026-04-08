@@ -18,6 +18,7 @@ import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { verifySwatch } from '@/lib/swatch-verifier';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
+import { arePatternsSimlar } from '@/lib/pattern-comparator';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -450,6 +451,24 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     let effectiveMode = projectSettings.generation.mode !== 'auto'
       ? projectSettings.generation.mode
       : getEffectiveMode(strategy, job.attempt);
+
+    // For categories that default to 'reference': auto-detect if edit mode is better.
+    // If hero and swatch have the same pattern type, edit mode just changes color
+    // and preserves the existing texture — much more reliable than generating from scratch.
+    if (effectiveMode === 'reference' && !isBrandOnly && job.attempt === 0) {
+      try {
+        const similar = await arePatternsSimlar(
+          heroBase64, job.hero_shot.mime_type || 'image/png',
+          swatchBase64, 'image/png',
+        );
+        if (similar) {
+          effectiveMode = 'edit';
+          console.log(`[process-next] Patterns similar → switching to edit mode (color change only)`);
+        }
+      } catch (err) {
+        console.error('[process-next] Pattern comparison failed (using default):', err);
+      }
+    }
 
     // Detail/doblada shots use edit mode to preserve composition.
     // Infografia: only force edit if category default is edit (quilts need reference for pattern change).
