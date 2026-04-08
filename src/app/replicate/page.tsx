@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square,
+  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square, ArrowLeftRight, Replace,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -48,6 +48,7 @@ export default function ReplicatePage() {
   const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
 
   const [selectedPicIds, setSelectedPicIds] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<'swap_positions' | 'replace_all'>('swap_positions');
 
   const [replicating, setReplicating] = useState(false);
   const [results, setResults] = useState<ReplicateResult[] | null>(null);
@@ -154,6 +155,7 @@ export default function ReplicatePage() {
           source_item_id: sourceDetail.item_id,
           target_item_ids: Array.from(targetIds),
           selected_picture_ids: Array.from(selectedPicIds),
+          mode,
         }),
       });
       const data = await res.json();
@@ -438,6 +440,45 @@ export default function ReplicatePage() {
               </Card>
             )}
 
+            {/* Mode toggle */}
+            {sourceDetail && selectedPicIds.size > 0 && (
+              <Card>
+                <CardContent className="pt-4 pb-3">
+                  <p className="text-xs text-muted-foreground mb-2 font-medium">Modo de replicado</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={() => setMode('swap_positions')}
+                      className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-xs transition-colors ${
+                        mode === 'swap_positions'
+                          ? 'border-blue-400 bg-blue-50 text-blue-700 ring-1 ring-blue-300'
+                          : 'border-gray-200 hover:bg-muted/50 text-muted-foreground'
+                      }`}
+                    >
+                      <ArrowLeftRight className="h-4 w-4" />
+                      <span className="font-medium">Swap posicion</span>
+                      <span className="text-[10px] leading-tight text-center opacity-75">
+                        Reemplaza solo las seleccionadas
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setMode('replace_all')}
+                      className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-xs transition-colors ${
+                        mode === 'replace_all'
+                          ? 'border-blue-400 bg-blue-50 text-blue-700 ring-1 ring-blue-300'
+                          : 'border-gray-200 hover:bg-muted/50 text-muted-foreground'
+                      }`}
+                    >
+                      <Replace className="h-4 w-4" />
+                      <span className="font-medium">Reemplazar todas</span>
+                      <span className="text-[10px] leading-tight text-center opacity-75">
+                        Borra fotos del destino
+                      </span>
+                    </button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Action */}
             {sourceDetail && targetIds.size > 0 && selectedPicIds.size > 0 && (
               <Card>
@@ -448,6 +489,11 @@ export default function ReplicatePage() {
                       foto{selectedPicIds.size !== 1 ? 's' : ''} seleccionada{selectedPicIds.size !== 1 ? 's' : ''}
                     </p>
                     <p className="text-lg font-medium mt-1">→ {targetIds.size} destino{targetIds.size !== 1 ? 's' : ''}</p>
+                    {mode === 'swap_positions' && (
+                      <p className="text-[11px] text-blue-600 mt-1">
+                        Solo se reemplazan las posiciones seleccionadas
+                      </p>
+                    )}
                   </div>
 
                   <Button
@@ -459,7 +505,12 @@ export default function ReplicatePage() {
                     {replicating ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Replicando...
+                        {mode === 'swap_positions' ? 'Swapping...' : 'Replicando...'}
+                      </>
+                    ) : mode === 'swap_positions' ? (
+                      <>
+                        <ArrowLeftRight className="h-4 w-4 mr-2" />
+                        Swap {selectedPicIds.size} foto{selectedPicIds.size !== 1 ? 's' : ''} en posicion
                       </>
                     ) : (
                       <>

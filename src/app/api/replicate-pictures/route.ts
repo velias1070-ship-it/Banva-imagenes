@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { mlGet, mlReplaceItemPicturesFromUrls } from '@/lib/ml';
+import { mlGet, mlPut, mlReplaceItemPicturesFromUrls, mlUploadImageFromUrl } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -149,6 +149,7 @@ export async function POST(request: NextRequest) {
   const targetSkus: string[] | undefined = body.target_skus;
   const targetItemIds: string[] | undefined = body.target_item_ids;
   const selectedPictureIds: string[] | undefined = body.selected_picture_ids;
+  const mode: 'replace_all' | 'swap_positions' = body.mode || 'replace_all';
 
   if (!sourceSku && !sourceItemIdDirect) {
     return NextResponse.json({ error: 'source_sku or source_item_id is required' }, { status: 400 });
@@ -189,6 +190,17 @@ export async function POST(request: NextRequest) {
       .map((p) => p.secure_url.replace(/-O\.(\w+)$/, '-F.$1'));
   }
 
+  // For swap_positions mode, build a map of source index -> URL for the selected pictures
+  const selectedPositionMap: Map<number, string> = new Map();
+  if (mode === 'swap_positions' && selectedPictureIds && selectedPictureIds.length > 0) {
+    for (let i = 0; i < sourceItem.pictures.length; i++) {
+      if (selectedPictureIds.includes(sourceItem.pictures[i].id)) {
+        const url = sourceItem.pictures[i].secure_url.replace(/-O\.(\w+)$/, '-F.$1');
+        selectedPositionMap.set(i, url);
+      }
+    }
+  }
+
   // 3. Build target list — merge SKUs and direct item IDs
   const targets: Array<{ label: string; itemId?: string; sku?: string }> = [];
   if (targetSkus?.length) {
@@ -219,19 +231,72 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const targetItem = await mlGet<{ id: string; title: string }>(
-        `/items/${targetItemId}?attributes=id,title`
-      );
+      if (mode === 'swap_positions') {
+        // --- Swap by position mode ---
+        // Get the target's current pictures
+        const targetItem = await mlGet<MlItemResponse>(
+          `/items/${targetItemId}?attributes=id,title,pictures`
+        );
+        if (!targetItem?.pictures?.length) {
+          results.push({ sku: target.label, item_id: targetItemId, title: targetItem?.title || null, status: 'error', pictures_set: 0, error: 'Target has no pictures' });
+          continue;
+        }
 
-      await mlReplaceItemPicturesFromUrls(targetItemId, sourceUrls);
+        // Upload source photos to ML first so we get picture IDs
+        // (using source URLs directly with mlPut is unreliable — ML may not reach the host)
+        const uploadCache: Map<string, string> = new Map();
+        let swappedCount = 0;
 
-      results.push({
-        sku: target.label,
-        item_id: targetItemId,
-        title: targetItem?.title || null,
-        status: 'ok',
-        pictures_set: sourceUrls.length,
-      });
+        // Build the merged pictures array: start with target's existing, replace at selected positions
+        const mergedPictures: Array<{ id: string }> = targetItem.pictures.map((p) => ({ id: p.id }));
+
+        for (const [sourceIndex, sourceUrl] of selectedPositionMap) {
+          // Skip if position exceeds target's picture count
+          if (sourceIndex >= targetItem.pictures.length) continue;
+
+          // Upload source photo to ML (with cache to avoid re-uploading same URL)
+          let uploadedId = uploadCache.get(sourceUrl);
+          if (!uploadedId) {
+            const uploaded = await mlUploadImageFromUrl(sourceUrl);
+            uploadedId = uploaded.id;
+            uploadCache.set(sourceUrl, uploadedId);
+          }
+
+          mergedPictures[sourceIndex] = { id: uploadedId };
+          swappedCount++;
+        }
+
+        if (swappedCount === 0) {
+          results.push({ sku: target.label, item_id: targetItemId, title: targetItem.title, status: 'error', pictures_set: 0, error: 'No positions matched (target has fewer photos)' });
+          continue;
+        }
+
+        // PUT the merged array to ML
+        await mlPut(`/items/${targetItemId}`, { pictures: mergedPictures });
+
+        results.push({
+          sku: target.label,
+          item_id: targetItemId,
+          title: targetItem.title,
+          status: 'ok',
+          pictures_set: swappedCount,
+        });
+      } else {
+        // --- Replace all mode (existing behavior) ---
+        const targetItem = await mlGet<{ id: string; title: string }>(
+          `/items/${targetItemId}?attributes=id,title`
+        );
+
+        await mlReplaceItemPicturesFromUrls(targetItemId, sourceUrls);
+
+        results.push({
+          sku: target.label,
+          item_id: targetItemId,
+          title: targetItem?.title || null,
+          status: 'ok',
+          pictures_set: sourceUrls.length,
+        });
+      }
     } catch (err) {
       results.push({
         sku: target.label,
@@ -251,5 +316,6 @@ export async function POST(request: NextRequest) {
     source: { sku: sourceSku, item_id: sourceItemId, title: sourceItem.title, pictures: sourceUrls.length },
     targets: results,
     summary: { success: successCount, errors: errorCount, total: targets.length },
+    mode,
   });
 }
