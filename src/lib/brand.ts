@@ -107,13 +107,8 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
     ? `\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`
     : `\n\n=== INSTRUCCIONES DE TEXTO ===`);
 
-  // Text shift instruction FIRST — most important for layout
-  if (needsTextShift) {
-    const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
-    const side = brand.logo_position === 'top-left' ? 'superior izquierda' : 'superior derecha';
-    const sideShort = brand.logo_position === 'top-left' ? 'izquierdo' : 'derecho';
-    parts.push(`POSICION DE TEXTO — CRITICO: Un logo de ${brand.logo_size_px}px se agrega en post-proceso en la esquina ${side}. TODO texto que este en los primeros ${clearSpace}px superiores del lado ${sideShort} DEBE bajar para empezar DEBAJO de los ${clearSpace}px. Mover el texto lo justo, NO al centro de la imagen. NO agregar fondo blanco, rectángulo ni caja en la zona del logo — dejar el fondo natural de la imagen.`);
-  }
+  // Text shift instruction REMOVED — causes Gemini to slide content down and crop bottom.
+  // Sharp overlays the logo on top without moving any text.
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
   if (mode === 'full') {
