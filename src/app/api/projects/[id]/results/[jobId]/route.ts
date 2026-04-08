@@ -578,6 +578,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
+        gemini_model_used: process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview',
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,
