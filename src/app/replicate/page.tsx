@@ -1,28 +1,14 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, Trash2, Plus,
+  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square,
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-interface MlPicture {
-  id: string;
-  url: string;
-  size: string;
-}
-
-interface ListingPreview {
-  item_id: string;
-  title: string;
-  status: string;
-  permalink: string;
-  pictures: MlPicture[];
-}
 
 interface SearchResult {
   item_id: string;
@@ -31,6 +17,14 @@ interface SearchResult {
   permalink: string;
   picture_count: number;
   thumbnail: string | null;
+}
+
+interface SourceDetail {
+  item_id: string;
+  title: string;
+  status: string;
+  permalink: string;
+  pictures: Array<{ id: string; url: string; size: string }>;
 }
 
 interface ReplicateResult {
@@ -43,125 +37,106 @@ interface ReplicateResult {
 }
 
 export default function ReplicatePage() {
-  const [sourceQuery, setSourceQuery] = useState('');
-  const [sourcePreview, setSourcePreview] = useState<ListingPreview | null>(null);
-  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [listings, setListings] = useState<SearchResult[]>([]);
+  const [totalResults, setTotalResults] = useState(0);
+
+  const [sourceId, setSourceId] = useState<string | null>(null);
+  const [sourceDetail, setSourceDetail] = useState<SourceDetail | null>(null);
   const [loadingSource, setLoadingSource] = useState(false);
+  const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
 
-  const [targetQuery, setTargetQuery] = useState('');
-  const [targetSearchResults, setTargetSearchResults] = useState<SearchResult[] | null>(null);
-  const [loadingTargetSearch, setLoadingTargetSearch] = useState(false);
-
-  const [targetSkus, setTargetSkus] = useState<string[]>(['']);
-  const [targetItems, setTargetItems] = useState<Array<{ item_id: string; title: string }>>([]);
   const [replicating, setReplicating] = useState(false);
   const [results, setResults] = useState<ReplicateResult[] | null>(null);
 
-  const searchDebounce = useRef<ReturnType<typeof setTimeout>>(null);
-
-  // Detect if input looks like a SKU (alphanumeric, no spaces) or a search query
-  function looksLikeSku(input: string): boolean {
-    return /^[A-Za-z0-9_.-]+$/.test(input) && input.length >= 3;
-  }
-
-  async function fetchSource() {
-    const q = sourceQuery.trim();
+  async function handleSearch() {
+    const q = query.trim();
     if (!q) return;
-    setLoadingSource(true);
-    setSourcePreview(null);
-    setSearchResults(null);
+    setSearching(true);
+    setListings([]);
+    setSourceId(null);
+    setSourceDetail(null);
+    setTargetIds(new Set());
     setResults(null);
     try {
-      if (looksLikeSku(q)) {
-        // Try SKU first
-        const res = await fetch(`/api/replicate-pictures?sku=${encodeURIComponent(q)}`);
-        if (res.ok) {
-          setSourcePreview(await res.json());
+      // Try as SKU first if it looks like one
+      if (/^[A-Za-z0-9_.-]+$/.test(q) && !q.includes(' ')) {
+        const skuRes = await fetch(`/api/replicate-pictures?sku=${encodeURIComponent(q)}`);
+        if (skuRes.ok) {
+          const data = await skuRes.json();
+          setListings([{
+            item_id: data.item_id,
+            title: data.title,
+            status: data.status,
+            permalink: data.permalink,
+            picture_count: data.pictures.length,
+            thumbnail: data.pictures[0]?.url || null,
+          }]);
+          setTotalResults(1);
+          setSearching(false);
           return;
         }
       }
-      // Fallback to name search
+      // Search by name
       const res = await fetch(`/api/replicate-pictures?q=${encodeURIComponent(q)}`);
       const data = await res.json();
-      if (data.results?.length) {
-        setSearchResults(data.results);
-      } else {
+      setListings(data.results || []);
+      setTotalResults(data.total || 0);
+      if (!data.results?.length) {
         toast.error('No se encontraron publicaciones');
       }
     } catch {
       toast.error('Error de conexión');
     } finally {
-      setLoadingSource(false);
+      setSearching(false);
     }
   }
 
-  async function selectSearchResult(itemId: string) {
-    setSearchResults(null);
+  async function selectSource(itemId: string) {
+    if (sourceId === itemId) return;
+    setSourceId(itemId);
+    setSourceDetail(null);
     setLoadingSource(true);
+    // Remove from targets if it was there
+    setTargetIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
     try {
       const res = await fetch(`/api/replicate-pictures?item_id=${itemId}`);
       if (res.ok) {
-        setSourcePreview(await res.json());
-      } else {
-        toast.error('Error cargando publicación');
+        setSourceDetail(await res.json());
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error('Error cargando fotos');
     } finally {
       setLoadingSource(false);
     }
   }
 
-  // Target search by name
-  async function searchTargets() {
-    const q = targetQuery.trim();
-    if (!q) return;
-    setLoadingTargetSearch(true);
-    setTargetSearchResults(null);
-    try {
-      const res = await fetch(`/api/replicate-pictures?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
-      if (data.results?.length) {
-        setTargetSearchResults(data.results);
-      } else {
-        toast.error('No se encontraron publicaciones');
-      }
-    } catch {
-      toast.error('Error de conexión');
-    } finally {
-      setLoadingTargetSearch(false);
-    }
+  function toggleTarget(itemId: string) {
+    if (itemId === sourceId) return;
+    setTargetIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
   }
 
-  function addTargetFromSearch(result: SearchResult) {
-    if (targetItems.some((t) => t.item_id === result.item_id)) {
-      toast.info('Ya agregado');
-      return;
-    }
-    setTargetItems((prev) => [...prev, { item_id: result.item_id, title: result.title }]);
+  function selectAllAsTargets() {
+    const all = new Set(listings.filter((l) => l.item_id !== sourceId).map((l) => l.item_id));
+    setTargetIds(all);
   }
 
-  function removeTargetItem(itemId: string) {
-    setTargetItems((prev) => prev.filter((t) => t.item_id !== itemId));
-  }
-
-  function addTargetField() {
-    setTargetSkus((prev) => [...prev, '']);
-  }
-
-  function removeTargetField(index: number) {
-    setTargetSkus((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  function updateTargetSku(index: number, value: string) {
-    setTargetSkus((prev) => prev.map((s, i) => (i === index ? value : s)));
+  function clearTargets() {
+    setTargetIds(new Set());
   }
 
   async function handleReplicate() {
-    const validSkus = targetSkus.map((s) => s.trim()).filter(Boolean);
-    const validItemIds = targetItems.map((t) => t.item_id);
-    if (!sourcePreview || (validSkus.length === 0 && validItemIds.length === 0)) return;
-
+    if (!sourceDetail || targetIds.size === 0) return;
     setReplicating(true);
     setResults(null);
     try {
@@ -169,9 +144,8 @@ export default function ReplicatePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source_item_id: sourcePreview.item_id,
-          target_skus: validSkus.length > 0 ? validSkus : undefined,
-          target_item_ids: validItemIds.length > 0 ? validItemIds : undefined,
+          source_item_id: sourceDetail.item_id,
+          target_item_ids: Array.from(targetIds),
         }),
       });
       const data = await res.json();
@@ -191,321 +165,272 @@ export default function ReplicatePage() {
     }
   }
 
-  function handlePasteTargets(e: React.ClipboardEvent<HTMLInputElement>, index: number) {
-    const pasted = e.clipboardData.getData('text');
-    const skus = pasted.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
-    if (skus.length > 1) {
-      e.preventDefault();
-      setTargetSkus((prev) => {
-        const before = prev.slice(0, index);
-        const after = prev.slice(index + 1);
-        return [...before, ...skus, ...after];
-      });
-    }
+  const statusColor = (s: string) => {
+    if (s === 'active') return 'bg-green-100 text-green-700';
+    if (s === 'paused') return 'bg-yellow-100 text-yellow-700';
+    return 'bg-gray-100 text-gray-600';
+  };
+
+  // Extract variant name from title (last word typically)
+  function variantName(title: string): string {
+    // "Sabanas De 1.5 Plaza Infantil De 144 Hilos Premium Stars" → "Stars"
+    const words = title.trim().split(/\s+/);
+    return words[words.length - 1] || title;
   }
 
-  const validTargetCount = targetSkus.filter((s) => s.trim()).length + targetItems.length;
-
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-8 max-w-6xl mx-auto">
       <div className="mb-8">
         <h1 className="text-2xl font-bold">Replicar Fotos entre Publicaciones</h1>
         <p className="text-muted-foreground">
-          Copia las fotos de una publicación de ML a otras instantáneamente. Busca por SKU o nombre.
+          Busca por nombre o SKU, selecciona origen y destinos, replica instantáneamente
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* SOURCE */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Publicación Origen</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                placeholder="SKU o nombre del producto..."
-                value={sourceQuery}
-                onChange={(e) => setSourceQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && fetchSource()}
-              />
-              <Button onClick={fetchSource} disabled={loadingSource || !sourceQuery.trim()}>
-                {loadingSource ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              </Button>
-            </div>
+      {/* Search */}
+      <div className="flex gap-2 mb-6">
+        <Input
+          placeholder="Buscar: ej. sabanas infantiles 1.5 plaza, o un SKU..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          className="text-base"
+        />
+        <Button onClick={handleSearch} disabled={searching || !query.trim()} size="lg">
+          {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+          {!searching && 'Buscar'}
+        </Button>
+      </div>
 
-            {/* Search results list */}
-            {searchResults && (
-              <div className="space-y-1 max-h-80 overflow-y-auto border rounded-lg p-2">
-                <p className="text-xs text-muted-foreground px-1 mb-1">
-                  {searchResults.length} resultados — selecciona uno:
-                </p>
-                {searchResults.map((r) => (
-                  <button
-                    key={r.item_id}
-                    className="w-full flex items-center gap-3 rounded-lg p-2 hover:bg-muted/50 text-left transition-colors"
-                    onClick={() => selectSearchResult(r.item_id)}
-                  >
-                    {r.thumbnail ? (
-                      <img src={r.thumbnail} alt="" className="h-10 w-10 rounded object-cover flex-shrink-0" />
-                    ) : (
-                      <div className="h-10 w-10 rounded bg-gray-100 flex-shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate">{r.title}</p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-muted-foreground font-mono">{r.item_id}</span>
-                        <Badge
-                          variant="secondary"
-                          className={`text-[9px] h-4 px-1 ${r.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}
-                        >
-                          {r.status}
-                        </Badge>
-                        <span className="text-[10px] text-muted-foreground">{r.picture_count} fotos</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Selected source preview */}
-            {sourcePreview && (
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{sourcePreview.title}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Badge variant="outline" className="text-[10px] font-mono">
-                        {sourcePreview.item_id}
-                      </Badge>
-                      <Badge
-                        variant="secondary"
-                        className={`text-[10px] ${sourcePreview.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}
-                      >
-                        {sourcePreview.status}
-                      </Badge>
-                    </div>
-                  </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    {sourcePreview.permalink && (
-                      <a href={sourcePreview.permalink} target="_blank" rel="noopener noreferrer">
-                        <Button variant="ghost" size="icon" className="h-7 w-7">
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </Button>
-                      </a>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground"
-                      onClick={() => { setSourcePreview(null); setSourceQuery(''); }}
-                    >
-                      <XCircle className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">
-                    {sourcePreview.pictures.length} fotos a copiar:
-                  </p>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {sourcePreview.pictures.map((pic, i) => (
-                      <div key={pic.id} className="aspect-square rounded overflow-hidden bg-gray-100 relative">
-                        <img
-                          src={pic.url}
-                          alt={`Foto ${i + 1}`}
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                        />
-                        <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] px-1 rounded-tl">
-                          {i + 1}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* TARGETS */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Publicaciones Destino</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Search targets by name */}
-            <div>
-              <p className="text-xs text-muted-foreground mb-2">
-                Buscar por nombre para agregar destinos:
+      {listings.length > 0 && (
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* LEFT: Listings list */}
+          <div className="lg:col-span-2 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                {listings.length} publicaciones{totalResults > listings.length ? ` de ${totalResults}` : ''}
               </p>
               <div className="flex gap-2">
-                <Input
-                  placeholder="Buscar publicación por nombre..."
-                  value={targetQuery}
-                  onChange={(e) => setTargetQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && searchTargets()}
-                />
-                <Button
-                  variant="outline"
-                  onClick={searchTargets}
-                  disabled={loadingTargetSearch || !targetQuery.trim()}
-                >
-                  {loadingTargetSearch ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                </Button>
-              </div>
-
-              {targetSearchResults && (
-                <div className="space-y-1 max-h-48 overflow-y-auto border rounded-lg p-2 mt-2">
-                  {targetSearchResults.map((r) => {
-                    const isAdded = targetItems.some((t) => t.item_id === r.item_id);
-                    return (
-                      <button
-                        key={r.item_id}
-                        className={`w-full flex items-center gap-3 rounded-lg p-2 text-left transition-colors ${
-                          isAdded ? 'bg-green-50 opacity-60' : 'hover:bg-muted/50'
-                        }`}
-                        onClick={() => addTargetFromSearch(r)}
-                        disabled={isAdded}
-                      >
-                        {r.thumbnail ? (
-                          <img src={r.thumbnail} alt="" className="h-8 w-8 rounded object-cover flex-shrink-0" />
-                        ) : (
-                          <div className="h-8 w-8 rounded bg-gray-100 flex-shrink-0" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs truncate">{r.title}</p>
-                          <span className="text-[10px] text-muted-foreground font-mono">{r.item_id}</span>
-                        </div>
-                        {isAdded ? (
-                          <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
-                        ) : (
-                          <Plus className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Selected target items from search */}
-            {targetItems.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">Seleccionados:</p>
-                {targetItems.map((t) => (
-                  <div key={t.item_id} className="flex items-center gap-2 rounded-lg border p-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs truncate">{t.title}</p>
-                      <span className="text-[10px] text-muted-foreground font-mono">{t.item_id}</span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-red-500 hover:text-red-700 flex-shrink-0"
-                      onClick={() => removeTargetItem(t.item_id)}
-                    >
-                      <Trash2 className="h-3 w-3" />
+                {sourceId && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={selectAllAsTargets} className="text-xs h-7">
+                      <CheckSquare className="h-3 w-3 mr-1" />
+                      Seleccionar todas
                     </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Manual SKU input */}
-            <div>
-              <p className="text-xs text-muted-foreground mb-2">
-                O ingresa SKUs directamente:
-              </p>
-              <div className="space-y-2">
-                {targetSkus.map((sku, i) => (
-                  <div key={i} className="flex gap-2">
-                    <Input
-                      placeholder={`SKU destino ${i + 1}`}
-                      value={sku}
-                      onChange={(e) => updateTargetSku(i, e.target.value)}
-                      onPaste={(e) => handlePasteTargets(e, i)}
-                    />
-                    {targetSkus.length > 1 && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 text-red-500 hover:text-red-700 flex-shrink-0"
-                        onClick={() => removeTargetField(i)}
-                      >
-                        <Trash2 className="h-4 w-4" />
+                    {targetIds.size > 0 && (
+                      <Button variant="ghost" size="sm" onClick={clearTargets} className="text-xs h-7">
+                        Limpiar
                       </Button>
                     )}
-                  </div>
-                ))}
+                  </>
+                )}
               </div>
-              <Button variant="outline" size="sm" onClick={addTargetField} className="w-full mt-2">
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                Agregar SKU
-              </Button>
             </div>
 
-            <Button
-              className="w-full"
-              disabled={!sourcePreview || validTargetCount === 0 || replicating}
-              onClick={handleReplicate}
-            >
-              {replicating ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Replicando...
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4 mr-2" />
-                  Replicar {sourcePreview?.pictures.length || 0} fotos a {validTargetCount} destino{validTargetCount !== 1 ? 's' : ''}
-                </>
-              )}
-            </Button>
+            {!sourceId && (
+              <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
+                Haz click en una publicación para seleccionarla como <strong>origen</strong>
+              </p>
+            )}
 
-            {/* Results */}
-            {results && (
-              <div className="space-y-2 pt-2 border-t">
-                <p className="text-xs font-medium text-muted-foreground">Resultados:</p>
-                {results.map((r, i) => (
+            {sourceId && targetIds.size === 0 && (
+              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+                Ahora marca las publicaciones <strong>destino</strong> con el checkbox, o usa "Seleccionar todas"
+              </p>
+            )}
+
+            <div className="space-y-1">
+              {listings.map((listing) => {
+                const isSource = listing.item_id === sourceId;
+                const isTarget = targetIds.has(listing.item_id);
+                const resultForThis = results?.find((r) => r.item_id === listing.item_id || r.sku === listing.item_id);
+
+                return (
                   <div
-                    key={i}
-                    className={`flex items-center gap-3 rounded-lg border p-3 ${
-                      r.status === 'ok' ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+                    key={listing.item_id}
+                    className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${
+                      isSource
+                        ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-300'
+                        : isTarget
+                        ? 'border-green-300 bg-green-50'
+                        : resultForThis?.status === 'ok'
+                        ? 'border-green-200 bg-green-50/50'
+                        : resultForThis?.status === 'error'
+                        ? 'border-red-200 bg-red-50/50'
+                        : 'hover:bg-muted/50 cursor-pointer'
                     }`}
                   >
-                    {r.status === 'ok' ? (
-                      <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />
+                    {/* Checkbox / Source indicator */}
+                    <div className="flex-shrink-0">
+                      {isSource ? (
+                        <Badge className="text-[10px] bg-blue-600">ORIGEN</Badge>
+                      ) : sourceId ? (
+                        <button
+                          onClick={() => toggleTarget(listing.item_id)}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          {isTarget ? (
+                            <CheckSquare className="h-5 w-5 text-green-600" />
+                          ) : (
+                            <Square className="h-5 w-5" />
+                          )}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {/* Thumbnail */}
+                    {listing.thumbnail ? (
+                      <img
+                        src={listing.thumbnail}
+                        alt=""
+                        className="h-12 w-12 rounded object-cover flex-shrink-0"
+                      />
                     ) : (
-                      <XCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                      <div className="h-12 w-12 rounded bg-gray-100 flex items-center justify-center flex-shrink-0">
+                        <ImageIcon className="h-5 w-5 text-gray-300" />
+                      </div>
                     )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {r.sku}
-                        {r.item_id && (
-                          <span className="text-xs text-muted-foreground ml-2">{r.item_id}</span>
+
+                    {/* Info */}
+                    <div
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => !sourceId ? selectSource(listing.item_id) : isSource ? null : toggleTarget(listing.item_id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate">{listing.title}</p>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-muted-foreground font-mono">{listing.item_id}</span>
+                        <Badge variant="secondary" className={`text-[9px] h-4 px-1 ${statusColor(listing.status)}`}>
+                          {listing.status}
+                        </Badge>
+                        <span className="text-[10px] text-muted-foreground">{listing.picture_count} fotos</span>
+                      </div>
+                    </div>
+
+                    {/* Result status */}
+                    {resultForThis && (
+                      <div className="flex-shrink-0">
+                        {resultForThis.status === 'ok' ? (
+                          <CheckCircle className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <span title={resultForThis.error}><XCircle className="h-5 w-5 text-red-600" /></span>
                         )}
-                      </p>
-                      {r.title && (
-                        <p className="text-xs text-muted-foreground truncate">{r.title}</p>
-                      )}
-                      {r.status === 'ok' && (
-                        <p className="text-xs text-green-700">{r.pictures_set} fotos replicadas</p>
-                      )}
-                      {r.error && (
-                        <p className="text-xs text-red-700">{r.error}</p>
+                      </div>
+                    )}
+
+                    {/* External link */}
+                    {listing.permalink && (
+                      <a
+                        href={listing.permalink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-shrink-0"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* RIGHT: Source preview + action */}
+          <div className="space-y-4">
+            {/* Source preview */}
+            {sourceId && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Fotos Origen</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 text-muted-foreground"
+                      onClick={() => { setSourceId(null); setSourceDetail(null); setTargetIds(new Set()); setResults(null); }}
+                    >
+                      Cambiar
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {loadingSource ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : sourceDetail ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-muted-foreground truncate">{sourceDetail.title}</p>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {sourceDetail.pictures.map((pic, i) => (
+                          <div key={pic.id} className="aspect-square rounded overflow-hidden bg-gray-100 relative">
+                            <img
+                              src={pic.url}
+                              alt={`Foto ${i + 1}`}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                            <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] px-1 rounded-tl">
+                              {i + 1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Action */}
+            {sourceDetail && targetIds.size > 0 && (
+              <Card>
+                <CardContent className="pt-6 space-y-3">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold">{sourceDetail.pictures.length}</p>
+                    <p className="text-xs text-muted-foreground">fotos</p>
+                    <p className="text-lg font-medium mt-1">→ {targetIds.size} destino{targetIds.size !== 1 ? 's' : ''}</p>
+                  </div>
+
+                  <Button
+                    className="w-full"
+                    size="lg"
+                    disabled={replicating}
+                    onClick={handleReplicate}
+                  >
+                    {replicating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Replicando...
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4 mr-2" />
+                        Replicar Fotos
+                      </>
+                    )}
+                  </Button>
+
+                  {results && (
+                    <div className="text-center text-sm pt-2 border-t">
+                      <span className="text-green-600 font-medium">
+                        {results.filter((r) => r.status === 'ok').length} OK
+                      </span>
+                      {results.some((r) => r.status === 'error') && (
+                        <span className="text-red-600 font-medium ml-3">
+                          {results.filter((r) => r.status === 'error').length} errores
+                        </span>
                       )}
                     </div>
-                  </div>
-                ))}
-              </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
