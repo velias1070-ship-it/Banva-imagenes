@@ -848,7 +848,19 @@ export default function ResultsPage() {
         </div>
         <CardContent className="p-3">
           <div className="mb-2">
-            <p className="text-sm font-medium truncate">{job.swatch?.name || 'Variante'}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-medium truncate">{job.swatch?.name || 'Variante'}</p>
+              <span
+                className="text-[10px] font-mono text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                onClick={() => {
+                  navigator.clipboard.writeText(job.id);
+                  toast.success('ID copiado');
+                }}
+                title={`ID: ${job.id} (click to copy)`}
+              >
+                #{job.id.substring(0, 8)}
+              </span>
+            </div>
             <p className="text-xs text-muted-foreground truncate">
               {job.hero_shot ? `${job.hero_shot.filename} · ${job.hero_shot.shot_type}` : 'Importado de ML'}
             </p>
