@@ -810,7 +810,9 @@ export function buildEditPrompt(
   if (isDetailShot) {
     shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO CLOSE-UP/DETALLE: La Imagen 1 es un ACERCAMIENTO de textura de tela (close-up). La salida DEBE ser un close-up de textura IDENTICO — misma composicion, mismo angulo, mismos pliegues — pero en el COLOR/DISEÑO de la Imagen 2. NO generes un producto completo, NO agregues etiquetas, packaging, ni escena. Solo textura de tela de cerca en el nuevo color.`;
   } else if (isInfoShot) {
-    shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO INFOGRAFIA: La Imagen 1 tiene TEXTO SUPERPUESTO, iconos y/o elementos graficos. La salida DEBE mantener EXACTAMENTE el mismo texto, iconos, posicion del texto, fuente, y layout grafico. Solo cambia el diseño/color del producto textil visible. El texto, los iconos y el fondo deben ser IDENTICOS a la Imagen 1.`;
+    shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO INFOGRAFIA: La Imagen 1 tiene TEXTO SUPERPUESTO, iconos y/o elementos graficos. La salida DEBE mantener EXACTAMENTE el mismo texto, iconos, posicion del texto, fuente, y layout grafico. Solo cambia el diseño/color del producto textil visible. El texto, los iconos y el fondo deben ser IDENTICOS a la Imagen 1.
+CRITICO — NO RECORTAR: La imagen de salida debe contener TODO el contenido de la Imagen 1, incluyendo barras, textos y elementos en los BORDES. Si la Imagen 1 tiene una barra de texto en la parte inferior, esa barra DEBE aparecer COMPLETA en la salida. NO reencuadrar, NO hacer zoom, NO cortar bordes.
+Si la Imagen 1 tiene un logotipo o marca visible, MANTENLO exactamente igual — misma posicion, mismo tamaño. NO duplicar ni agregar logos adicionales.`;
   }
 
   // Use shot-type-aware instructions if available for detail/infografia shots
