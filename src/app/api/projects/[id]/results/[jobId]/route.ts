@@ -497,7 +497,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       if (multiResult.success && multiResult.imageBuffer) {
         result = {
           success: true,
-          imageBase64: multiResult.imageBuffer.toString('base64'),
+          imageBase64: multiResult.imageBuffer!.toString('base64'),
           imageMimeType: 'image/png',
           durationMs: 0,
         };
