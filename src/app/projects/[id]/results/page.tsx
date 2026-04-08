@@ -22,7 +22,6 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -108,9 +107,20 @@ export default function ResultsPage() {
 
   // Replicate dialog state
   const [replicateOpen, setReplicateOpen] = useState(false);
-  const [replicateSource, setReplicateSource] = useState<string>('');
-  const [replicateTargets, setReplicateTargets] = useState<Set<string>>(new Set());
   const [replicating, setReplicating] = useState(false);
+
+  // Replicate by SKU state
+  const [replicateSku, setReplicateSku] = useState('');
+  const [replicateSkuSearching, setReplicateSkuSearching] = useState(false);
+  const [replicateSkuResult, setReplicateSkuResult] = useState<{
+    sku: string;
+    item_id: string;
+    titulo: string;
+    status: string;
+    permalink: string;
+    pictures: { id: string; url: string; size: string }[];
+  } | null>(null);
+  const [replicateTargetSwatch, setReplicateTargetSwatch] = useState<string>('');
 
   // Project brand
   const [projectBrandId, setProjectBrandId] = useState<string | null>(null);
@@ -486,42 +496,68 @@ export default function ResultsPage() {
     }
   }
 
-  // ── Replicate ──
-  // Swatches that have at least one approved job (valid as source)
-  const swatchesWithApproved = useMemo(() => {
-    const ids = new Set<string>();
-    for (const g of groups) {
-      if (g.jobs.some((j) => j.status === 'approved')) {
-        ids.add(g.swatch.id);
+  // ── Replicate by SKU ──
+  async function handleSkuLookup() {
+    const sku = replicateSku.trim();
+    if (!sku) return;
+    setReplicateSkuSearching(true);
+    setReplicateSkuResult(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/lookup-sku?sku=${encodeURIComponent(sku)}`);
+      const data = await res.json();
+      if (res.ok) {
+        setReplicateSkuResult(data);
+      } else {
+        toast.error(data.error || 'SKU no encontrado');
       }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setReplicateSkuSearching(false);
     }
-    return ids;
-  }, [groups]);
+  }
 
   async function handleReplicate() {
-    if (!replicateSource || replicateTargets.size === 0) return;
+    if (!replicateSkuResult || !replicateTargetSwatch) return;
     setReplicating(true);
     try {
-      const res = await fetch(`/api/projects/${id}/replicate-batch`, {
+      // Step 1: Import ML photos as heroes
+      const importRes = await fetch(`/api/projects/${id}/import-heroes-from-ml`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: replicateSkuResult.item_id }),
+      });
+      const importData = await importRes.json();
+      if (!importRes.ok || !importData.hero_ids?.length) {
+        toast.error(importData.error || 'Error importando fotos de ML');
+        setReplicating(false);
+        return;
+      }
+
+      toast.info(`${importData.imported} fotos importadas como heroes. Generando batch...`);
+
+      // Step 2: Create generation batch with imported heroes + target swatch
+      const genRes = await fetch(`/api/projects/${id}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source_swatch_id: replicateSource,
-          target_swatch_ids: [...replicateTargets],
+          hero_ids: importData.hero_ids,
+          swatch_ids: [replicateTargetSwatch],
         }),
       });
-      const data = await res.json();
-      if (res.ok) {
+      const genData = await genRes.json();
+      if (genRes.ok) {
         toast.success(
-          `Replicando: ${data.total_jobs} imagenes (${data.heroes} heroes x ${data.target_swatches} swatches). Costo ~$${data.estimated_cost_usd.toFixed(2)}`
+          `Replicando: ${genData.total_combinations} imagenes de ${replicateSkuResult.sku}. Costo ~$${genData.estimated_cost_usd.toFixed(2)}`
         );
         setReplicateOpen(false);
-        setReplicateSource('');
-        setReplicateTargets(new Set());
+        setReplicateSku('');
+        setReplicateSkuResult(null);
+        setReplicateTargetSwatch('');
         // Start polling for new results
         setTimeout(fetchResults, 3000);
       } else {
-        toast.error(data.error || 'Error replicando');
+        toast.error(genData.error || 'Error creando batch');
       }
     } catch {
       toast.error('Error de conexion');
@@ -1276,15 +1312,13 @@ export default function ResultsPage() {
             {importingCannon ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
             {importingCannon ? 'Importando...' : 'Importar de Cannon'}
           </Button>
-          {swatchesWithApproved.size > 0 && groups.length > 1 && (
-            <Button
-              variant="outline"
-              onClick={() => setReplicateOpen(true)}
-            >
-              <Copy className="mr-2 h-4 w-4" />
-              Replicar Publicacion
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            onClick={() => setReplicateOpen(true)}
+          >
+            <Copy className="mr-2 h-4 w-4" />
+            Replicar Publicacion
+          </Button>
         {approvedCount > 0 && (
           <>
             <Button variant="outline" onClick={handleDownloadAll}>
@@ -1584,132 +1618,137 @@ export default function ResultsPage() {
       </Tabs>
 
       {/* Replicate Publication Dialog */}
-      <Dialog open={replicateOpen} onOpenChange={setReplicateOpen}>
-        <DialogContent>
+      <Dialog open={replicateOpen} onOpenChange={(open) => {
+        setReplicateOpen(open);
+        if (!open) {
+          setReplicateSku('');
+          setReplicateSkuResult(null);
+          setReplicateTargetSwatch('');
+        }
+      }}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Replicar Publicacion</DialogTitle>
             <DialogDescription>
-              Toma todos los resultados aprobados de un swatch y genera las mismas fotos con otros swatches.
+              Busca un SKU en MercadoLibre, selecciona el swatch destino y genera las variantes.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            {/* Source swatch selector */}
+          <div className="space-y-5 py-2">
+            {/* Step 1: Source SKU */}
             <div className="space-y-2">
-              <Label className="text-sm font-medium">Swatch origen</Label>
-              <Select
-                value={replicateSource}
-                onValueChange={(val) => {
-                  setReplicateSource(val);
-                  // Remove source from targets if it was selected
-                  setReplicateTargets((prev) => {
-                    const next = new Set(prev);
-                    next.delete(val);
-                    return next;
-                  });
-                }}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccionar swatch origen..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {groups
-                    .filter((g) => swatchesWithApproved.has(g.swatch.id))
-                    .map((g) => {
-                      const approvedInGroup = g.jobs.filter((j) => j.status === 'approved' && j.hero_shot_id).length;
-                      return (
-                        <SelectItem key={g.swatch.id} value={g.swatch.id}>
-                          {g.swatch.name} ({approvedInGroup} aprobadas)
-                        </SelectItem>
-                      );
-                    })}
-                </SelectContent>
-              </Select>
-              {replicateSource && (() => {
-                const sourceGroup = groups.find((g) => g.swatch.id === replicateSource);
-                if (!sourceGroup) return null;
-                const heroCount = new Set(
-                  sourceGroup.jobs
-                    .filter((j) => j.status === 'approved' && j.hero_shot_id)
-                    .map((j) => j.hero_shot_id)
-                ).size;
-                return (
-                  <p className="text-xs text-muted-foreground">
-                    {heroCount} hero{heroCount !== 1 ? 's' : ''} se replicaran por cada swatch destino
-                  </p>
-                );
-              })()}
-            </div>
+              <Label className="text-sm font-medium">1. SKU Origen</Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Ej: TXSB144IRK15P"
+                  value={replicateSku}
+                  onChange={(e) => setReplicateSku(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSkuLookup();
+                  }}
+                  className="font-mono"
+                  disabled={replicateSkuSearching}
+                />
+                <Button
+                  variant="outline"
+                  onClick={handleSkuLookup}
+                  disabled={!replicateSku.trim() || replicateSkuSearching}
+                >
+                  {replicateSkuSearching ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    'Buscar'
+                  )}
+                </Button>
+              </div>
 
-            {/* Target swatches checkboxes */}
-            {replicateSource && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">Swatches destino</Label>
-                  {groups.filter((g) => g.swatch.id !== replicateSource).length > 0 && (
-                    <button
-                      className="text-xs text-blue-600 hover:text-blue-800"
-                      onClick={() => {
-                        const allOther = groups
-                          .filter((g) => g.swatch.id !== replicateSource)
-                          .map((g) => g.swatch.id);
-                        if (replicateTargets.size === allOther.length) {
-                          setReplicateTargets(new Set());
-                        } else {
-                          setReplicateTargets(new Set(allOther));
-                        }
-                      }}
-                    >
-                      {replicateTargets.size === groups.filter((g) => g.swatch.id !== replicateSource).length
-                        ? 'Deseleccionar todos'
-                        : 'Seleccionar todos'}
-                    </button>
+              {/* SKU Result */}
+              {replicateSkuResult && (
+                <div className="rounded-md border p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{replicateSkuResult.titulo}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <Badge variant="outline" className="text-[10px] font-mono">
+                          {replicateSkuResult.item_id}
+                        </Badge>
+                        <Badge variant="secondary" className={`text-[10px] ${
+                          replicateSkuResult.status === 'active' ? 'bg-green-100 text-green-800' : ''
+                        }`}>
+                          {replicateSkuResult.status}
+                        </Badge>
+                      </div>
+                    </div>
+                    {replicateSkuResult.permalink && (
+                      <a href={replicateSkuResult.permalink} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                      </a>
+                    )}
+                  </div>
+
+                  {/* Photo thumbnails */}
+                  {replicateSkuResult.pictures.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1.5">
+                        {replicateSkuResult.pictures.length} foto{replicateSkuResult.pictures.length !== 1 ? 's' : ''}
+                      </p>
+                      <div className="flex gap-1.5 overflow-x-auto pb-1">
+                        {replicateSkuResult.pictures.map((pic, i) => (
+                          <div key={pic.id} className="h-14 w-14 flex-shrink-0 rounded border overflow-hidden bg-gray-100">
+                            <img src={pic.url} alt={`Foto ${i + 1}`} className="h-full w-full object-cover" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
-                <div className="max-h-48 overflow-y-auto space-y-2 rounded-md border p-3">
-                  {groups
-                    .filter((g) => g.swatch.id !== replicateSource)
-                    .map((g) => (
-                      <div key={g.swatch.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`target-${g.swatch.id}`}
-                          checked={replicateTargets.has(g.swatch.id)}
-                          onCheckedChange={(checked) => {
-                            setReplicateTargets((prev) => {
-                              const next = new Set(prev);
-                              if (checked) next.add(g.swatch.id);
-                              else next.delete(g.swatch.id);
-                              return next;
-                            });
-                          }}
-                        />
-                        <Label htmlFor={`target-${g.swatch.id}`} className="text-sm cursor-pointer flex-1">
-                          {g.swatch.name}
-                          {g.swatch.color_description && (
-                            <span className="text-xs text-muted-foreground ml-1">({g.swatch.color_description})</span>
+              )}
+            </div>
+
+            {/* Step 2: Target swatch */}
+            {replicateSkuResult && (
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">2. Swatch destino (diseno a aplicar)</Label>
+                <Select
+                  value={replicateTargetSwatch}
+                  onValueChange={setReplicateTargetSwatch}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Seleccionar swatch..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((g) => (
+                      <SelectItem key={g.swatch.id} value={g.swatch.id}>
+                        <span className="flex items-center gap-2">
+                          {g.swatch.storage_path && (
+                            <img
+                              src={getStorageUrl(g.swatch.storage_path)}
+                              alt=""
+                              className="h-5 w-5 rounded object-cover inline-block"
+                            />
                           )}
-                        </Label>
-                      </div>
+                          {g.swatch.name}
+                          {g.swatch.sku_suffix && (
+                            <span className="text-xs text-muted-foreground font-mono">({g.swatch.sku_suffix})</span>
+                          )}
+                        </span>
+                      </SelectItem>
                     ))}
-                </div>
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
-            {/* Summary */}
-            {replicateSource && replicateTargets.size > 0 && (() => {
-              const sourceGroup = groups.find((g) => g.swatch.id === replicateSource);
-              if (!sourceGroup) return null;
-              const heroCount = new Set(
-                sourceGroup.jobs
-                  .filter((j) => j.status === 'approved' && j.hero_shot_id)
-                  .map((j) => j.hero_shot_id)
-              ).size;
-              const totalJobs = heroCount * replicateTargets.size;
-              const cost = totalJobs * 0.05;
+            {/* Step 3: Summary */}
+            {replicateSkuResult && replicateTargetSwatch && (() => {
+              const targetGroup = groups.find((g) => g.swatch.id === replicateTargetSwatch);
+              const photoCount = replicateSkuResult.pictures.length;
+              const cost = photoCount * 0.05;
               return (
                 <div className="rounded-md bg-muted/50 p-3 text-sm">
                   <p>
-                    <strong>{totalJobs}</strong> imagenes a generar ({heroCount} heroes x {replicateTargets.size} swatches)
+                    <strong>{photoCount}</strong> fotos de <strong className="font-mono">{replicateSkuResult.sku}</strong>
+                    {' → '}diseno <strong>{targetGroup?.swatch.name || '?'}</strong>
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Costo estimado: ~${cost.toFixed(2)} USD
@@ -1725,7 +1764,7 @@ export default function ResultsPage() {
             </Button>
             <Button
               onClick={handleReplicate}
-              disabled={!replicateSource || replicateTargets.size === 0 || replicating}
+              disabled={!replicateSkuResult || !replicateTargetSwatch || replicating}
             >
               {replicating ? (
                 <>
