@@ -43,19 +43,56 @@ async function resolveSkuToItemId(
 }
 
 /**
- * GET /api/replicate-pictures?sku=XXX
- * Fetch listing info + pictures for a SKU
+ * GET /api/replicate-pictures?sku=XXX — fetch listing by SKU
+ * GET /api/replicate-pictures?q=XXX   — search seller listings by name
+ * GET /api/replicate-pictures?item_id=MLC123 — fetch by item ID directly
  */
 export async function GET(request: NextRequest) {
   const sku = request.nextUrl.searchParams.get('sku');
-  if (!sku) {
-    return NextResponse.json({ error: 'sku parameter required' }, { status: 400 });
+  const query = request.nextUrl.searchParams.get('q');
+  const directItemId = request.nextUrl.searchParams.get('item_id');
+
+  // Search by name — returns list of matching listings
+  if (query) {
+    const searchRes = await mlGet<{
+      results: string[];
+      paging: { total: number };
+    }>(`/users/${SELLER_ID}/items/search?q=${encodeURIComponent(query)}&limit=20`);
+
+    if (!searchRes?.results?.length) {
+      return NextResponse.json({ results: [] });
+    }
+
+    // Fetch details for each result (batched by ML multi-get)
+    const ids = searchRes.results.slice(0, 20);
+    const items = await mlGet<Array<{ code: number; body: MlItemResponse }>>(
+      `/items?ids=${ids.join(',')}&attributes=id,title,status,permalink,pictures`
+    );
+
+    const results = (items || [])
+      .filter((r) => r.code === 200 && r.body)
+      .map((r) => ({
+        item_id: r.body.id,
+        title: r.body.title,
+        status: r.body.status,
+        permalink: r.body.permalink,
+        picture_count: r.body.pictures?.length || 0,
+        thumbnail: r.body.pictures?.[0]?.secure_url || null,
+      }));
+
+    return NextResponse.json({ results, total: searchRes.paging.total });
   }
 
-  const inventoryDb = getInventorySupabase();
-  const itemId = await resolveSkuToItemId(inventoryDb, sku);
+  // Resolve item ID from SKU or direct
+  let itemId: string | null = directItemId || null;
+
+  if (!itemId && sku) {
+    const inventoryDb = getInventorySupabase();
+    itemId = await resolveSkuToItemId(inventoryDb, sku);
+  }
+
   if (!itemId) {
-    return NextResponse.json({ error: `SKU ${sku} not found in ML` }, { status: 404 });
+    return NextResponse.json({ error: sku ? `SKU ${sku} not found in ML` : 'sku, q, or item_id parameter required' }, { status: sku ? 404 : 400 });
   }
 
   const item = await mlGet<MlItemResponse>(
@@ -90,21 +127,26 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const sourceSku: string | undefined = body.source_sku;
+  const sourceItemIdDirect: string | undefined = body.source_item_id;
   const targetSkus: string[] | undefined = body.target_skus;
+  const targetItemIds: string[] | undefined = body.target_item_ids;
 
-  if (!sourceSku) {
-    return NextResponse.json({ error: 'source_sku is required' }, { status: 400 });
+  if (!sourceSku && !sourceItemIdDirect) {
+    return NextResponse.json({ error: 'source_sku or source_item_id is required' }, { status: 400 });
   }
-  if (!targetSkus?.length) {
-    return NextResponse.json({ error: 'target_skus is required (array)' }, { status: 400 });
+  if (!targetSkus?.length && !targetItemIds?.length) {
+    return NextResponse.json({ error: 'target_skus or target_item_ids is required' }, { status: 400 });
   }
 
   const inventoryDb = getInventorySupabase();
 
   // 1. Resolve source
-  const sourceItemId = await resolveSkuToItemId(inventoryDb, sourceSku);
+  let sourceItemId = sourceItemIdDirect || null;
+  if (!sourceItemId && sourceSku) {
+    sourceItemId = await resolveSkuToItemId(inventoryDb, sourceSku);
+  }
   if (!sourceItemId) {
-    return NextResponse.json({ error: `Source SKU ${sourceSku} not found in ML` }, { status: 404 });
+    return NextResponse.json({ error: `Source not found in ML` }, { status: 404 });
   }
 
   // 2. Get source pictures
@@ -120,7 +162,16 @@ export async function POST(request: NextRequest) {
     p.secure_url.replace(/-O\.(\w+)$/, '-F.$1')
   );
 
-  // 3. Replicate to each target
+  // 3. Build target list — merge SKUs and direct item IDs
+  const targets: Array<{ label: string; itemId?: string; sku?: string }> = [];
+  if (targetSkus?.length) {
+    for (const s of targetSkus) targets.push({ label: s, sku: s });
+  }
+  if (targetItemIds?.length) {
+    for (const id of targetItemIds) targets.push({ label: id, itemId: id });
+  }
+
+  // 4. Replicate to each target
   const results: Array<{
     sku: string;
     item_id: string | null;
@@ -130,15 +181,17 @@ export async function POST(request: NextRequest) {
     error?: string;
   }> = [];
 
-  for (const targetSku of targetSkus) {
+  for (const target of targets) {
     try {
-      const targetItemId = await resolveSkuToItemId(inventoryDb, targetSku);
+      let targetItemId = target.itemId || null;
+      if (!targetItemId && target.sku) {
+        targetItemId = await resolveSkuToItemId(inventoryDb, target.sku);
+      }
       if (!targetItemId) {
-        results.push({ sku: targetSku, item_id: null, title: null, status: 'error', pictures_set: 0, error: 'SKU not found in ML' });
+        results.push({ sku: target.label, item_id: null, title: null, status: 'error', pictures_set: 0, error: 'Not found in ML' });
         continue;
       }
 
-      // Get target title for display
       const targetItem = await mlGet<{ id: string; title: string }>(
         `/items/${targetItemId}?attributes=id,title`
       );
@@ -146,7 +199,7 @@ export async function POST(request: NextRequest) {
       await mlReplaceItemPicturesFromUrls(targetItemId, sourceUrls);
 
       results.push({
-        sku: targetSku,
+        sku: target.label,
         item_id: targetItemId,
         title: targetItem?.title || null,
         status: 'ok',
@@ -154,7 +207,7 @@ export async function POST(request: NextRequest) {
       });
     } catch (err) {
       results.push({
-        sku: targetSku,
+        sku: target.label,
         item_id: null,
         title: null,
         status: 'error',
@@ -170,6 +223,6 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     source: { sku: sourceSku, item_id: sourceItemId, title: sourceItem.title, pictures: sourceUrls.length },
     targets: results,
-    summary: { success: successCount, errors: errorCount, total: targetSkus.length },
+    summary: { success: successCount, errors: errorCount, total: targets.length },
   });
 }
