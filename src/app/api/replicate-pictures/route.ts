@@ -54,22 +54,35 @@ export async function GET(request: NextRequest) {
 
   // Search by name — returns list of matching listings
   if (query) {
+    // Normalize: strip trailing 's' from each word for better ML search matching
+    // "infantiles" → "infantil", "plazas" → "plaza", "sabanas" → "sabana"
+    const normalized = query
+      .split(/\s+/)
+      .map((w) => w.replace(/es$/i, '').replace(/s$/i, ''))
+      .join(' ');
+
+    // Search with normalized query, higher limit to get more results
     const searchRes = await mlGet<{
       results: string[];
       paging: { total: number };
-    }>(`/users/${SELLER_ID}/items/search?q=${encodeURIComponent(query)}&limit=20`);
+    }>(`/users/${SELLER_ID}/items/search?q=${encodeURIComponent(normalized)}&limit=50`);
 
     if (!searchRes?.results?.length) {
       return NextResponse.json({ results: [] });
     }
 
-    // Fetch details for each result (batched by ML multi-get)
-    const ids = searchRes.results.slice(0, 20);
-    const items = await mlGet<Array<{ code: number; body: MlItemResponse }>>(
-      `/items?ids=${ids.join(',')}&attributes=id,title,status,permalink,pictures`
-    );
+    // Fetch details in batches of 20 (ML multi-get limit)
+    const allIds = searchRes.results.slice(0, 50);
+    const allItems: Array<{ code: number; body: MlItemResponse }> = [];
+    for (let i = 0; i < allIds.length; i += 20) {
+      const batchIds = allIds.slice(i, i + 20);
+      const batch = await mlGet<Array<{ code: number; body: MlItemResponse }>>(
+        `/items?ids=${batchIds.join(',')}&attributes=id,title,status,permalink,pictures`
+      );
+      if (batch) allItems.push(...batch);
+    }
 
-    const results = (items || [])
+    const results = allItems
       .filter((r) => r.code === 200 && r.body)
       .map((r) => ({
         item_id: r.body.id,
@@ -78,7 +91,12 @@ export async function GET(request: NextRequest) {
         permalink: r.body.permalink,
         picture_count: r.body.pictures?.length || 0,
         thumbnail: r.body.pictures?.[0]?.secure_url || null,
-      }));
+      }))
+      // Sort: active first, then paused, then closed
+      .sort((a, b) => {
+        const order: Record<string, number> = { active: 0, paused: 1, closed: 2 };
+        return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+      });
 
     return NextResponse.json({ results, total: searchRes.paging.total });
   }
