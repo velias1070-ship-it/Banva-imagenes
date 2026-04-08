@@ -532,7 +532,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
-          if (!verification.pass && attempt < 2) {
+          if (!verification.pass && attempt < 4) {
             // BLOCK: verification failed, mark for auto-retry with feedback
             const feedback = verification.feedback || verification.issues.join('. ');
             console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback}`);

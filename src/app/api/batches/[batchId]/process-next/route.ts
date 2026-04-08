@@ -769,7 +769,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
-          if (!verification.pass && job.attempt < 2) {
+          if (!verification.pass && job.attempt < 4) {
             // BLOCK: verification failed, auto-retry with specific feedback
             const feedback = verification.feedback || verification.issues.join('. ');
             console.log(`[process-next] ⚠ Verification BLOCKED ${job.swatch.name} (score: ${verification.score}): ${feedback}`);
