@@ -17,6 +17,7 @@ import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { verifySwatch } from '@/lib/swatch-verifier';
+import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
@@ -714,26 +715,58 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // ── Generate image based on mode ──
     // Escalate to Pro model after 2 failed verification attempts
     const useProModel = job.attempt >= 2;
-    let result;
+    let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
-    if (effectiveMode === 'from_scratch') {
-      result = await generateImage({
-        swatchImageBase64: swatchBase64,
-        swatchMimeType: 'image/png',
-        promptText: prompt,
+    // ── Multi-pass generation for sabanas (separate pillowcases + sheets) ──
+    if (category === 'sabanas' && effectiveMode === 'edit') {
+      console.log(`[process-next] Using multi-pass generation for sabanas`);
+      const multiResult = await generateSabanasMultiPass(
+        heroBase64,
+        job.hero_shot.mime_type || 'image/png',
+        swatchBase64,
+        'image/png',
+        swatchBuffer,
         temperature,
         useProModel,
-      });
-    } else {
-      result = await generateImage({
-        heroImageBase64: heroBase64,
-        heroMimeType: job.hero_shot.mime_type || 'image/png',
-        swatchImageBase64: swatchBase64,
-        swatchMimeType: 'image/png',
-        promptText: prompt,
-        temperature,
-        useProModel,
-      });
+      );
+      if (multiResult.success && multiResult.imageBuffer) {
+        // Skip normal generation — use multi-pass result
+        result = {
+          success: true,
+          imageBase64: multiResult.imageBuffer.toString('base64'),
+          imageMimeType: 'image/png',
+          durationMs: 0,
+        };
+        promptMetadata.multipass = true;
+        promptMetadata.multipass_passes = multiResult.passes;
+        console.log(`[process-next] Multi-pass complete: ${multiResult.passes} passes`);
+      } else {
+        console.log(`[process-next] Multi-pass failed (${multiResult.error}), falling back to single-pass`);
+        // Fall through to normal generation below
+      }
+    }
+
+    // ── Normal single-pass generation (or fallback from multi-pass) ──
+    if (!result) {
+      if (effectiveMode === 'from_scratch') {
+        result = await generateImage({
+          swatchImageBase64: swatchBase64,
+          swatchMimeType: 'image/png',
+          promptText: prompt,
+          temperature,
+          useProModel,
+        });
+      } else {
+        result = await generateImage({
+          heroImageBase64: heroBase64,
+          heroMimeType: job.hero_shot.mime_type || 'image/png',
+          swatchImageBase64: swatchBase64,
+          swatchMimeType: 'image/png',
+          promptText: prompt,
+          temperature,
+          useProModel,
+        });
+      }
     }
 
     if (!result.success || !result.imageBase64) {

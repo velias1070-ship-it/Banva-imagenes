@@ -17,6 +17,7 @@ import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandCon
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
+import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -478,27 +479,58 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // Generate — escalate to Pro model after 2 failed attempts
     const useProModel = attempt >= 2;
-    let result;
+    let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
-    if (mode === 'from_scratch') {
-      result = await generateImage({
-        swatchImageBase64: swatchBase64,
-        swatchMimeType: 'image/png',
-        promptText: prompt,
-        temperature,
-        useProModel,
-      });
-    } else {
+    // ── Multi-pass generation for sabanas (separate pillowcases + sheets) ──
+    if (category === 'sabanas' && mode === 'edit') {
+      console.log(`[regenerateJob] Using multi-pass generation for sabanas`);
       const heroBase64 = heroBuffer.toString('base64');
-      result = await generateImage({
-        heroImageBase64: heroBase64,
-        heroMimeType: heroShot?.mime_type || 'image/png',
-        swatchImageBase64: swatchBase64,
-        swatchMimeType: 'image/png',
-        promptText: prompt,
+      const multiResult = await generateSabanasMultiPass(
+        heroBase64,
+        heroShot?.mime_type || 'image/png',
+        swatchBase64,
+        'image/png',
+        swatchBuffer,
         temperature,
         useProModel,
-      });
+      );
+      if (multiResult.success && multiResult.imageBuffer) {
+        result = {
+          success: true,
+          imageBase64: multiResult.imageBuffer.toString('base64'),
+          imageMimeType: 'image/png',
+          durationMs: 0,
+        };
+        promptMetadata.multipass = true;
+        promptMetadata.multipass_passes = multiResult.passes;
+        console.log(`[regenerateJob] Multi-pass complete: ${multiResult.passes} passes`);
+      } else {
+        console.log(`[regenerateJob] Multi-pass failed (${multiResult.error}), falling back to single-pass`);
+      }
+    }
+
+    // ── Normal single-pass generation (or fallback from multi-pass) ──
+    if (!result) {
+      if (mode === 'from_scratch') {
+        result = await generateImage({
+          swatchImageBase64: swatchBase64,
+          swatchMimeType: 'image/png',
+          promptText: prompt,
+          temperature,
+          useProModel,
+        });
+      } else {
+        const heroBase64 = heroBuffer.toString('base64');
+        result = await generateImage({
+          heroImageBase64: heroBase64,
+          heroMimeType: heroShot?.mime_type || 'image/png',
+          swatchImageBase64: swatchBase64,
+          swatchMimeType: 'image/png',
+          promptText: prompt,
+          temperature,
+          useProModel,
+        });
+      }
     }
 
     if (!result.success || !result.imageBase64) {
