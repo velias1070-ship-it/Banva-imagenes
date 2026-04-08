@@ -533,20 +533,24 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
           if (!verification.pass && attempt < 4) {
-            // BLOCK: verification failed — retry inline (same execution)
+            // BLOCK: verification failed — delegate retry to process-next chain
             const feedback = verification.feedback || verification.issues.join('. ');
-            console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback} — retrying inline`);
-            // Update job with feedback for next attempt
+            console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback} — delegating to process-next`);
             await supabase.from('generation_jobs').update({
-              status: 'generating',
+              status: 'pending',
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               attempt: attempt + 1,
               prompt_metadata: promptMetadata,
               updated_at: new Date().toISOString(),
             }).eq('id', jobId);
-            // Recursively call self with updated job data
-            const updatedJob = { ...job, attempt: attempt + 1, qa_feedback: `[Verifier 2.5 Pro] ${feedback}`, prompt_metadata: promptMetadata };
-            return regenerateJob(jobId, updatedJob, category, projectId, projectMetadata, brandId);
+            // Trigger process-next chain to pick up this pending job
+            const batchId = job.batch_id as string;
+            if (batchId) {
+              const baseUrl = process.env.APP_URL || `https://${process.env.VERCEL_URL}` || 'http://localhost:3000';
+              fetch(`${baseUrl}/api/batches/${batchId}/process-next`, { method: 'POST' }).catch(() => {});
+              console.log(`[regenerateJob] Triggered process-next for batch ${batchId}`);
+            }
+            return;
           } else if (!verification.pass) {
             console.log(`[regenerateJob] ⚠ Verification FAILED (max retries): ${verification.feedback}`);
             promptMetadata.verification_feedback = verification.feedback;
