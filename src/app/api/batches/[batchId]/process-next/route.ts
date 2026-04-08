@@ -790,7 +790,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     // ── Swatch Fidelity Verification (Gemini 2.5 Pro) — blocks bad images ──
-    if (!isBrandOnly) {
+    // Skip for multi-pass (each pass is targeted, verification would exceed 60s timeout)
+    const isMultiPass = !!promptMetadata.multipass;
+    if (!isBrandOnly && !isMultiPass) {
       try {
         const generatedB64 = imageBuffer.toString('base64');
         const verification = await verifySwatch(
