@@ -472,6 +472,9 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     );
 
     // ── Preprocessing (skip for BRAND_ONLY — we want the image unchanged) ──
+    // Save original swatch before crop (flattener needs the full image, not cropped)
+    const originalSwatchBase64 = swatchBase64;
+
     if (!isBrandOnly) {
       if (strategy.preprocessing.flatten_hero) {
         const flattenedHero = await flattenHeroEmboss(heroBuffer);
@@ -485,6 +488,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     }
 
     // AI-based swatch flattening — generates flat pattern view for detailed textiles
+    // Uses ORIGINAL swatch (not cropped) to preserve correct texture at natural scale
     if (strategy.preprocessing.flatten_swatch_ai && !isBrandOnly) {
       // Check cache first: look for flat version in swatch_images
       const { data: flatCache } = await supabase
@@ -507,7 +511,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         // Generate flat swatch with AI
         console.log(`[process-next] Generating flat swatch for ${job.swatch.name}...`);
         const flatBuffer = await flattenSwatchWithAI(
-          swatchBase64,
+          originalSwatchBase64,
           'image/png',
           job.swatch.color_description || undefined
         );
