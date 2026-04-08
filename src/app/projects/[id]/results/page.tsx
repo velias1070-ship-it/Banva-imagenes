@@ -23,6 +23,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
@@ -104,6 +105,13 @@ export default function ResultsPage() {
 
   // ML import state
   const [mlImporting, setMlImporting] = useState<Set<string>>(new Set());
+
+  // ML photo selector dialog state
+  const [mlSelectorOpen, setMlSelectorOpen] = useState(false);
+  const [mlSelectorSwatchId, setMlSelectorSwatchId] = useState<string | null>(null);
+  const [mlSelectorPictures, setMlSelectorPictures] = useState<Array<{ id: string; url: string; size: string }>>([]);
+  const [mlSelectorSelected, setMlSelectorSelected] = useState<Set<string>>(new Set());
+  const [mlSelectorSwatchName, setMlSelectorSwatchName] = useState('');
 
   // Replicate dialog state
   const [replicateOpen, setReplicateOpen] = useState(false);
@@ -470,13 +478,31 @@ export default function ResultsPage() {
   }
 
   // ── Import ML pictures as results ──
-  async function handleImportMlPictures(swatchId: string) {
+  function handleImportMlPictures(swatchId: string) {
+    const group = groups.find((g) => g.swatch.id === swatchId);
+    if (!group?.ml_listing?.ml_pictures?.length) {
+      toast.error('No hay fotos en la publicacion de ML');
+      return;
+    }
+    const pics = group.ml_listing.ml_pictures;
+    setMlSelectorSwatchId(swatchId);
+    setMlSelectorSwatchName(group.swatch.name);
+    setMlSelectorPictures(pics);
+    setMlSelectorSelected(new Set(pics.map((p) => p.id)));
+    setMlSelectorOpen(true);
+  }
+
+  async function handleConfirmMlImport() {
+    if (!mlSelectorSwatchId || mlSelectorSelected.size === 0) return;
+    const swatchId = mlSelectorSwatchId;
+    const selectedIds = Array.from(mlSelectorSelected);
+    setMlSelectorOpen(false);
     setMlImporting((prev) => new Set(prev).add(swatchId));
     try {
       const res = await fetch(`/api/projects/${id}/import-ml-pictures`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ swatch_id: swatchId }),
+        body: JSON.stringify({ swatch_id: swatchId, picture_ids: selectedIds }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -486,7 +512,7 @@ export default function ResultsPage() {
         toast.error(data.error || `Error importando`);
       }
     } catch {
-      toast.error('Error de conexión');
+      toast.error('Error de conexion');
     } finally {
       setMlImporting((prev) => {
         const next = new Set(prev);
@@ -1616,6 +1642,111 @@ export default function ResultsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* ML Photo Selector Dialog */}
+      <Dialog open={mlSelectorOpen} onOpenChange={(open) => {
+        setMlSelectorOpen(open);
+        if (!open) {
+          setMlSelectorSwatchId(null);
+          setMlSelectorPictures([]);
+          setMlSelectorSelected(new Set());
+          setMlSelectorSwatchName('');
+        }
+      }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Importar fotos de ML</DialogTitle>
+            <DialogDescription>
+              Selecciona las fotos a importar para <strong>{mlSelectorSwatchName}</strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {/* Select all / deselect all */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                {mlSelectorSelected.size} de {mlSelectorPictures.length} fotos seleccionadas
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setMlSelectorSelected(new Set(mlSelectorPictures.map((p) => p.id)))}
+                  disabled={mlSelectorSelected.size === mlSelectorPictures.length}
+                >
+                  Seleccionar todas
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setMlSelectorSelected(new Set())}
+                  disabled={mlSelectorSelected.size === 0}
+                >
+                  Deseleccionar todas
+                </Button>
+              </div>
+            </div>
+
+            {/* Photo grid */}
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[400px] overflow-y-auto">
+              {mlSelectorPictures.map((pic, i) => {
+                const isSelected = mlSelectorSelected.has(pic.id);
+                return (
+                  <button
+                    key={pic.id}
+                    type="button"
+                    className={`relative aspect-square rounded-lg border-2 overflow-hidden bg-gray-100 transition-all ${
+                      isSelected ? 'border-primary ring-1 ring-primary/30' : 'border-transparent opacity-50'
+                    }`}
+                    onClick={() => {
+                      setMlSelectorSelected((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(pic.id)) {
+                          next.delete(pic.id);
+                        } else {
+                          next.add(pic.id);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    <img
+                      src={pic.url}
+                      alt={`Foto ${i + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute top-1.5 left-1.5">
+                      <Checkbox
+                        checked={isSelected}
+                        tabIndex={-1}
+                        className="pointer-events-none bg-white/80"
+                      />
+                    </div>
+                    <span className="absolute bottom-1 right-1.5 text-[10px] bg-black/50 text-white px-1 rounded">
+                      {i + 1}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMlSelectorOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleConfirmMlImport}
+              disabled={mlSelectorSelected.size === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Importar {mlSelectorSelected.size} foto{mlSelectorSelected.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Replicate Publication Dialog */}
       <Dialog open={replicateOpen} onOpenChange={(open) => {

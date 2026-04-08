@@ -40,6 +40,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const body = await request.json().catch(() => ({}));
 
   const swatchId: string | undefined = body.swatch_id;
+  const selectedPictureIds: string[] | undefined = body.picture_ids; // Optional: only import these ML picture IDs
   if (!swatchId) {
     return NextResponse.json({ error: 'swatch_id is required' }, { status: 400 });
   }
@@ -144,9 +145,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     batchId = newBatch!.id;
   }
 
+  // Filter pictures if specific IDs were requested
+  const picturesToImport = selectedPictureIds?.length
+    ? item.pictures.filter((p) => selectedPictureIds.includes(p.id))
+    : item.pictures;
+
+  if (!picturesToImport.length) {
+    return NextResponse.json({ error: 'None of the selected pictures were found on the ML listing' }, { status: 400 });
+  }
+
   // Download and import each picture
   let imported = 0;
-  for (const pic of item.pictures) {
+  for (const pic of picturesToImport) {
     const imageUrl = pic.secure_url.replace(/-O\.(\w+)$/, '-F.$1');
 
     try {
@@ -225,6 +235,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   return NextResponse.json({
     imported,
     total_ml_pictures: item.pictures.length,
+    selected_pictures: picturesToImport.length,
     swatch: swatch.name,
     sku: swatch.sku_suffix,
   });
