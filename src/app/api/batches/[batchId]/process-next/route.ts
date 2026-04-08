@@ -455,7 +455,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // For categories that default to 'reference': auto-detect if edit mode is better.
     // If hero and swatch have the same pattern type, edit mode just changes color
     // and preserves the existing texture — much more reliable than generating from scratch.
-    if (effectiveMode === 'reference' && !isBrandOnly && job.attempt === 0) {
+    if (effectiveMode === 'reference' && !isBrandOnly) {
       try {
         const similar = await arePatternsSimlar(
           heroBase64, job.hero_shot.mime_type || 'image/png',
