@@ -516,6 +516,34 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       }
     }
 
+    // ── Swatch Fidelity Verification (Gemini 2.5 Pro) ──
+    if (!isBrandOnly) {
+      try {
+        const { verifySwatch } = await import('@/lib/swatch-verifier');
+        const generatedB64 = imageBuffer.toString('base64');
+        const verification = await verifySwatch(
+          swatchBase64,
+          generatedB64,
+          heroBuffer.toString('base64'),
+          swatch.name,
+          swatchPatternDescription,
+        );
+        if (verification) {
+          promptMetadata.verification_score = verification.score;
+          promptMetadata.verification_pass = verification.pass;
+          promptMetadata.verification_issues = verification.issues;
+          if (!verification.pass) {
+            console.log(`[regenerateJob] ⚠ Verification FAILED: ${verification.feedback} (score: ${verification.score})`);
+            promptMetadata.verification_feedback = verification.feedback;
+          } else {
+            console.log(`[regenerateJob] ✓ Verification passed (score: ${verification.score})`);
+          }
+        }
+      } catch (verifyErr) {
+        console.error('[regenerateJob] Verification failed (non-blocking):', verifyErr);
+      }
+    }
+
     // Upload result
     const outputPath = `projects/${projectId}/generated/${jobId}.png`;
 

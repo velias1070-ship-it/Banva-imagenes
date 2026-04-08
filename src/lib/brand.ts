@@ -114,7 +114,7 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   }
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
-  parts.push(`Si la imagen original tiene un logotipo o nombre de marca visible, MANTENLO exactamente como esta — misma posicion, mismo tamaño. NO lo agrandes, NO lo muevas, NO lo rediseñes. El logo se ajusta en post-proceso.`);
+  parts.push(`LOGOS Y MARCAS: NO agregues NINGUN logotipo, nombre de marca, watermark, ni insignia que no exista EXACTAMENTE en la Imagen 1 original. Si la Imagen 1 NO tiene logo, el resultado NO debe tener logo. El branding se aplica en post-proceso.`);
 
   if (hasTextElements && hasColors) {
     // ── SPECIFIC per-element color instructions ──
