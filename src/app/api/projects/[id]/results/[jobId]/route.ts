@@ -18,6 +18,7 @@ import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
+import { arePatternsSimlar } from '@/lib/pattern-comparator';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -185,7 +186,7 @@ async function regenerateJob(
       }
     }
 
-    // Determine mode — detail/infografia shots ALWAYS use edit (reference invents scenes)
+    // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;
     if (!isBrandOnly) {
       if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
@@ -194,9 +195,19 @@ async function regenerateJob(
       } else if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
         mode = strategy.retry_escalation;
         console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);
-      } else if (attempt > 0 && strategy.retry_escalation) {
-        mode = strategy.retry_escalation;
-        console.log(`[regenerateJob] Retry attempt ${attempt} — using ${mode}`);
+      } else if (mode === 'reference') {
+        // Auto-detect: if hero and swatch have similar patterns, use edit (color change only)
+        try {
+          const heroB64 = heroBuffer.toString('base64');
+          const swatchB64 = swatchBuffer.toString('base64');
+          const similar = await arePatternsSimlar(heroB64, heroShot?.mime_type || 'image/png', swatchB64, 'image/png');
+          if (similar) {
+            mode = 'edit';
+            console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
+          }
+        } catch (err) {
+          console.error('[regenerateJob] Pattern comparison failed:', err);
+        }
       }
     }
 
@@ -251,8 +262,17 @@ async function regenerateJob(
       swatchBase64 = croppedSwatch.toString('base64');
     }
 
+    // Save cropped swatch before AI flatten — verifier needs the real texture
+    const swatchBase64ForVerification = swatchBase64;
+
+    // Skip AI flatten on retries — the flattener may have introduced wrong patterns
+    const skipFlatten = qaFeedback != null;
+    if (skipFlatten && strategy.preprocessing.flatten_swatch_ai) {
+      console.log(`[regenerateJob] Skipping AI flatten on retry — using cropped swatch`);
+    }
+
     // AI-based swatch flattening — generates flat pattern view for detailed textiles
-    if (strategy.preprocessing.flatten_swatch_ai && !isBrandOnly) {
+    if (strategy.preprocessing.flatten_swatch_ai && !isBrandOnly && !skipFlatten) {
       // Check cache first: look for flat version in swatch_images
       const { data: flatCache } = await supabase
         .from('swatch_images')
@@ -436,8 +456,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       swatch_pattern_analyzed: !!swatchPatternDescription,
     };
 
-    // Generate — escalate to Pro model after 2 failed attempts
-    const useProModel = attempt >= 2;
+    // Generate — escalate to Pro model. Quilts escalate earlier (Flash can't reproduce fine textures)
+    const proThreshold = category === 'quilts' ? 1 : 2;
+    const useProModel = attempt >= proThreshold;
     let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
@@ -517,8 +538,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       try {
         const { verifySwatch } = await import('@/lib/swatch-verifier');
         const generatedB64 = imageBuffer.toString('base64');
+        // Use cropped (pre-flatten) swatch — AI flattener can misinterpret textures
         const verification = await verifySwatch(
-          swatchBase64,
+          swatchBase64ForVerification,
           generatedB64,
           heroBuffer.toString('base64'),
           swatch.name,
