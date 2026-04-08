@@ -13,9 +13,17 @@ import {
   ImageIcon, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
   Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
-  Palette,
+  Palette, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
@@ -25,6 +33,7 @@ interface JobWithRelations {
   id: string;
   status: string;
   attempt: number;
+  hero_shot_id: string | null;
   output_storage_path: string | null;
   qa_score: number | null;
   qa_feedback: string | null;
@@ -96,6 +105,12 @@ export default function ResultsPage() {
 
   // ML import state
   const [mlImporting, setMlImporting] = useState<Set<string>>(new Set());
+
+  // Replicate dialog state
+  const [replicateOpen, setReplicateOpen] = useState(false);
+  const [replicateSource, setReplicateSource] = useState<string>('');
+  const [replicateTargets, setReplicateTargets] = useState<Set<string>>(new Set());
+  const [replicating, setReplicating] = useState(false);
 
   // Project brand
   const [projectBrandId, setProjectBrandId] = useState<string | null>(null);
@@ -468,6 +483,50 @@ export default function ResultsPage() {
         next.delete(swatchId);
         return next;
       });
+    }
+  }
+
+  // ── Replicate ──
+  // Swatches that have at least one approved job (valid as source)
+  const swatchesWithApproved = useMemo(() => {
+    const ids = new Set<string>();
+    for (const g of groups) {
+      if (g.jobs.some((j) => j.status === 'approved' && j.hero_shot_id)) {
+        ids.add(g.swatch.id);
+      }
+    }
+    return ids;
+  }, [groups]);
+
+  async function handleReplicate() {
+    if (!replicateSource || replicateTargets.size === 0) return;
+    setReplicating(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/replicate-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_swatch_id: replicateSource,
+          target_swatch_ids: [...replicateTargets],
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(
+          `Replicando: ${data.total_jobs} imagenes (${data.heroes} heroes x ${data.target_swatches} swatches). Costo ~$${data.estimated_cost_usd.toFixed(2)}`
+        );
+        setReplicateOpen(false);
+        setReplicateSource('');
+        setReplicateTargets(new Set());
+        // Start polling for new results
+        setTimeout(fetchResults, 3000);
+      } else {
+        toast.error(data.error || 'Error replicando');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setReplicating(false);
     }
   }
 
@@ -1217,6 +1276,15 @@ export default function ResultsPage() {
             {importingCannon ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
             {importingCannon ? 'Importando...' : 'Importar de Cannon'}
           </Button>
+          {swatchesWithApproved.size > 0 && groups.length > 1 && (
+            <Button
+              variant="outline"
+              onClick={() => setReplicateOpen(true)}
+            >
+              <Copy className="mr-2 h-4 w-4" />
+              Replicar Publicacion
+            </Button>
+          )}
         {approvedCount > 0 && (
           <>
             <Button variant="outline" onClick={handleDownloadAll}>
@@ -1514,6 +1582,166 @@ export default function ResultsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Replicate Publication Dialog */}
+      <Dialog open={replicateOpen} onOpenChange={setReplicateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Replicar Publicacion</DialogTitle>
+            <DialogDescription>
+              Toma todos los resultados aprobados de un swatch y genera las mismas fotos con otros swatches.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Source swatch selector */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Swatch origen</Label>
+              <Select
+                value={replicateSource}
+                onValueChange={(val) => {
+                  setReplicateSource(val);
+                  // Remove source from targets if it was selected
+                  setReplicateTargets((prev) => {
+                    const next = new Set(prev);
+                    next.delete(val);
+                    return next;
+                  });
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Seleccionar swatch origen..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups
+                    .filter((g) => swatchesWithApproved.has(g.swatch.id))
+                    .map((g) => {
+                      const approvedInGroup = g.jobs.filter((j) => j.status === 'approved' && j.hero_shot_id).length;
+                      return (
+                        <SelectItem key={g.swatch.id} value={g.swatch.id}>
+                          {g.swatch.name} ({approvedInGroup} aprobadas)
+                        </SelectItem>
+                      );
+                    })}
+                </SelectContent>
+              </Select>
+              {replicateSource && (() => {
+                const sourceGroup = groups.find((g) => g.swatch.id === replicateSource);
+                if (!sourceGroup) return null;
+                const heroCount = new Set(
+                  sourceGroup.jobs
+                    .filter((j) => j.status === 'approved' && j.hero_shot_id)
+                    .map((j) => j.hero_shot_id)
+                ).size;
+                return (
+                  <p className="text-xs text-muted-foreground">
+                    {heroCount} hero{heroCount !== 1 ? 's' : ''} se replicaran por cada swatch destino
+                  </p>
+                );
+              })()}
+            </div>
+
+            {/* Target swatches checkboxes */}
+            {replicateSource && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Swatches destino</Label>
+                  {groups.filter((g) => g.swatch.id !== replicateSource).length > 0 && (
+                    <button
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                      onClick={() => {
+                        const allOther = groups
+                          .filter((g) => g.swatch.id !== replicateSource)
+                          .map((g) => g.swatch.id);
+                        if (replicateTargets.size === allOther.length) {
+                          setReplicateTargets(new Set());
+                        } else {
+                          setReplicateTargets(new Set(allOther));
+                        }
+                      }}
+                    >
+                      {replicateTargets.size === groups.filter((g) => g.swatch.id !== replicateSource).length
+                        ? 'Deseleccionar todos'
+                        : 'Seleccionar todos'}
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-2 rounded-md border p-3">
+                  {groups
+                    .filter((g) => g.swatch.id !== replicateSource)
+                    .map((g) => (
+                      <div key={g.swatch.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`target-${g.swatch.id}`}
+                          checked={replicateTargets.has(g.swatch.id)}
+                          onCheckedChange={(checked) => {
+                            setReplicateTargets((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.add(g.swatch.id);
+                              else next.delete(g.swatch.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <Label htmlFor={`target-${g.swatch.id}`} className="text-sm cursor-pointer flex-1">
+                          {g.swatch.name}
+                          {g.swatch.color_description && (
+                            <span className="text-xs text-muted-foreground ml-1">({g.swatch.color_description})</span>
+                          )}
+                        </Label>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Summary */}
+            {replicateSource && replicateTargets.size > 0 && (() => {
+              const sourceGroup = groups.find((g) => g.swatch.id === replicateSource);
+              if (!sourceGroup) return null;
+              const heroCount = new Set(
+                sourceGroup.jobs
+                  .filter((j) => j.status === 'approved' && j.hero_shot_id)
+                  .map((j) => j.hero_shot_id)
+              ).size;
+              const totalJobs = heroCount * replicateTargets.size;
+              const cost = totalJobs * 0.05;
+              return (
+                <div className="rounded-md bg-muted/50 p-3 text-sm">
+                  <p>
+                    <strong>{totalJobs}</strong> imagenes a generar ({heroCount} heroes x {replicateTargets.size} swatches)
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Costo estimado: ~${cost.toFixed(2)} USD
+                  </p>
+                </div>
+              );
+            })()}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReplicateOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleReplicate}
+              disabled={!replicateSource || replicateTargets.size === 0 || replicating}
+            >
+              {replicating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Replicando...
+                </>
+              ) : (
+                <>
+                  <Copy className="mr-2 h-4 w-4" />
+                  Replicar
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
