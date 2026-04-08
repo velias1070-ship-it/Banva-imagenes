@@ -754,7 +754,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[process-next] No brand for project ${project.id}`);
     }
 
-    // ── Swatch Fidelity Verification (Gemini 2.5 Pro) ──
+    // ── Swatch Fidelity Verification (Gemini 2.5 Pro) — blocks bad images ──
     if (!isBrandOnly) {
       try {
         const generatedB64 = imageBuffer.toString('base64');
@@ -769,8 +769,21 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
-          if (!verification.pass) {
-            console.log(`[process-next] ⚠ Verification FAILED for ${job.swatch.name}: ${verification.feedback} (score: ${verification.score})`);
+          if (!verification.pass && job.attempt < 2) {
+            // BLOCK: verification failed, auto-retry with specific feedback
+            const feedback = verification.feedback || verification.issues.join('. ');
+            console.log(`[process-next] ⚠ Verification BLOCKED ${job.swatch.name} (score: ${verification.score}): ${feedback}`);
+            await supabase.from('generation_jobs').update({
+              status: 'pending',
+              qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
+              prompt_metadata: promptMetadata,
+              updated_at: new Date().toISOString(),
+            }).eq('id', job.id);
+            // Chain continues — process-next will pick this job up again with the feedback
+            return { chain: true, triggerQA: false };
+          } else if (!verification.pass) {
+            // Max retries reached — flag for human review
+            console.log(`[process-next] ⚠ Verification FAILED (max retries) for ${job.swatch.name}: ${verification.feedback}`);
             promptMetadata.verification_feedback = verification.feedback;
           } else {
             console.log(`[process-next] ✓ Verification passed for ${job.swatch.name} (score: ${verification.score})`);

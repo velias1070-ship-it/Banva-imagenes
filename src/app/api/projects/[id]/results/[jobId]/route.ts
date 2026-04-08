@@ -516,7 +516,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       }
     }
 
-    // ── Swatch Fidelity Verification (Gemini 2.5 Pro) ──
+    // ── Swatch Fidelity Verification (Gemini 2.5 Pro) — blocks bad images ──
     if (!isBrandOnly) {
       try {
         const { verifySwatch } = await import('@/lib/swatch-verifier');
@@ -532,8 +532,23 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
-          if (!verification.pass) {
-            console.log(`[regenerateJob] ⚠ Verification FAILED: ${verification.feedback} (score: ${verification.score})`);
+          if (!verification.pass && attempt < 2) {
+            // BLOCK: verification failed, mark for auto-retry with feedback
+            const feedback = verification.feedback || verification.issues.join('. ');
+            console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback}`);
+            await supabase.from('generation_jobs').update({
+              status: 'pending',
+              qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
+              prompt_metadata: promptMetadata,
+              updated_at: new Date().toISOString(),
+            }).eq('id', jobId);
+            // Trigger self to retry immediately
+            const baseUrl = process.env.APP_URL || `https://${process.env.VERCEL_URL}` || 'http://localhost:3000';
+            fetch(`${baseUrl}/api/projects/${projectId}/results/${jobId}`, { method: 'POST' }).catch(() => {});
+            console.log(`[regenerateJob] Auto-retry triggered for ${jobId}`);
+            return;
+          } else if (!verification.pass) {
+            console.log(`[regenerateJob] ⚠ Verification FAILED (max retries): ${verification.feedback}`);
             promptMetadata.verification_feedback = verification.feedback;
           } else {
             console.log(`[regenerateJob] ✓ Verification passed (score: ${verification.score})`);
