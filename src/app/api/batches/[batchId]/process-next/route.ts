@@ -632,15 +632,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       );
     }
 
-    // Pattern description is NOT injected for most categories (causes interpretation instead of copying).
-    // Exception: for quilts, inject a SHORT texture-only hint to prevent Gemini from inventing textures.
-    if (category === 'quilts' && swatchPatternDescription) {
-      // Extract just the texture type from the analysis (waffle, diamond, channel, etc.)
-      const textureMatch = swatchPatternDescription.match(/waffle|honeycomb|diamond|channel|basket.?weave|stipple|pique/i);
-      if (textureMatch) {
-        prompt += `\n\nTEXTURA OBLIGATORIA: La textura del swatch es tipo "${textureMatch[0]}". El resultado DEBE tener esta misma textura, NO otra.`;
-      }
-    }
+    // Pattern text description is NOT injected into the prompt — the swatch image is the
+    // sole reference. Text descriptions use cached data that may be wrong (e.g. "diamond"
+    // when the actual texture is piqué circular) and cause Gemini to interpret instead of copy.
 
     // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
     const skipBrand = job.prompt_adjustment === 'SKIP_BRAND';
