@@ -790,42 +790,31 @@ export function buildEditPrompt(
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
   resolution: string = '1200x1200',
-  swatchHex?: string | null
+  _swatchHex?: string | null
 ): string {
-  const darkNote = isDarkSwatch
-    ? ` La muestra es muy oscura, no aclares el resultado.`
-    : '';
+  const darkNote = isDarkSwatch ? ' No aclares la tela — debe ser igual de oscura que la Imagen 2.' : '';
+  const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
 
-  const qaNote = qaFeedback
-    ? `\n\nINTENTO ANTERIOR FALLO: "${qaFeedback}" — corrige este problema especifico.`
-    : '';
+  if (shotType === 'detail') {
+    return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}
 
-  const learnings = formatLearnings(strategy);
-  const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
-
-  // Special handling for detail/close-up and infografia shots
-  const isDetailShot = shotType === 'detail';
-  const isInfoShot = shotType === 'infografia';
-  let shotNote = '';
-  if (isDetailShot) {
-    shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO CLOSE-UP/DETALLE: La Imagen 1 es un ACERCAMIENTO de textura de tela (close-up). La salida DEBE ser un close-up de textura IDENTICO — misma composicion, mismo angulo, mismos pliegues — pero en el COLOR/DISEÑO de la Imagen 2. NO generes un producto completo, NO agregues etiquetas, packaging, ni escena. Solo textura de tela de cerca en el nuevo color.`;
-  } else if (isInfoShot) {
-    shotNote = `\n\nNOTA ESPECIAL — TOMA TIPO INFOGRAFIA: La Imagen 1 tiene TEXTO SUPERPUESTO, iconos y/o elementos graficos. La salida DEBE mantener EXACTAMENTE el mismo texto, iconos, posicion del texto, fuente, y layout grafico. Solo cambia el diseño/color del producto textil visible. El texto, los iconos y el fondo deben ser IDENTICOS a la Imagen 1.
-CRITICO — NO RECORTAR: La imagen de salida debe contener TODO el contenido de la Imagen 1, incluyendo barras, textos y elementos en los BORDES. Si la Imagen 1 tiene una barra de texto en la parte inferior, esa barra DEBE aparecer COMPLETA en la salida. NO reencuadrar, NO hacer zoom, NO cortar bordes.
-Si la Imagen 1 tiene un logotipo o marca visible, MANTENLO exactamente igual — misma posicion, mismo tamaño. NO duplicar ni agregar logos adicionales.`;
+Imagen fotorrealista de ${resolution}.`;
   }
 
-  // Use shot-type-aware instructions if available for detail/infografia shots
-  const whatToChange = (isDetailShot || isInfoShot)
-    && strategy.prompt.what_to_change_detail
-    ? strategy.prompt.what_to_change_detail
-    : strategy.prompt.what_to_change;
+  if (shotType === 'infografia') {
+    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén TODO el texto, íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil.${darkNote}${qaNote}
 
-  return `Necesito la imagen 1 pero con el diseño textil de la imagen 2. ${whatToChange} No agregues marcas de agua ni logos.${darkNote}${colorAnchor}${learnings}${shotNote}${qaNote}
+Texto en español. Imagen fotorrealista de ${resolution}.`;
+  }
 
-REGLA CRITICA: La composicion, angulo, disposicion, etiquetas y props deben venir EXCLUSIVAMENTE de la Imagen 1. De la Imagen 2 solo se extrae el COLOR y TEXTURA de la tela. Si la Imagen 2 es una foto de producto completa, NO copies su composicion — solo el color de la tela.
+  // Use shot-type-aware instructions if category has them
+  const whatToChange = strategy.prompt.what_to_change;
 
-IDIOMA: TODO texto visible en la imagen generada DEBE estar en ESPAÑOL. Si la imagen original tiene texto en ingles, traducirlo al español. Ejemplos: "ULTRA-SOFT" → "ULTRA SUAVE", "Set 6 Pieces" → "Set 6 Piezas", "100% Cotton" → "100% Algodon", "Bath Towel" → "Toalla de Baño". El mercado es MercadoLibre Chile.`;
+  return `Genera la Imagen 1 con la tela de la Imagen 2. ${whatToChange}${darkNote}${qaNote}
+
+Composición de la Imagen 1. Color y textura de la Imagen 2. Texto en español. Sin marcas de agua.
+
+Imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -842,48 +831,27 @@ export function buildReferencePrompt(
   resolution: string = '1200x1200',
   swatchHex?: string | null
 ): string {
-  const colorInfo = colorDescription ? ` (${colorDescription})` : '';
-  const darkNote = isDarkSwatch
-    ? `\n\nThe swatch "${swatchName}" is VERY DARK — the output textile MUST be equally dark. Do NOT lighten.`
-    : '';
-  const qaNote = qaFeedback
-    ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
-    : '';
+  const darkNote = isDarkSwatch ? ' La tela debe ser igual de oscura que la Imagen 2.' : '';
+  const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
 
-  const learnings = formatLearnings(strategy);
-  const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
+  if (shotType === 'detail') {
+    return `Genera un close-up de textura IDÉNTICO a la Imagen 1 (misma composición, ángulo, pliegues) pero con el color y textura de la Imagen 2.${darkNote}${qaNote}
 
-  const isDetailShot = shotType === 'detail';
-
-  if (isDetailShot) {
-    return `La Imagen 1 es un CLOSE-UP / ACERCAMIENTO de textura de tela. Genera un close-up de textura IDENTICO a la Imagen 1 — misma composicion, mismo angulo, mismos pliegues y arrugas — pero con el COLOR y TEXTURA de la Imagen 2 ("${swatchName}"${colorInfo}).
-
-NO generes un producto completo, NO agregues etiquetas, packaging, escena ni fondo nuevo. La salida debe ser SOLO textura de tela vista de cerca, identica en composicion a la Imagen 1.${colorAnchor}${darkNote}${qaNote}${learnings}
-
-Genera una imagen fotorrealista de ${resolution}.`;
+Imagen fotorrealista de ${resolution}.`;
   }
 
-  const referenceNote = strategy.reference_instruction
-    ? `\n\n${strategy.reference_instruction}`
-    : '';
+  if (shotType === 'infografia') {
+    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén TODO el texto, íconos y layout gráfico exactamente igual. Solo cambia el color/patrón del textil.${darkNote}${qaNote}
 
-  const isInfoShot = shotType === 'infografia';
+Texto en español. Imagen fotorrealista de ${resolution}.`;
+  }
 
-  // Use shot-type-aware instructions if available for detail/infografia shots
-  const whatToChange = (isDetailShot || isInfoShot)
-    && strategy.prompt.what_to_change_detail
-    ? strategy.prompt.what_to_change_detail
-    : strategy.prompt.what_to_change;
+  // Standard reference mode: composition from Image 1, fabric from Image 2
+  return `Imagen 1 = composición (ángulo, escena, disposición). Imagen 2 = tela (color, patrón, textura).
 
-  return `Necesito una imagen similar a la imagen 1 (misma composición, ángulo de cámara, disposición general) pero con el diseño textil de la imagen 2 ("${swatchName}"${colorInfo}).
+Genera la misma escena de la Imagen 1 pero con la tela de la Imagen 2 en el ${strategy.label} y fundas. NO conserves la textura original de la Imagen 1. Copia el color EXACTO de la Imagen 2.${darkNote}${qaNote}
 
-Usa la imagen 1 como guía de composición. El producto textil (${strategy.label}) debe mostrar el diseño de la imagen 2 — no conserves el diseño original de la imagen 1.
-
-${whatToChange} No agregues marcas de agua ni logos.${referenceNote}${colorAnchor}${darkNote}${qaNote}${learnings}
-
-IDIOMA: TODO texto visible en la imagen generada DEBE estar en ESPAÑOL. Si hay texto en ingles, traducirlo. El mercado es MercadoLibre Chile.
-
-Genera una imagen fotorrealista de ${resolution}.`;
+Texto en español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -893,34 +861,22 @@ Genera una imagen fotorrealista de ${resolution}.`;
 export function buildFromScratchPrompt(
   strategy: CategoryStrategy,
   swatchName: string,
-  colorDescription: string | null,
+  _colorDescription: string | null,
   shotType: string,
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
   resolution: string = '1200x1200',
-  swatchHex?: string | null
+  _swatchHex?: string | null
 ): string {
-  const colorInfo = colorDescription ? ` (${colorDescription})` : '';
   const composition = getShotComposition(strategy, shotType);
-  const darkNote = isDarkSwatch
-    ? `\nThe swatch is VERY DARK — the output textile MUST be equally dark. Do NOT lighten.`
-    : '';
-  const qaNote = qaFeedback
-    ? `\n\nPREVIOUS ATTEMPT FAILED: "${qaFeedback}" — fix this specific issue.`
-    : '';
+  const darkNote = isDarkSwatch ? ' Tela oscura — no aclares.' : '';
+  const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
 
-  const learnings = formatLearnings(strategy);
-  const colorAnchor = formatColorAnchor(swatchHex, colorDescription);
+  return `La imagen es una muestra de tela. Genera una foto e-commerce de ${strategy.label}: ${composition}
 
-  return `La imagen proporcionada es una muestra textil llamada "${swatchName}"${colorInfo}.
+El producto debe tener el mismo color, patrón y textura que la muestra.${darkNote}${qaNote}
 
-Genera una foto profesional de producto e-commerce de un ${strategy.label}: ${composition}
-
-El producto DEBE tener exactamente el mismo color, patrón y textura que la muestra. No inventes ningún patrón o color que no esté en la muestra. No agregues marcas de agua ni logos.${colorAnchor}${darkNote}${qaNote}${learnings}
-
-IDIOMA: Si la imagen incluye texto visible, DEBE estar en ESPAÑOL. El mercado es MercadoLibre Chile.
-
-Genera una imagen fotorrealista de ${resolution}.`;
+Texto en español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
