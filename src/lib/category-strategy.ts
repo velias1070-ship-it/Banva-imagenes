@@ -98,11 +98,23 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       product_context: `This is a bed sheet set (juego de sabanas).
 The set includes: pillowcases + flat/top sheet + fitted sheet (sabana bajera).`,
 
-      what_to_change: `Image 2 shows a bed sheet set with DIFFERENT patterns per piece. Apply each pattern from Image 2 to the matching piece in Image 1. Copy EVERY visible piece and pattern from Image 2 — including any dark fold/border between the pillows and the sheet.
+      what_to_change: `IMPORTANT — Image 2 may show DIFFERENT patterns for different pieces:
+* The PILLOWCASES in Image 2 have one pattern (could be floral, striped, etc.)
+* The FITTED SHEET (sabana bajera) in Image 2 may have a DIFFERENT pattern (often stripes or solid color)
 
-Sheets are FLAT, thin fabric — must lay SMOOTH and FLAT like in Image 1. NOT duvets.
+Apply each pattern to the correct piece in Image 1:
+* Pillowcases in Image 1 -> use the PILLOWCASE pattern from Image 2
+* The flat surface underneath the pillows (fitted sheet) -> use the FITTED SHEET pattern from Image 2
+* If a top sheet is visible in Image 1 -> use its corresponding pattern from Image 2
 
-DO NOT change non-textile elements (walls, furniture, floor, props, persons).`,
+If Image 2 shows only ONE pattern for everything -> apply that same pattern to all textiles.
+If you cannot clearly distinguish the fitted sheet pattern in Image 2 -> use the dominant background color/pattern visible beneath the pillows in Image 2.
+
+IMPORTANT: Sheets (sabanas) are FLAT, thin fabric — they must lay SMOOTH and FLAT on the bed, just like in Image 1. DO NOT add volume, puffiness, or quilting. Sheets are NOT duvets/comforters.
+
+DO NOT change:
+* Non-textile elements (walls, furniture, floor, props)
+* Persons, hands, or clothing`,
 
       what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces.
 Maintain EXACTLY the same fabric folds, creases, and disposition as Image 1.
