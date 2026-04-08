@@ -533,20 +533,20 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
           if (!verification.pass && attempt < 4) {
-            // BLOCK: verification failed, mark for auto-retry with feedback
+            // BLOCK: verification failed — retry inline (same execution)
             const feedback = verification.feedback || verification.issues.join('. ');
-            console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback}`);
+            console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback} — retrying inline`);
+            // Update job with feedback for next attempt
             await supabase.from('generation_jobs').update({
-              status: 'pending',
+              status: 'generating',
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
+              attempt: attempt + 1,
               prompt_metadata: promptMetadata,
               updated_at: new Date().toISOString(),
             }).eq('id', jobId);
-            // Trigger self to retry immediately
-            const baseUrl = process.env.APP_URL || `https://${process.env.VERCEL_URL}` || 'http://localhost:3000';
-            fetch(`${baseUrl}/api/projects/${projectId}/results/${jobId}`, { method: 'POST' }).catch(() => {});
-            console.log(`[regenerateJob] Auto-retry triggered for ${jobId}`);
-            return;
+            // Recursively call self with updated job data
+            const updatedJob = { ...job, attempt: attempt + 1, qa_feedback: `[Verifier 2.5 Pro] ${feedback}`, prompt_metadata: promptMetadata };
+            return regenerateJob(jobId, updatedJob, category, projectId, projectMetadata, brandId);
           } else if (!verification.pass) {
             console.log(`[regenerateJob] ⚠ Verification FAILED (max retries): ${verification.feedback}`);
             promptMetadata.verification_feedback = verification.feedback;

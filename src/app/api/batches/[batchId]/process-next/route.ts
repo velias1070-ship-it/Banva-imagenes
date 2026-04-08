@@ -775,6 +775,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             console.log(`[process-next] ⚠ Verification BLOCKED ${job.swatch.name} (score: ${verification.score}): ${feedback}`);
             await supabase.from('generation_jobs').update({
               status: 'pending',
+              attempt: job.attempt + 1,
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               prompt_metadata: promptMetadata,
               updated_at: new Date().toISOString(),
