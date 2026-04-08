@@ -103,7 +103,9 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
 
   const parts: string[] = [];
 
-  parts.push(`\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`);
+  parts.push(mode === 'full'
+    ? `\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`
+    : `\n\n=== INSTRUCCIONES DE TEXTO ===`);
 
   // Text shift instruction FIRST — most important for layout
   if (needsTextShift) {
@@ -114,7 +116,9 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   }
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
-  parts.push(`LOGOS Y MARCAS: NO agregues NINGUN logotipo, nombre de marca, watermark, ni insignia que no exista EXACTAMENTE en la Imagen 1 original. Si la Imagen 1 NO tiene logo, el resultado NO debe tener logo. El branding se aplica en post-proceso.`);
+  if (mode === 'full') {
+    parts.push(`LOGOS Y MARCAS: NO agregues NINGUN logotipo, nombre de marca, watermark, ni insignia que no exista EXACTAMENTE en la Imagen 1 original. Si la Imagen 1 NO tiene logo, el resultado NO debe tener logo. El branding se aplica en post-proceso.`);
+  }
 
   if (hasTextElements && hasColors) {
     // ── SPECIFIC per-element color instructions ──
@@ -168,11 +172,11 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
     }
   }
 
-  if (hasGuidelines) {
+  if (hasGuidelines && mode === 'full') {
     parts.push(`REGLAS ADICIONALES: ${brand.prompt_guidelines}`);
   }
 
-  parts.push(`=== FIN INSTRUCCIONES DE MARCA ===`);
+  parts.push(mode === 'full' ? `=== FIN INSTRUCCIONES DE MARCA ===` : `=== FIN INSTRUCCIONES DE TEXTO ===`);
 
   return parts.join('\n');
 }
