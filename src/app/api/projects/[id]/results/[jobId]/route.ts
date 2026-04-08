@@ -137,11 +137,14 @@ async function regenerateJob(
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
   try {
-    // For ML-imported images (no hero_shot), use the generated output as the hero
-    const heroPath = heroShot?.storage_path || (job.output_storage_path as string);
-    // For BRAND_ONLY on ML imports: use same image as swatch too (prevents Gemini from changing product)
+    // For BRAND_ONLY: use existing output as hero (apply brand on current result, not regenerate from hero)
+    // For ML imports: use output_storage_path (no hero_shot exists)
     const isMLImport = !heroShot;
-    const swatchPath = (isBrandOnly && isMLImport) ? heroPath : swatch.storage_path;
+    const existingOutput = job.output_storage_path as string;
+    const heroPath = (isBrandOnly && existingOutput) ? existingOutput
+      : (heroShot?.storage_path || existingOutput);
+    // For BRAND_ONLY: use same image as swatch (Gemini can't change product if both images are identical)
+    const swatchPath = isBrandOnly ? heroPath : swatch.storage_path;
 
     // Download hero and swatch FIRST (needed for shot type detection)
     const [heroRes, swatchRes] = await Promise.all([
@@ -156,25 +159,13 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
-    // ── FAST PATH: BRAND_ONLY = Sharp logo overlay only (no Gemini) ──
-    // Always use the existing output image — don't regenerate from hero
-    if (isBrandOnly && brandId) {
-      console.log(`[regenerateJob] BRAND_ONLY → Sharp-only path (no Gemini)`);
+    // ── FAST PATH: ML imports + BRAND_ONLY = Sharp logo only (no text to change) ──
+    if (isBrandOnly && brandId && isMLImport) {
+      console.log(`[regenerateJob] ML + BRAND_ONLY → Sharp-only path`);
       const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
       if (brandData) {
         const brand = brandData as BrandConfig;
-        // Use existing output if available, otherwise the hero/ML image
-        const existingOutput = job.output_storage_path as string;
-        let sourceBuffer: Buffer;
-        if (existingOutput && !isMLImport) {
-          // Generated result exists — apply brand on top of it
-          const { data: outputData } = await supabase.storage.from('images').download(existingOutput);
-          sourceBuffer = outputData ? Buffer.from(await outputData.arrayBuffer()) : heroBuffer;
-        } else {
-          // ML import or no previous output — use the downloaded image
-          sourceBuffer = heroBuffer;
-        }
-        let imageBuffer = await ensureOutputSpec(sourceBuffer, 1200);
+        let imageBuffer = await ensureOutputSpec(heroBuffer, 1200);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null);
 
         const outputPath = `projects/${projectId}/generated/${jobId}.png`;
