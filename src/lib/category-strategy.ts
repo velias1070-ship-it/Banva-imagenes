@@ -98,25 +98,11 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       product_context: `This is a bed sheet set (juego de sabanas).
 The set includes: pillowcases + flat/top sheet + fitted sheet (sabana bajera).`,
 
-      what_to_change: `IMPORTANT — Image 2 shows a bed sheet SET with 3 DISTINCT pieces, each with its own pattern:
+      what_to_change: `Image 2 shows a bed sheet set with DIFFERENT patterns per piece. Apply each pattern from Image 2 to the matching piece in Image 1. Copy EVERY visible piece and pattern from Image 2 — including any dark fold/border between the pillows and the sheet.
 
-1. PILLOWCASES (fundas) — usually at the top of Image 2, often darker or with a distinct pattern
-2. FITTED/FLAT SHEET (sabana bajera) — the large light-colored surface with its own pattern (often white with small motifs)
-3. TOP SHEET FOLD/BORDER (doblez sabana superior) — the folded band visible between the pillowcases and the flat sheet. This is often a DARK STRIP of fabric that matches the pillowcase material.
+Sheets are FLAT, thin fabric — must lay SMOOTH and FLAT like in Image 1. NOT duvets.
 
-Apply EACH pattern to the CORRECT piece in Image 1:
-* Pillowcases in Image 1 → use the PILLOWCASE pattern from Image 2
-* Flat sheet surface in Image 1 → use the FLAT SHEET pattern from Image 2
-* The folded/turned-down border of the top sheet in Image 1 → use the TOP SHEET pattern from Image 2. Look for the dark band/strip visible at the fold between pillows and sheet in Image 2. This border MUST be present in the output.
-
-If Image 2 shows only ONE pattern → apply it to all pieces.
-If you cannot distinguish pieces → use the dominant pattern for sheets and the darker pattern for pillowcases + top sheet fold.
-
-IMPORTANT: Sheets (sabanas) are FLAT, thin fabric — they must lay SMOOTH and FLAT on the bed, just like in Image 1. DO NOT add volume, puffiness, or quilting. Sheets are NOT duvets/comforters.
-
-DO NOT change:
-* Non-textile elements (walls, furniture, floor, props)
-* Persons, hands, or clothing`,
+DO NOT change non-textile elements (walls, furniture, floor, props, persons).`,
 
       what_to_change_detail: `Apply the color and pattern from Image 2 to ALL visible fabric surfaces.
 Maintain EXACTLY the same fabric folds, creases, and disposition as Image 1.
