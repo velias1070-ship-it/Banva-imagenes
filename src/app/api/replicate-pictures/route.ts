@@ -150,6 +150,7 @@ export async function POST(request: NextRequest) {
   const targetItemIds: string[] | undefined = body.target_item_ids;
   const selectedPictureIds: string[] | undefined = body.selected_picture_ids;
   const mode: 'replace_all' | 'swap_positions' = body.mode || 'replace_all';
+  const positionMappings: Array<{ source_index: number; target_index: number }> | undefined = body.position_mappings;
 
   if (!sourceSku && !sourceItemIdDirect) {
     return NextResponse.json({ error: 'source_sku or source_item_id is required' }, { status: 400 });
@@ -250,20 +251,41 @@ export async function POST(request: NextRequest) {
         // Build the merged pictures array: start with target's existing, replace at selected positions
         const mergedPictures: Array<{ id: string }> = targetItem.pictures.map((p) => ({ id: p.id }));
 
-        for (const [sourceIndex, sourceUrl] of selectedPositionMap) {
-          // Skip if position exceeds target's picture count
-          if (sourceIndex >= targetItem.pictures.length) continue;
+        if (positionMappings && positionMappings.length > 0) {
+          // --- Manual mapping mode: source photo at source_index → target position at target_index ---
+          for (const { source_index, target_index } of positionMappings) {
+            if (source_index < 0 || source_index >= sourceItem.pictures.length) continue;
+            if (target_index < 0 || target_index >= targetItem.pictures.length) continue;
 
-          // Upload source photo to ML (with cache to avoid re-uploading same URL)
-          let uploadedId = uploadCache.get(sourceUrl);
-          if (!uploadedId) {
-            const uploaded = await mlUploadImageFromUrl(sourceUrl);
-            uploadedId = uploaded.id;
-            uploadCache.set(sourceUrl, uploadedId);
+            const sourceUrl = sourceItem.pictures[source_index].secure_url.replace(/-O\.(\w+)$/, '-F.$1');
+
+            let uploadedId = uploadCache.get(sourceUrl);
+            if (!uploadedId) {
+              const uploaded = await mlUploadImageFromUrl(sourceUrl);
+              uploadedId = uploaded.id;
+              uploadCache.set(sourceUrl, uploadedId);
+            }
+
+            mergedPictures[target_index] = { id: uploadedId };
+            swappedCount++;
           }
+        } else {
+          // --- Default same-position mode (using selectedPositionMap) ---
+          for (const [sourceIndex, sourceUrl] of selectedPositionMap) {
+            // Skip if position exceeds target's picture count
+            if (sourceIndex >= targetItem.pictures.length) continue;
 
-          mergedPictures[sourceIndex] = { id: uploadedId };
-          swappedCount++;
+            // Upload source photo to ML (with cache to avoid re-uploading same URL)
+            let uploadedId = uploadCache.get(sourceUrl);
+            if (!uploadedId) {
+              const uploaded = await mlUploadImageFromUrl(sourceUrl);
+              uploadedId = uploaded.id;
+              uploadCache.set(sourceUrl, uploadedId);
+            }
+
+            mergedPictures[sourceIndex] = { id: uploadedId };
+            swappedCount++;
+          }
         }
 
         if (swappedCount === 0) {

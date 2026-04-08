@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square, ArrowLeftRight, Replace,
+  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square, ArrowLeftRight, Replace, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -52,6 +52,35 @@ export default function ReplicatePage() {
 
   const [replicating, setReplicating] = useState(false);
   const [results, setResults] = useState<ReplicateResult[] | null>(null);
+
+  // Manual photo-to-position mapping (swap mode, single target only)
+  const [targetDetail, setTargetDetail] = useState<SourceDetail | null>(null);
+  const [loadingTarget, setLoadingTarget] = useState(false);
+  const [mappings, setMappings] = useState<Map<number, number>>(new Map()); // source_index → target_index
+  const [selectedSourceForMapping, setSelectedSourceForMapping] = useState<number | null>(null);
+
+  // Auto-load target details when exactly 1 target + swap mode
+  useEffect(() => {
+    if (targetIds.size === 1 && mode === 'swap_positions') {
+      const targetId = Array.from(targetIds)[0];
+      setLoadingTarget(true);
+      fetch(`/api/replicate-pictures?item_id=${targetId}`)
+        .then((r) => r.json())
+        .then((d) => setTargetDetail(d))
+        .catch(() => toast.error('Error cargando fotos del destino'))
+        .finally(() => setLoadingTarget(false));
+    } else {
+      setTargetDetail(null);
+      setMappings(new Map());
+      setSelectedSourceForMapping(null);
+    }
+  }, [targetIds, mode]);
+
+  // Clear mappings when source changes
+  useEffect(() => {
+    setMappings(new Map());
+    setSelectedSourceForMapping(null);
+  }, [sourceId]);
 
   async function handleSearch() {
     const q = query.trim();
@@ -156,6 +185,9 @@ export default function ReplicatePage() {
           target_item_ids: Array.from(targetIds),
           selected_picture_ids: Array.from(selectedPicIds),
           mode,
+          position_mappings: mode === 'swap_positions' && mappings.size > 0
+            ? [...mappings.entries()].map(([s, t]) => ({ source_index: s, target_index: t }))
+            : undefined,
         }),
       });
       const data = await res.json();
@@ -349,8 +381,8 @@ export default function ReplicatePage() {
 
           {/* RIGHT: Source preview + action */}
           <div className="space-y-4">
-            {/* Source preview */}
-            {sourceId && (
+            {/* Source preview — standard (non-mapping) view */}
+            {sourceId && !targetDetail && !loadingTarget && (
               <Card>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -440,8 +472,197 @@ export default function ReplicatePage() {
               </Card>
             )}
 
+            {/* Side-by-side mapping UI (swap mode + single target) */}
+            {sourceId && sourceDetail && (targetDetail || loadingTarget) && mode === 'swap_positions' && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Mapeo de Fotos</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 text-muted-foreground"
+                      onClick={() => { setSourceId(null); setSourceDetail(null); setSelectedPicIds(new Set()); setTargetIds(new Set()); setResults(null); }}
+                    >
+                      Cambiar
+                    </Button>
+                  </div>
+                  {selectedSourceForMapping !== null && (
+                    <p className="text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
+                      Foto origen {selectedSourceForMapping + 1} seleccionada — haz click en una foto destino para mapear
+                    </p>
+                  )}
+                  {selectedSourceForMapping === null && mappings.size === 0 && targetDetail && (
+                    <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1">
+                      Haz click en una foto de origen, luego en la posicion destino donde quieres colocarla
+                    </p>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  {loadingTarget ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : targetDetail ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Source photos */}
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-1.5">Origen</p>
+                          <div className="grid grid-cols-3 gap-1">
+                            {sourceDetail.pictures.map((pic, i) => {
+                              const isMapped = mappings.has(i);
+                              const isSelectedForMap = selectedSourceForMapping === i;
+                              return (
+                                <div
+                                  key={pic.id}
+                                  className={`aspect-square rounded overflow-hidden bg-gray-100 relative cursor-pointer ring-2 transition-all ${
+                                    isSelectedForMap
+                                      ? 'ring-blue-500 ring-offset-1'
+                                      : isMapped
+                                      ? 'ring-green-500 opacity-60'
+                                      : 'ring-transparent hover:ring-blue-300'
+                                  }`}
+                                  onClick={() => {
+                                    if (isSelectedForMap) {
+                                      setSelectedSourceForMapping(null);
+                                    } else {
+                                      setSelectedSourceForMapping(i);
+                                    }
+                                  }}
+                                >
+                                  <img
+                                    src={pic.url}
+                                    alt={`Origen ${i + 1}`}
+                                    className="h-full w-full object-cover"
+                                    loading="lazy"
+                                  />
+                                  <span className={`absolute bottom-0 right-0 text-white text-[9px] px-1 rounded-tl ${
+                                    isSelectedForMap ? 'bg-blue-600' : isMapped ? 'bg-green-600' : 'bg-black/60'
+                                  }`}>
+                                    {i + 1}
+                                  </span>
+                                  {isMapped && (
+                                    <span className="absolute top-0.5 left-0.5 bg-green-600 text-white text-[8px] px-1 rounded">
+                                      → {mappings.get(i)! + 1}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Target photos */}
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-1.5">Destino</p>
+                          <div className="grid grid-cols-3 gap-1">
+                            {targetDetail.pictures.map((pic, i) => {
+                              const mappedSource = [...mappings.entries()].find(([, t]) => t === i);
+                              const hasMapping = !!mappedSource;
+                              return (
+                                <div
+                                  key={pic.id}
+                                  className={`aspect-square rounded overflow-hidden bg-gray-100 relative cursor-pointer ring-2 transition-all ${
+                                    hasMapping
+                                      ? 'ring-green-500'
+                                      : selectedSourceForMapping !== null
+                                      ? 'ring-transparent hover:ring-green-300'
+                                      : 'ring-transparent'
+                                  }`}
+                                  onClick={() => {
+                                    if (hasMapping) {
+                                      // Click mapped target to remove mapping
+                                      const newMappings = new Map(mappings);
+                                      newMappings.delete(mappedSource![0]);
+                                      setMappings(newMappings);
+                                    } else if (selectedSourceForMapping !== null) {
+                                      // Map selected source to this target position
+                                      const newMappings = new Map(mappings);
+                                      // Remove any existing mapping to this target position
+                                      for (const [s, t] of newMappings) {
+                                        if (t === i) newMappings.delete(s);
+                                      }
+                                      newMappings.set(selectedSourceForMapping, i);
+                                      setMappings(newMappings);
+                                      setSelectedSourceForMapping(null);
+                                    }
+                                  }}
+                                >
+                                  <img
+                                    src={pic.url}
+                                    alt={`Destino ${i + 1}`}
+                                    className={`h-full w-full object-cover ${hasMapping ? 'opacity-40' : ''}`}
+                                    loading="lazy"
+                                  />
+                                  <span className={`absolute bottom-0 right-0 text-white text-[9px] px-1 rounded-tl ${
+                                    hasMapping ? 'bg-green-600' : 'bg-black/60'
+                                  }`}>
+                                    {i + 1}
+                                  </span>
+                                  {hasMapping && (
+                                    <>
+                                      {/* Source thumbnail overlay */}
+                                      <div className="absolute inset-1 flex items-center justify-center">
+                                        <img
+                                          src={sourceDetail.pictures[mappedSource![0]]?.url}
+                                          alt=""
+                                          className="h-3/4 w-3/4 object-cover rounded border border-green-400 shadow"
+                                        />
+                                      </div>
+                                      <span className="absolute top-0.5 left-0.5 bg-green-600 text-white text-[8px] px-1 rounded flex items-center gap-0.5">
+                                        ← {mappedSource![0] + 1}
+                                        <X className="h-2.5 w-2.5" />
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Mappings summary */}
+                      {mappings.size > 0 && (
+                        <div className="border-t pt-2 space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">Mapeo ({mappings.size}):</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[...mappings.entries()]
+                              .sort(([a], [b]) => a - b)
+                              .map(([s, t]) => (
+                                <span
+                                  key={s}
+                                  className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full cursor-pointer hover:bg-red-100 hover:text-red-700 transition-colors"
+                                  title="Click para eliminar"
+                                  onClick={() => {
+                                    const newMappings = new Map(mappings);
+                                    newMappings.delete(s);
+                                    setMappings(newMappings);
+                                  }}
+                                >
+                                  Origen {s + 1} → Destino {t + 1}
+                                </span>
+                              ))}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[10px] h-6 px-2 text-muted-foreground"
+                            onClick={() => { setMappings(new Map()); setSelectedSourceForMapping(null); }}
+                          >
+                            Limpiar mapeo
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Mode toggle */}
-            {sourceDetail && selectedPicIds.size > 0 && (
+            {sourceDetail && (selectedPicIds.size > 0 || targetIds.size > 0) && (
               <Card>
                 <CardContent className="pt-4 pb-3">
                   <p className="text-xs text-muted-foreground mb-2 font-medium">Modo de replicado</p>
@@ -480,19 +701,39 @@ export default function ReplicatePage() {
             )}
 
             {/* Action */}
-            {sourceDetail && targetIds.size > 0 && selectedPicIds.size > 0 && (
+            {sourceDetail && targetIds.size > 0 && (
+              // For swap with mappings: need mappings. For swap without mapping UI: need selectedPicIds. For replace_all: need selectedPicIds.
+              (mode === 'swap_positions' && targetDetail && mappings.size > 0) ||
+              (mode === 'swap_positions' && !targetDetail && selectedPicIds.size > 0) ||
+              (mode === 'replace_all' && selectedPicIds.size > 0)
+            ) && (
               <Card>
                 <CardContent className="pt-6 space-y-3">
                   <div className="text-center">
-                    <p className="text-2xl font-bold">{selectedPicIds.size}</p>
-                    <p className="text-xs text-muted-foreground">
-                      foto{selectedPicIds.size !== 1 ? 's' : ''} seleccionada{selectedPicIds.size !== 1 ? 's' : ''}
-                    </p>
-                    <p className="text-lg font-medium mt-1">→ {targetIds.size} destino{targetIds.size !== 1 ? 's' : ''}</p>
-                    {mode === 'swap_positions' && (
-                      <p className="text-[11px] text-blue-600 mt-1">
-                        Solo se reemplazan las posiciones seleccionadas
-                      </p>
+                    {mode === 'swap_positions' && targetDetail && mappings.size > 0 ? (
+                      <>
+                        <p className="text-2xl font-bold">{mappings.size}</p>
+                        <p className="text-xs text-muted-foreground">
+                          mapeo{mappings.size !== 1 ? 's' : ''} configurado{mappings.size !== 1 ? 's' : ''}
+                        </p>
+                        <p className="text-lg font-medium mt-1">→ 1 destino</p>
+                        <p className="text-[11px] text-blue-600 mt-1">
+                          Posiciones mapeadas manualmente
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-2xl font-bold">{selectedPicIds.size}</p>
+                        <p className="text-xs text-muted-foreground">
+                          foto{selectedPicIds.size !== 1 ? 's' : ''} seleccionada{selectedPicIds.size !== 1 ? 's' : ''}
+                        </p>
+                        <p className="text-lg font-medium mt-1">→ {targetIds.size} destino{targetIds.size !== 1 ? 's' : ''}</p>
+                        {mode === 'swap_positions' && (
+                          <p className="text-[11px] text-blue-600 mt-1">
+                            Solo se reemplazan las posiciones seleccionadas
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
 
@@ -510,7 +751,9 @@ export default function ReplicatePage() {
                     ) : mode === 'swap_positions' ? (
                       <>
                         <ArrowLeftRight className="h-4 w-4 mr-2" />
-                        Swap {selectedPicIds.size} foto{selectedPicIds.size !== 1 ? 's' : ''} en posicion
+                        {targetDetail && mappings.size > 0
+                          ? `Swap ${mappings.size} foto${mappings.size !== 1 ? 's' : ''} mapeada${mappings.size !== 1 ? 's' : ''}`
+                          : `Swap ${selectedPicIds.size} foto${selectedPicIds.size !== 1 ? 's' : ''} en posicion`}
                       </>
                     ) : (
                       <>
