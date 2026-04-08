@@ -1,5 +1,6 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
 const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview').trim();
+export const GEMINI_MODEL_PRO = process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview';
 const GEMINI_ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-2.0-flash';
 const GEMINI_VERIFY_MODEL = process.env.GEMINI_VERIFY_MODEL || 'gemini-2.5-pro';
 const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -30,6 +31,7 @@ export interface GeminiGenerateRequest {
   swatchMimeType: string;
   promptText: string;
   temperature?: number;
+  useProModel?: boolean;      // Escalate to Pro model for difficult cases
 }
 
 export interface GeminiGenerateResult {
@@ -43,7 +45,9 @@ export interface GeminiGenerateResult {
 }
 
 export async function generateImage(request: GeminiGenerateRequest): Promise<GeminiGenerateResult> {
-  const url = `${GEMINI_ENDPOINT}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const model = request.useProModel ? GEMINI_MODEL_PRO : GEMINI_MODEL;
+  const url = `${GEMINI_ENDPOINT}/${model}:generateContent?key=${GEMINI_API_KEY}`;
+  console.log(`[gemini] Using model: ${model}${request.useProModel ? ' (PRO escalation)' : ''}`);
   const start = Date.now();
 
   // Build parts array conditionally:

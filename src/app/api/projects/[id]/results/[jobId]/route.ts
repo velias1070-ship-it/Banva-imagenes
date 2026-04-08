@@ -476,7 +476,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       swatch_pattern_analyzed: !!swatchPatternDescription,
     };
 
-    // Generate
+    // Generate — escalate to Pro model after 2 failed attempts
+    const useProModel = attempt >= 2;
     let result;
 
     if (mode === 'from_scratch') {
@@ -485,6 +486,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         swatchMimeType: 'image/png',
         promptText: prompt,
         temperature,
+        useProModel,
       });
     } else {
       const heroBase64 = heroBuffer.toString('base64');
@@ -495,6 +497,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         swatchMimeType: 'image/png',
         promptText: prompt,
         temperature,
+        useProModel,
       });
     }
 
@@ -582,7 +585,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
-        gemini_model_used: process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview',
+        gemini_model_used: useProModel ? (process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview'),
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,

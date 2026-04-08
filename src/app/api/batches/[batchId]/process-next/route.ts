@@ -712,18 +712,19 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       .eq('id', job.id);
 
     // ── Generate image based on mode ──
+    // Escalate to Pro model after 2 failed verification attempts
+    const useProModel = job.attempt >= 2;
     let result;
 
     if (effectiveMode === 'from_scratch') {
-      // From scratch: swatch only, no hero
       result = await generateImage({
         swatchImageBase64: swatchBase64,
         swatchMimeType: 'image/png',
         promptText: prompt,
         temperature,
+        useProModel,
       });
     } else {
-      // Edit or Reference: hero + swatch
       result = await generateImage({
         heroImageBase64: heroBase64,
         heroMimeType: job.hero_shot.mime_type || 'image/png',
@@ -731,6 +732,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         swatchMimeType: 'image/png',
         promptText: prompt,
         temperature,
+        useProModel,
       });
     }
 
@@ -820,7 +822,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
-        gemini_model_used: process.env.GEMINI_MODEL || 'gemini-3-pro-image-preview',
+        gemini_model_used: useProModel ? (process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview'),
         updated_at: new Date().toISOString(),
         ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })
