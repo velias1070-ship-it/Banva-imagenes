@@ -148,6 +148,7 @@ export async function POST(request: NextRequest) {
   const sourceItemIdDirect: string | undefined = body.source_item_id;
   const targetSkus: string[] | undefined = body.target_skus;
   const targetItemIds: string[] | undefined = body.target_item_ids;
+  const selectedPictureIds: string[] | undefined = body.selected_picture_ids;
 
   if (!sourceSku && !sourceItemIdDirect) {
     return NextResponse.json({ error: 'source_sku or source_item_id is required' }, { status: 400 });
@@ -176,9 +177,17 @@ export async function POST(request: NextRequest) {
   }
 
   // Use full-quality URLs (-F suffix)
-  const sourceUrls = sourceItem.pictures.map((p) =>
+  const allSourceUrls = sourceItem.pictures.map((p) =>
     p.secure_url.replace(/-O\.(\w+)$/, '-F.$1')
   );
+
+  // Filter to selected pictures if provided, otherwise use all
+  let sourceUrls = allSourceUrls;
+  if (selectedPictureIds && selectedPictureIds.length > 0) {
+    sourceUrls = sourceItem.pictures
+      .filter((p) => selectedPictureIds.includes(p.id))
+      .map((p) => p.secure_url.replace(/-O\.(\w+)$/, '-F.$1'));
+  }
 
   // 3. Build target list — merge SKUs and direct item IDs
   const targets: Array<{ label: string; itemId?: string; sku?: string }> = [];

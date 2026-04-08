@@ -47,6 +47,8 @@ export default function ReplicatePage() {
   const [loadingSource, setLoadingSource] = useState(false);
   const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
 
+  const [selectedPicIds, setSelectedPicIds] = useState<Set<string>>(new Set());
+
   const [replicating, setReplicating] = useState(false);
   const [results, setResults] = useState<ReplicateResult[] | null>(null);
 
@@ -57,6 +59,7 @@ export default function ReplicatePage() {
     setListings([]);
     setSourceId(null);
     setSourceDetail(null);
+    setSelectedPicIds(new Set());
     setTargetIds(new Set());
     setResults(null);
     try {
@@ -107,7 +110,11 @@ export default function ReplicatePage() {
     try {
       const res = await fetch(`/api/replicate-pictures?item_id=${itemId}`);
       if (res.ok) {
-        setSourceDetail(await res.json());
+        const detail = await res.json();
+        setSourceDetail(detail);
+        if (detail.pictures) {
+          setSelectedPicIds(new Set(detail.pictures.map((p: any) => p.id)));
+        }
       }
     } catch {
       toast.error('Error cargando fotos');
@@ -146,6 +153,7 @@ export default function ReplicatePage() {
         body: JSON.stringify({
           source_item_id: sourceDetail.item_id,
           target_item_ids: Array.from(targetIds),
+          selected_picture_ids: Array.from(selectedPicIds),
         }),
       });
       const data = await res.json();
@@ -349,7 +357,7 @@ export default function ReplicatePage() {
                       variant="ghost"
                       size="sm"
                       className="text-xs h-7 text-muted-foreground"
-                      onClick={() => { setSourceId(null); setSourceDetail(null); setTargetIds(new Set()); setResults(null); }}
+                      onClick={() => { setSourceId(null); setSourceDetail(null); setSelectedPicIds(new Set()); setTargetIds(new Set()); setResults(null); }}
                     >
                       Cambiar
                     </Button>
@@ -363,20 +371,66 @@ export default function ReplicatePage() {
                   ) : sourceDetail ? (
                     <div className="space-y-3">
                       <p className="text-xs text-muted-foreground truncate">{sourceDetail.title}</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground">
+                          {selectedPicIds.size} de {sourceDetail.pictures.length} fotos seleccionadas
+                        </p>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-[10px] h-6 px-2"
+                            onClick={() => setSelectedPicIds(new Set(sourceDetail.pictures.map((p) => p.id)))}
+                          >
+                            Todas
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-[10px] h-6 px-2"
+                            onClick={() => setSelectedPicIds(new Set())}
+                          >
+                            Ninguna
+                          </Button>
+                        </div>
+                      </div>
                       <div className="grid grid-cols-4 gap-1.5">
-                        {sourceDetail.pictures.map((pic, i) => (
-                          <div key={pic.id} className="aspect-square rounded overflow-hidden bg-gray-100 relative">
-                            <img
-                              src={pic.url}
-                              alt={`Foto ${i + 1}`}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
-                            <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[9px] px-1 rounded-tl">
-                              {i + 1}
-                            </span>
-                          </div>
-                        ))}
+                        {sourceDetail.pictures.map((pic, i) => {
+                          const isSelected = selectedPicIds.has(pic.id);
+                          return (
+                            <div
+                              key={pic.id}
+                              className={`aspect-square rounded overflow-hidden bg-gray-100 relative cursor-pointer ring-2 transition-all ${
+                                isSelected ? 'ring-blue-500 opacity-100' : 'ring-transparent opacity-40'
+                              }`}
+                              onClick={() => {
+                                setSelectedPicIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(pic.id)) next.delete(pic.id);
+                                  else next.add(pic.id);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <img
+                                src={pic.url}
+                                alt={`Foto ${i + 1}`}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                              <span className={`absolute bottom-0 right-0 text-white text-[9px] px-1 rounded-tl ${
+                                isSelected ? 'bg-blue-600' : 'bg-black/60'
+                              }`}>
+                                {i + 1}
+                              </span>
+                              {isSelected && (
+                                <div className="absolute top-0.5 right-0.5">
+                                  <CheckCircle className="h-3.5 w-3.5 text-blue-500 drop-shadow" />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}
@@ -385,12 +439,14 @@ export default function ReplicatePage() {
             )}
 
             {/* Action */}
-            {sourceDetail && targetIds.size > 0 && (
+            {sourceDetail && targetIds.size > 0 && selectedPicIds.size > 0 && (
               <Card>
                 <CardContent className="pt-6 space-y-3">
                   <div className="text-center">
-                    <p className="text-2xl font-bold">{sourceDetail.pictures.length}</p>
-                    <p className="text-xs text-muted-foreground">fotos</p>
+                    <p className="text-2xl font-bold">{selectedPicIds.size}</p>
+                    <p className="text-xs text-muted-foreground">
+                      foto{selectedPicIds.size !== 1 ? 's' : ''} seleccionada{selectedPicIds.size !== 1 ? 's' : ''}
+                    </p>
                     <p className="text-lg font-medium mt-1">→ {targetIds.size} destino{targetIds.size !== 1 ? 's' : ''}</p>
                   </div>
 
