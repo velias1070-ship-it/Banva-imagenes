@@ -137,12 +137,11 @@ async function regenerateJob(
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
   try {
-    // For BRAND_ONLY: use existing output as hero (apply brand on current result, not regenerate from hero)
-    // For ML imports: use output_storage_path (no hero_shot exists)
     const isMLImport = !heroShot;
     const existingOutput = job.output_storage_path as string;
-    const heroPath = (isBrandOnly && existingOutput) ? existingOutput
-      : (heroShot?.storage_path || existingOutput);
+    // Normal regen: use hero. Brand: use hero original (output may be cropped by previous Gemini).
+    // ML imports: use output (no hero exists).
+    const heroPath = heroShot?.storage_path || existingOutput;
     // For BRAND_ONLY: use same image as swatch (Gemini can't change product if both images are identical)
     const swatchPath = isBrandOnly ? heroPath : swatch.storage_path;
 
