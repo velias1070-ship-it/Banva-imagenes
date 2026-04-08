@@ -481,8 +481,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const useProModel = attempt >= 2;
     let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
-    // ── Multi-pass generation for sabanas (separate pillowcases + sheets) ──
-    if (category === 'sabanas' && mode === 'edit') {
+    // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
+    if (false && category === 'sabanas' && mode === 'edit') {
       console.log(`[regenerateJob] Using multi-pass generation for sabanas`);
       const heroBase64 = heroBuffer.toString('base64');
       const multiResult = await generateSabanasMultiPass(

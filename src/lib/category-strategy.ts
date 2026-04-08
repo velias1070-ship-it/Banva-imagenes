@@ -110,6 +110,8 @@ Apply each pattern to the correct piece in Image 1:
 If Image 2 shows only ONE pattern for everything -> apply that same pattern to all textiles.
 If you cannot clearly distinguish the fitted sheet pattern in Image 2 -> use the dominant background color/pattern visible beneath the pillows in Image 2.
 
+IMPORTANT: Sheets (sabanas) are FLAT, thin fabric — they must lay SMOOTH and FLAT on the bed, just like in Image 1. DO NOT add volume, puffiness, or quilting. Sheets are NOT duvets/comforters.
+
 DO NOT change:
 * Non-textile elements (walls, furniture, floor, props)
 * Persons, hands, or clothing`,
