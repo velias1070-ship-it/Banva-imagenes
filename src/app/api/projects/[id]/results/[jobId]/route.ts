@@ -159,9 +159,9 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
-    // ── FAST PATH: ML imports + BRAND_ONLY = Sharp logo only (no text to change) ──
-    if (isBrandOnly && brandId && isMLImport) {
-      console.log(`[regenerateJob] ML + BRAND_ONLY → Sharp-only path`);
+    // ── FAST PATH: BRAND_ONLY = Sharp logo only (Gemini crops/moves layouts) ──
+    if (isBrandOnly && brandId) {
+      console.log(`[regenerateJob] BRAND_ONLY → Sharp-only path (${isMLImport ? 'ML import' : 'generated'})`);
       const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
       if (brandData) {
         const brand = brandData as BrandConfig;
