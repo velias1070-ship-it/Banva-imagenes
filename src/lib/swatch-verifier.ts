@@ -36,8 +36,9 @@ CHECK EACH of these and score 0 (fail) or 1 (pass):
 2. COLOR_MATCH: Do the colors match Image 1 exactly? Same hue, same warmth, same saturation.
 3. TEXTURE_MATCH: If Image 1 shows quilted/textured fabric, does Image 2 show the same texture?
 4. COMPOSITION_PRESERVED: Does Image 2 keep the same camera angle, scene layout, and framing as Image 3 (hero)?
-5. NO_INVENTION: Is Image 2 free of elements that don't exist in Image 1 (invented patterns, added text, logos)?
+5. NO_INVENTION: Is Image 2 free of INVENTED fabric patterns or designs not in Image 1? IGNORE any logo/watermark in the corners — logos are added automatically in post-processing and should NOT be penalized.
 6. SCALE_CORRECT: Are the pattern motifs the same relative size as in Image 1?
+7. ORIENTATION_CORRECT: Are stripes, lines, and pattern elements oriented the same way as in Image 1? Horizontal stripes must stay horizontal, vertical must stay vertical. This is CRITICAL.
 
 Respond ONLY with valid JSON (no markdown, no backticks):
 {
@@ -47,6 +48,7 @@ Respond ONLY with valid JSON (no markdown, no backticks):
   "composition_preserved": 0 or 1,
   "no_invention": 0 or 1,
   "scale_correct": 0 or 1,
+  "orientation_correct": 0 or 1,
   "overall_score": 0.0 to 1.0,
   "issues": ["issue 1", "issue 2"],
   "feedback": "one sentence describing the main problem, or 'Faithful reproduction'"
@@ -75,7 +77,7 @@ Respond ONLY with valid JSON (no markdown, no backticks):
     const score = typeof parsed.overall_score === 'number' ? parsed.overall_score : 0.5;
     const issues = Array.isArray(parsed.issues) ? parsed.issues : [];
     const feedback = parsed.feedback || 'Unknown';
-    const pass = score >= 0.7 && parsed.pattern_match === 1 && parsed.no_invention === 1;
+    const pass = score >= 0.7 && parsed.pattern_match === 1 && parsed.no_invention === 1 && (parsed.orientation_correct === 1 || parsed.orientation_correct === undefined);
 
     console.log(`[swatch-verifier] "${swatchName}": score=${score}, pass=${pass}, issues=${issues.length}`);
 
