@@ -161,31 +161,7 @@ async function regenerateJob(
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
     // ── BRAND_ONLY: ML imports = Sharp-only, generated images = Gemini full brand book ──
-    // ── ML imports + BRAND_ONLY: Sharp-only (no text to change, just logo) ──
-    if (isBrandOnly && brandId && isMLImport) {
-      console.log(`[regenerateJob] BRAND_ONLY ML import → Sharp-only`);
-      const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
-      if (brandData) {
-        const brand = brandData as BrandConfig;
-        let imageBuffer = await ensureOutputSpec(heroBuffer, 1200);
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null);
-        const outputPath = `projects/${projectId}/generated/${jobId}.png`;
-        await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
-        await supabase.from('generation_jobs').update({
-          status: 'approved',
-          output_storage_path: outputPath,
-          generation_time_ms: 0,
-          attempt: attempt + 1,
-          prompt_text: 'Sharp-only: logo overlay (no Gemini)',
-          prompt_metadata: { strategy: 'sharp_only', category, manual_regeneration: true },
-          qa_score: 0.95,
-          qa_feedback: 'Auto-approved (BRAND_ONLY Sharp-only)',
-          updated_at: new Date().toISOString(),
-        }).eq('id', jobId);
-        console.log(`[regenerateJob] BRAND_ONLY Sharp done`);
-        return;
-      }
-    }
+    // All BRAND_ONLY jobs (ML imports + generated) go through Gemini full brand book below
     // Generated images + BRAND_ONLY: Gemini full brand book — falls through to generation below
 
     // Auto-detect shot type — use cache, skip for BRAND_ONLY
