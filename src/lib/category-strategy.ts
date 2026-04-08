@@ -81,7 +81,7 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       'any text in the image MUST be in Spanish — English text = ml_compliance 0.0',
     ],
     learnings: [
-      'El quilt DEBE mostrar textura acolchada visible (costuras en canales o diamante en la superficie de la tela). Si se ve como un edredón liso sin costuras, está MAL.',
+      'El quilt DEBE mostrar la MISMA textura acolchada que aparece en la Imagen 2 (swatch). Copiar la textura EXACTA del swatch — NO inventar otra textura diferente. Si el swatch muestra waffle, el resultado debe ser waffle. Si muestra diamante, debe ser diamante.',
       'Todo texto visible en la imagen DEBE estar en español. Nunca generar texto en inglés.',
       'El color base de la tela debe coincidir exactamente con el swatch — si el swatch es blanco, no generar crema/beige.',
       'No conservar NINGÚN relieve, textura ni patrón acolchado del hero original (imagen 1). La textura viene 100% del swatch.',
