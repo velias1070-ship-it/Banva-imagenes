@@ -139,13 +139,12 @@ async function regenerateJob(
   try {
     const isMLImport = !heroShot;
     const existingOutput = job.output_storage_path as string;
-    // Brand Gemini (infografia): use existing output (has correct pattern). Both hero+swatch = same image.
-    // Brand Sharp: use hero original (output may be cropped by previous Gemini).
+    // Brand Gemini: use existing output (has correct pattern). Both hero+swatch = same image.
     // Normal regen: use hero original.
     // ML imports: use output (no hero exists).
-    const cachedType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type) : null;
-    const isBrandGemini = isBrandOnly && !isMLImport && (cachedType === 'infografia' || cachedType === 'doblada');
-    const heroPath = isBrandGemini ? existingOutput : (heroShot?.storage_path || existingOutput);
+    const heroPath = (isBrandOnly && existingOutput && !isMLImport)
+      ? existingOutput  // Brand: use generated result (has correct pattern)
+      : (heroShot?.storage_path || existingOutput);
     const swatchPath = isBrandOnly ? heroPath : swatch.storage_path;
 
     // Download hero and swatch FIRST (needed for shot type detection)
@@ -161,20 +160,15 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
-    // ── BRAND_ONLY routing by image type ──
-    if (isBrandOnly && brandId) {
-      const cachedShotType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type) : null;
-      const isTextInfographic = cachedShotType === 'infografia' || cachedShotType === 'doblada';
-      const useGeminiBrand = !isMLImport && isTextInfographic;
-
-      if (!useGeminiBrand) {
-        // Sharp-only: ML imports + lifestyle/main/detail shots (Gemini would crop/move)
-        console.log(`[regenerateJob] BRAND_ONLY → Sharp-only (${isMLImport ? 'ML import' : `shot: ${cachedShotType}`})`);
-        const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
-        if (brandData) {
-          const brand = brandData as BrandConfig;
-          let imageBuffer = await ensureOutputSpec(heroBuffer, 1200);
-          imageBuffer = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null);
+    // ── BRAND_ONLY: ML imports = Sharp-only, generated images = Gemini full brand book ──
+    if (isBrandOnly && brandId && isMLImport) {
+      // ML imports: Sharp-only (no text to change, just logo)
+      console.log(`[regenerateJob] BRAND_ONLY ML import → Sharp-only`);
+      const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
+      if (brandData) {
+        const brand = brandData as BrandConfig;
+        let imageBuffer = await ensureOutputSpec(heroBuffer, 1200);
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null);
 
           const outputPath = `projects/${projectId}/generated/${jobId}.png`;
           await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
@@ -194,8 +188,8 @@ async function regenerateJob(
         }
       }
       // else: infografia/doblada → falls through to Gemini BRAND_ONLY below (full brand book)
-      console.log(`[regenerateJob] BRAND_ONLY → Gemini path (infografia, full brand book)`);
     }
+    // Generated images: Gemini BRAND_ONLY (full brand book) — falls through to normal generation below
 
     // Auto-detect shot type — use cache, skip for BRAND_ONLY
     let effectiveShotType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle') : 'lifestyle';
