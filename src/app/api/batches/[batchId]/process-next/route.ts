@@ -487,9 +487,17 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
     }
 
+    // Save cropped (pre-flatten) swatch for verification — the AI flattener can
+    // misinterpret textures (e.g. waffle weave → diamond), so the verifier must
+    // compare against the REAL swatch pattern, not the AI-generated flat version.
+    const swatchBase64ForVerification = swatchBase64;
+
     // AI-based swatch flattening — generates flat pattern view for detailed textiles
     // Uses ORIGINAL swatch (not cropped) to preserve correct texture at natural scale
-    if (strategy.preprocessing.flatten_swatch_ai && !isBrandOnly) {
+    // SKIP on retries: if the verifier already rejected this job, the AI flattener may
+    // have introduced a wrong pattern. Use the real cropped swatch on retries instead.
+    const skipFlattenOnRetry = qaFeedback != null;
+    if (strategy.preprocessing.flatten_swatch_ai && !isBrandOnly && !skipFlattenOnRetry) {
       // Check cache first: look for flat version in swatch_images
       const { data: flatCache } = await supabase
         .from('swatch_images')
@@ -536,6 +544,10 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
           console.log(`[process-next] Flat swatch generation failed, using cropped swatch`);
         }
       }
+    }
+
+    if (skipFlattenOnRetry && strategy.preprocessing.flatten_swatch_ai) {
+      console.log(`[process-next] Skipping AI flatten on retry — using cropped swatch for ${job.swatch.name}`);
     }
 
     // ── Swatch Pattern Analysis (Planner) — describes pattern for generation prompt ──
@@ -723,8 +735,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       .eq('id', job.id);
 
     // ── Generate image based on mode ──
-    // Escalate to Pro model after 2 failed verification attempts
-    const useProModel = job.attempt >= 2;
+    // Escalate to Pro model for retries. Quilts escalate after just 1 failed attempt
+    // because Flash consistently fails with fine textures (waffle weave, pique, etc.)
+    const proThreshold = category === 'quilts' ? 1 : 2;
+    const useProModel = job.attempt >= proThreshold;
     let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
@@ -805,8 +819,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (!isBrandOnly && !isMultiPass) {
       try {
         const generatedB64 = imageBuffer.toString('base64');
+        // Use the cropped (pre-flatten) swatch for verification — the AI flattener
+        // can misinterpret textures, causing false passes when both the flattened
+        // swatch and generated image share the same invented pattern.
         const verification = await verifySwatch(
-          swatchBase64,
+          swatchBase64ForVerification,
           generatedB64,
           heroBase64,
           job.swatch.name,
