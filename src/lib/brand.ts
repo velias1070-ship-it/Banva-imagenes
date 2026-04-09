@@ -377,18 +377,11 @@ export async function overlayBrandLogo(
 
   const margin = brand.logo_margin_px;
 
-  // Pick best corner — prefer configured position but avoid text overlap
-  let bestCorner = brand.logo_position || 'top-left';
-  if (textElements?.length) {
-    bestCorner = findBestCornerFromText(textElements, bestCorner);
-  } else {
-    bestCorner = await findBestCorner(imageBuffer, imgWidth, imgHeight, logoWidth, logoHeight, margin, bestCorner);
-  }
-
+  // Always use configured brand position — brand book requirement
   let left = margin;
   let top = margin;
 
-  switch (bestCorner) {
+  switch (brand.logo_position) {
     case 'top-right':
       left = imgWidth - logoWidth - margin;
       break;
