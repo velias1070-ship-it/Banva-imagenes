@@ -249,11 +249,17 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
         finalBuffer = sourceBuffer;
       }
 
-      // Always apply Sharp logo overlay
+      // Always apply Sharp logo overlay — pass detected text elements for smart positioning
       let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
       if (brand) {
-        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name);
+        // Re-detect text on the FINAL image (Gemini may have moved things)
+        let finalTextElements: import('@/lib/brand').TextElement[] | null = null;
+        try {
+          const ta = await analyzeTextElements(imageBuffer.toString('base64'), 'image/png');
+          if (ta?.elements?.length) finalTextElements = ta.elements;
+        } catch {}
+        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', finalTextElements));
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { text_elements: finalTextElements?.length || 0 });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
