@@ -122,12 +122,16 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
 
   if (hasTextElements && hasColors) {
     // ── SPECIFIC per-element color instructions ──
-    parts.push(`COLORES DE TEXTO POR ELEMENTO (aplicar EXACTAMENTE segun el rol de cada texto):`);
+    // Don't include exact text content — it prevents Gemini from translating English to Spanish.
+    // Just specify role → color mapping. Gemini can see the text in the image.
+    parts.push(`COLORES DE TEXTO POR ROL:`);
+    const seenRoles = new Set<string>();
     for (const el of textElements!) {
       const colorField = ROLE_COLOR_MAP[el.role];
       const colorValue = brand[colorField];
-      if (colorValue) {
-        parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → color: ${colorValue}`);
+      if (colorValue && !seenRoles.has(el.role)) {
+        seenRoles.add(el.role);
+        parts.push(`  - ${el.role} → color: ${colorValue}`);
       }
     }
     parts.push(`REEMPLAZAR los colores de texto del hero original por los indicados arriba.`);
@@ -142,23 +146,26 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
 
   if (mode === 'full') {
     if (hasTextElements && hasPerRoleTypography) {
-      // ── SPECIFIC per-element typography with per-role fonts ──
-      parts.push(`TIPOGRAFIA POR ELEMENTO (aplicar EXACTAMENTE segun el rol de cada texto):`);
+      // ── Per-role typography — don't include text content (allows translation) ──
+      const typoRoles = new Set<string>();
+      const typoLines: string[] = [];
       for (const el of textElements!) {
         const typoField = ROLE_TYPOGRAPHY_MAP[el.role];
         const typoValue = brand[typoField]?.trim() || brand.typography?.trim();
-        if (typoValue) {
-          parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → tipografia: ${typoValue}`);
+        if (typoValue && !typoRoles.has(el.role)) {
+          typoRoles.add(el.role);
+          typoLines.push(`  - ${el.role} → tipografia: ${typoValue}`);
         }
       }
-      parts.push(`NO mantener la tipografia original del hero — usar SOLO las tipografias del brand para TODOS los textos.`);
-    } else if (hasTextElements && hasTypography) {
-      // ── SPECIFIC per-element typography with single font (backward compatible) ──
-      parts.push(`TIPOGRAFIA OBLIGATORIA (${brand.typography}) — aplicar a cada texto detectado:`);
-      for (const el of textElements!) {
-        parts.push(`  - "${el.text}" (${el.role}, ${el.position}, ${el.size}) → tipografia: ${brand.typography}`);
+      if (typoLines.length) {
+        parts.push(`TIPOGRAFIA POR ROL:`);
+        parts.push(...typoLines);
+        parts.push(`NO mantener la tipografia original del hero — usar SOLO las tipografias del brand para TODOS los textos.`);
       }
-      parts.push(`NO mantener la tipografia original del hero — usar SOLO la del brand para TODOS los textos.`);
+    } else if (hasTextElements && hasTypography) {
+      // ── Single font for all text ──
+      parts.push(`TIPOGRAFIA OBLIGATORIA: ${brand.typography} para TODOS los textos visibles.`);
+      parts.push(`NO mantener la tipografia original del hero — usar SOLO la del brand.`);
     } else if (hasPerRoleTypography) {
       // ── GENERIC per-role typography (no text elements detected) ──
       const typos: string[] = [];
