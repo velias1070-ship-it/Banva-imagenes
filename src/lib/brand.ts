@@ -400,14 +400,29 @@ export async function overlayBrandLogo(
   let left = margin;
   let top = margin;
 
+  // Threshold above which a corner is considered "too busy" (text/edges)
+  const BUSY_THRESHOLD = 35;
+
   if (isTop) {
-    const leftBusy = await cornerBusyness(margin, margin);
-    const rightBusy = await cornerBusyness(imgWidth - logoWidth - margin - 30, margin);
-    if (rightBusy < leftBusy) {
+    const tlBusy = await cornerBusyness(margin, margin);
+    const trBusy = await cornerBusyness(imgWidth - logoWidth - margin - 30, margin);
+
+    // If BOTH top corners are too busy, fall back to bottom corners
+    if (tlBusy > BUSY_THRESHOLD && trBusy > BUSY_THRESHOLD) {
+      const blBusy = await cornerBusyness(margin, imgHeight - logoHeight - margin - 20);
+      const brBusy = await cornerBusyness(imgWidth - logoWidth - margin - 30, imgHeight - logoHeight - margin - 20);
+      top = imgHeight - logoHeight - margin;
+      if (brBusy < blBusy) {
+        left = imgWidth - logoWidth - margin;
+        console.log(`[brand] Smart corner: top→bottom-right fallback (top busy: L=${tlBusy.toFixed(1)}, R=${trBusy.toFixed(1)})`);
+      } else {
+        console.log(`[brand] Smart corner: top→bottom-left fallback (top busy: L=${tlBusy.toFixed(1)}, R=${trBusy.toFixed(1)})`);
+      }
+    } else if (trBusy < tlBusy) {
       left = imgWidth - logoWidth - margin;
-      console.log(`[brand] Smart corner: top-right (busy: L=${leftBusy.toFixed(1)}, R=${rightBusy.toFixed(1)})`);
+      console.log(`[brand] Smart corner: top-right (busy: L=${tlBusy.toFixed(1)}, R=${trBusy.toFixed(1)})`);
     } else {
-      console.log(`[brand] Smart corner: top-left (busy: L=${leftBusy.toFixed(1)}, R=${rightBusy.toFixed(1)})`);
+      console.log(`[brand] Smart corner: top-left (busy: L=${tlBusy.toFixed(1)}, R=${trBusy.toFixed(1)})`);
     }
   } else if (isBottom) {
     const leftBusy = await cornerBusyness(margin, imgHeight - logoHeight - margin - 20);
