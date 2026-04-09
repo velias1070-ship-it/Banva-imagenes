@@ -97,8 +97,14 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       .from('generation_jobs')
       .update({ prompt_adjustment: 'BRAND_ONLY' })
       .eq('id', jobId);
-    // Update the in-memory job object so regenerateJob sees it
     job.prompt_adjustment = 'BRAND_ONLY';
+  } else if (job.prompt_adjustment === 'BRAND_ONLY') {
+    // Clear stale BRAND_ONLY flag from previous brand attempt
+    await supabase
+      .from('generation_jobs')
+      .update({ prompt_adjustment: null })
+      .eq('id', jobId);
+    job.prompt_adjustment = null;
   }
 
   // Mark as generating (prevents QA from writing stale results)
