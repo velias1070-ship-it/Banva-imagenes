@@ -377,24 +377,48 @@ export async function overlayBrandLogo(
 
   const margin = brand.logo_margin_px;
 
-  // Always use configured brand position — brand book requirement
+  // Smart corner: if brand book says "top", pick the less busy top corner.
+  // If brand book says "bottom", pick the less busy bottom corner.
+  // Respects vertical position (top stays top, bottom stays bottom).
+  const isTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+  const isBottom = brand.logo_position === 'bottom-left' || brand.logo_position === 'bottom-right';
+
+  // Analyze both corners on the configured side (top or bottom)
+  async function cornerBusyness(x: number, y: number): Promise<number> {
+    try {
+      const stats = await sharp(imageBuffer)
+        .extract({ left: x, top: y, width: logoWidth + 30, height: logoHeight + 20 })
+        .stats();
+      // Higher stdev = more contrast/text/edges = busier
+      const avgStdev = stats.channels.reduce((sum, c) => sum + c.stdev, 0) / stats.channels.length;
+      return avgStdev;
+    } catch {
+      return Infinity;
+    }
+  }
+
   let left = margin;
   let top = margin;
 
-  switch (brand.logo_position) {
-    case 'top-right':
+  if (isTop) {
+    const leftBusy = await cornerBusyness(margin, margin);
+    const rightBusy = await cornerBusyness(imgWidth - logoWidth - margin - 30, margin);
+    if (rightBusy < leftBusy) {
       left = imgWidth - logoWidth - margin;
-      break;
-    case 'bottom-left':
-      top = imgHeight - logoHeight - margin;
-      break;
-    case 'bottom-right':
+      console.log(`[brand] Smart corner: top-right (busy: L=${leftBusy.toFixed(1)}, R=${rightBusy.toFixed(1)})`);
+    } else {
+      console.log(`[brand] Smart corner: top-left (busy: L=${leftBusy.toFixed(1)}, R=${rightBusy.toFixed(1)})`);
+    }
+  } else if (isBottom) {
+    const leftBusy = await cornerBusyness(margin, imgHeight - logoHeight - margin - 20);
+    const rightBusy = await cornerBusyness(imgWidth - logoWidth - margin - 30, imgHeight - logoHeight - margin - 20);
+    top = imgHeight - logoHeight - margin;
+    if (rightBusy < leftBusy) {
       left = imgWidth - logoWidth - margin;
-      top = imgHeight - logoHeight - margin;
-      break;
-    case 'top-left':
-    default:
-      break;
+      console.log(`[brand] Smart corner: bottom-right (busy: L=${leftBusy.toFixed(1)}, R=${rightBusy.toFixed(1)})`);
+    } else {
+      console.log(`[brand] Smart corner: bottom-left (busy: L=${leftBusy.toFixed(1)}, R=${rightBusy.toFixed(1)})`);
+    }
   }
 
   // Create a soft white background plate behind the logo so it's visible over any content (text, dark areas, etc.)
