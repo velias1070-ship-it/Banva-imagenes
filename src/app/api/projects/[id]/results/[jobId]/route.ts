@@ -161,9 +161,35 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
-    // ── BRAND_ONLY: ML imports = Sharp-only, generated images = Gemini full brand book ──
-    // All BRAND_ONLY jobs (ML imports + generated) go through Gemini full brand book below
-    // Generated images + BRAND_ONLY: Gemini full brand book — falls through to generation below
+    // ── BRAND_ONLY: Sharp-only (logo overlay). Skip Gemini entirely. ──
+    // Gemini BRAND_ONLY causes: text crop, font names rendered as text, logo duplication.
+    if (isBrandOnly) {
+      let imageBuffer: Buffer = Buffer.from(heroBuffer);
+      // Load brand for logo overlay
+      let brand: BrandConfig | null = null;
+      if (brandId) {
+        const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
+        if (brandData) brand = brandData as BrandConfig;
+      }
+      if (brand) {
+        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, undefined, null));
+      }
+      imageBuffer = Buffer.from(await ensureOutputSpec(imageBuffer, 1200));
+      const outputPath = `projects/${projectId}/generated/${jobId}.png`;
+      await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
+      await supabase.from('generation_jobs').update({
+        status: 'approved',
+        output_storage_path: outputPath,
+        generation_time_ms: 0,
+        gemini_model_used: 'sharp-only',
+        attempt: attempt + 1,
+        qa_score: 0.95,
+        qa_feedback: 'Auto-approved (BRAND_ONLY Sharp)',
+        updated_at: new Date().toISOString(),
+      }).eq('id', jobId);
+      console.log(`[regenerateJob] BRAND_ONLY Sharp-only: logo overlay applied, skipped Gemini`);
+      return;
+    }
 
     // Auto-detect shot type — use cache, skip for BRAND_ONLY
     let effectiveShotType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle') : 'lifestyle';
