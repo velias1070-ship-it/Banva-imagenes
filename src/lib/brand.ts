@@ -377,15 +377,16 @@ export async function overlayBrandLogo(
 
   const margin = brand.logo_margin_px;
 
-  // Logo position is FIXED by brand book — no smart corner, no fallback.
-  void textElements;
-  void imgHeight;
+  // Smart corner ONLY when text is explicitly detected at the logo's preferred zone.
+  // findBestCornerFromText returns preferred corner when text doesn't conflict,
+  // and deviates only when there's explicit text overlap. Pixel busyness is NOT used.
+  const effectiveCorner = findBestCornerFromText(textElements, brand.logo_position);
+  const corner_overridden = effectiveCorner !== brand.logo_position;
 
   let left = margin;
   let top = margin;
 
-  // Apply position from brand book — no smart logic
-  switch (brand.logo_position) {
+  switch (effectiveCorner) {
     case 'top-right':
       left = imgWidth - logoWidth - margin;
       break;
@@ -409,7 +410,7 @@ export async function overlayBrandLogo(
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px)`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${effectiveCorner}${corner_overridden ? ` (overridden from ${brand.logo_position} due to text)` : ''} (${logoWidth}x${logoHeight}px)`);
   return result;
 }
 

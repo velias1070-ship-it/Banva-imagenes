@@ -283,8 +283,15 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
           const ta = await analyzeTextElements(imageBuffer.toString('base64'), 'image/png');
           if (ta?.elements?.length) finalTextElements = ta.elements;
         } catch {}
+        // Decide if logo will be overridden away from brand book due to text overlap
+        const topTextDetected = !!finalTextElements?.some((el) => el.position === 'top');
+        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+        const willOverride = topTextDetected && logoAtTop;
+        if (willOverride) {
+          logPipelineEvent(jobId, 'BRAND_LOGO_OVERRIDE', `text at top — moving logo away from ${brand.logo_position}`);
+        }
         imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', finalTextElements));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { text_elements: finalTextElements?.length || 0 });
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { text_elements: finalTextElements?.length || 0, overridden: willOverride });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
