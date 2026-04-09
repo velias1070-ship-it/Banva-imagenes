@@ -170,29 +170,94 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
-    // ── BRAND_ONLY: Sharp-only (logo overlay). Skip Gemini entirely. ──
-    // Gemini BRAND_ONLY causes: text crop, font names rendered as text, logo duplication.
+    // ── BRAND_ONLY: Try Gemini (colors + typography + text shift), fallback to Sharp (logo only) ──
     if (isBrandOnly) {
-      logPipelineEvent(jobId, 'BRAND_SHARP_ONLY', isMLImport ? 'ML import' : 'generated');
-      // Use the EXISTING OUTPUT of the job (what the user sees on screen).
-      // If no output exists yet, fallback to swatch (ML) or hero (generated).
       const sourcePath = existingOutput || (isMLImport ? swatch.storage_path : heroShot?.storage_path);
-      logPipelineEvent(jobId, 'BRAND_SOURCE', sourcePath || 'none', { existingOutput: !!existingOutput, isMLImport });
-      const originalPath = sourcePath;
-      const { data: originalData } = await supabase.storage.from('images').download(originalPath);
-      if (!originalData) throw new Error('Failed to download original image for BRAND_ONLY');
-      let imageBuffer: Buffer = Buffer.from(await originalData.arrayBuffer());
-      // Load brand for logo overlay
+      logPipelineEvent(jobId, 'BRAND_START', isMLImport ? 'ML import' : 'generated', { source: sourcePath });
+
+      const { data: sourceData } = await supabase.storage.from('images').download(sourcePath!);
+      if (!sourceData) throw new Error('Failed to download source image for BRAND_ONLY');
+      const sourceBuffer = Buffer.from(await sourceData.arrayBuffer());
+
+      // Load brand
       let brand: BrandConfig | null = null;
       if (brandId) {
         const { data: brandData } = await supabase.from('brands').select('*').eq('id', brandId).single();
         if (brandData) brand = brandData as BrandConfig;
       }
+
+      let finalBuffer: Buffer;
+      let usedGemini = false;
+
+      // Try Gemini BRAND_ONLY first (colors + typography + text shift)
+      try {
+        logPipelineEvent(jobId, 'BRAND_GEMINI_TRY', 'attempting Gemini BRAND_ONLY');
+        const sourceB64 = sourceBuffer.toString('base64');
+        const geminiResult = await generateImage({
+          heroImageBase64: sourceB64,
+          heroMimeType: 'image/png',
+          swatchImageBase64: sourceB64,
+          swatchMimeType: 'image/png',
+          promptText: `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
+Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
+IMPORTANT — You MUST apply the brand changes specified below:
+- CHANGE all visible text colors to match the brand palette below
+- CHANGE all visible text typography/fonts to match the brand fonts below
+- Keep the same text content, only change COLOR and FONT
+These changes are MANDATORY, not optional.
+CRITICAL: Do NOT crop, cut, or lose ANY content. ALL elements from Image 1 must appear in the output — including edges, borders, and bottom content.
+Everything else (product, background, people, objects) must remain as in Image 1.
+Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', null, 'full') : ''}`,
+          temperature: 0.2,
+        });
+
+        if (geminiResult.success && geminiResult.imageBase64) {
+          // Verify Gemini didn't crop: use 2.5 Pro to check
+          const { analyzeWithProModel } = await import('@/lib/gemini/client');
+          const checkResult = await analyzeWithProModel({
+            images: [
+              { base64: sourceB64, mimeType: 'image/png' },
+              { base64: geminiResult.imageBase64, mimeType: 'image/png' },
+            ],
+            promptText: `Compare Image 1 (original) and Image 2 (brand version). Is ALL content from Image 1 preserved in Image 2? Check: no text cut off at edges, no elements missing, no layout shifted. Respond ONLY with JSON: {"preserved": true/false, "issue": "description if false"}`,
+            temperature: 0.1,
+          });
+
+          let preserved = true;
+          if (checkResult.success && checkResult.textResponse) {
+            try {
+              const parsed = JSON.parse(checkResult.textResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+              preserved = parsed.preserved !== false;
+              if (!preserved) {
+                logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', parsed.issue || 'content lost');
+              }
+            } catch { preserved = true; }
+          }
+
+          if (preserved) {
+            finalBuffer = Buffer.from(geminiResult.imageBase64, 'base64');
+            usedGemini = true;
+            logPipelineEvent(jobId, 'BRAND_GEMINI_OK', 'Gemini preserved content');
+          } else {
+            logPipelineEvent(jobId, 'BRAND_GEMINI_REVERTED', 'content was cropped, reverting to Sharp');
+            finalBuffer = sourceBuffer;
+          }
+        } else {
+          logPipelineEvent(jobId, 'BRAND_GEMINI_FAILED', geminiResult.error || 'no image');
+          finalBuffer = sourceBuffer;
+        }
+      } catch (geminiErr) {
+        logPipelineEvent(jobId, 'BRAND_GEMINI_ERROR', geminiErr instanceof Error ? geminiErr.message : 'unknown');
+        finalBuffer = sourceBuffer;
+      }
+
+      // Always apply Sharp logo overlay
+      let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
       if (brand) {
-        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, undefined, null));
+        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null));
         logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name);
       }
-      imageBuffer = Buffer.from(await ensureOutputSpec(imageBuffer, 1200));
+
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
       await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
       logPipelineEvent(jobId, 'UPLOAD', outputPath);
@@ -200,14 +265,13 @@ async function regenerateJob(
         status: 'approved',
         output_storage_path: outputPath,
         generation_time_ms: 0,
-        gemini_model_used: 'sharp-only',
+        gemini_model_used: usedGemini ? 'gemini-brand' : 'sharp-only',
         attempt: attempt + 1,
         qa_score: 0.95,
-        qa_feedback: 'Auto-approved (BRAND_ONLY Sharp)',
+        qa_feedback: usedGemini ? 'Auto-approved (BRAND_ONLY Gemini)' : 'Auto-approved (BRAND_ONLY Sharp fallback)',
         updated_at: new Date().toISOString(),
       }).eq('id', jobId);
-      logPipelineEvent(jobId, 'STATUS', 'approved', { sharp_only: true });
-      console.log(`[regenerateJob] BRAND_ONLY Sharp-only: logo overlay applied, skipped Gemini`);
+      logPipelineEvent(jobId, 'STATUS', 'approved', { method: usedGemini ? 'gemini' : 'sharp-fallback' });
       return;
     }
 
