@@ -212,35 +212,20 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
         });
 
         if (geminiResult.success && geminiResult.imageBase64) {
-          // Verify Gemini didn't crop: use 2.5 Pro to check
-          const { analyzeWithProModel } = await import('@/lib/gemini/client');
-          const checkResult = await analyzeWithProModel({
-            images: [
-              { base64: sourceB64, mimeType: 'image/png' },
-              { base64: geminiResult.imageBase64, mimeType: 'image/png' },
-            ],
-            promptText: `Compare Image 1 (original) and Image 2 (brand version). Is ALL content from Image 1 preserved in Image 2? Check: no text cut off at edges, no elements missing, no layout shifted. Respond ONLY with JSON: {"preserved": true/false, "issue": "description if false"}`,
-            temperature: 0.1,
-          });
+          // Quick check: compare image sizes — if Gemini output is much smaller, likely cropped
+          const geminiBuffer = Buffer.from(geminiResult.imageBase64, 'base64');
+          const sourceSize = sourceBuffer.length;
+          const geminiSize = geminiBuffer.length;
+          const sizeRatio = geminiSize / sourceSize;
 
-          let preserved = true;
-          if (checkResult.success && checkResult.textResponse) {
-            try {
-              const parsed = JSON.parse(checkResult.textResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
-              preserved = parsed.preserved !== false;
-              if (!preserved) {
-                logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', parsed.issue || 'content lost');
-              }
-            } catch { preserved = true; }
-          }
-
-          if (preserved) {
-            finalBuffer = Buffer.from(geminiResult.imageBase64, 'base64');
-            usedGemini = true;
-            logPipelineEvent(jobId, 'BRAND_GEMINI_OK', 'Gemini preserved content');
-          } else {
-            logPipelineEvent(jobId, 'BRAND_GEMINI_REVERTED', 'content was cropped, reverting to Sharp');
+          // If output is less than 30% of source size, likely severely cropped/corrupted
+          if (sizeRatio < 0.3) {
+            logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', `size ratio ${sizeRatio.toFixed(2)} — likely cropped`);
             finalBuffer = sourceBuffer;
+          } else {
+            finalBuffer = geminiBuffer;
+            usedGemini = true;
+            logPipelineEvent(jobId, 'BRAND_GEMINI_OK', `preserved (size ratio ${sizeRatio.toFixed(2)})`);
           }
         } else {
           logPipelineEvent(jobId, 'BRAND_GEMINI_FAILED', geminiResult.error || 'no image');
