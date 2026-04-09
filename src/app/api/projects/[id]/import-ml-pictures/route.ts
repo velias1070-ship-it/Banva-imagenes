@@ -97,24 +97,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const batchIds = (allBatches || []).map((b) => b.id);
 
-  // Delete existing ML import jobs for this swatch (re-import = overwrite)
+  // Find ML pictures already imported for this swatch (skip duplicates by ml_picture_id)
+  const alreadyImportedPicIds = new Set<string>();
   if (batchIds.length > 0) {
     const { data: existingJobs } = await supabase
       .from('generation_jobs')
-      .select('id, prompt_metadata')
+      .select('prompt_metadata')
       .in('batch_id', batchIds)
       .eq('swatch_id', swatchId);
 
-    const oldImportIds = (existingJobs || [])
-      .filter((j) => {
-        const meta = j.prompt_metadata as Record<string, unknown> | null;
-        return meta?.strategy === 'ml_import';
-      })
-      .map((j) => j.id);
-
-    if (oldImportIds.length > 0) {
-      await supabase.from('generation_jobs').delete().in('id', oldImportIds);
-      console.log(`[import-ml] Deleted ${oldImportIds.length} old ML imports for swatch ${swatchId} — re-importing`);
+    for (const j of existingJobs || []) {
+      const meta = j.prompt_metadata as Record<string, unknown> | null;
+      if (meta?.strategy === 'ml_import' && typeof meta?.ml_picture_id === 'string') {
+        alreadyImportedPicIds.add(meta.ml_picture_id);
+      }
+    }
+    if (alreadyImportedPicIds.size > 0) {
+      console.log(`[import-ml] ${alreadyImportedPicIds.size} pictures already imported for swatch ${swatchId} — will skip`);
     }
   }
 
@@ -148,13 +147,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
     batchId = newBatch!.id;
   }
 
-  // Filter pictures if specific IDs were requested
-  const picturesToImport = selectedPictureIds?.length
+  // Filter pictures: by selection if provided, then skip ones already imported
+  const requestedPictures = selectedPictureIds?.length
     ? item.pictures.filter((p) => selectedPictureIds.includes(p.id))
     : item.pictures;
 
+  const picturesToImport = requestedPictures.filter((p) => !alreadyImportedPicIds.has(p.id));
+  const skippedCount = requestedPictures.length - picturesToImport.length;
+
   if (!picturesToImport.length) {
-    return NextResponse.json({ error: 'None of the selected pictures were found on the ML listing' }, { status: 400 });
+    return NextResponse.json({
+      error: skippedCount > 0
+        ? `Las ${skippedCount} fotos seleccionadas ya fueron importadas anteriormente`
+        : 'None of the selected pictures were found on the ML listing',
+    }, { status: 400 });
   }
 
   // Download and import each picture
