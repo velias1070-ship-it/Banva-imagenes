@@ -19,6 +19,7 @@ import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
+import { logPipelineEvent } from '@/lib/pipeline-log';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -107,6 +108,8 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     job.prompt_adjustment = null;
   }
 
+  logPipelineEvent(jobId, 'REGEN_TRIGGERED', mode || 'normal', { brand_only: mode === 'brand_only' });
+
   // Mark as generating (prevents QA from writing stale results)
   await supabase
     .from('generation_jobs')
@@ -170,6 +173,7 @@ async function regenerateJob(
     // ── BRAND_ONLY: Sharp-only (logo overlay). Skip Gemini entirely. ──
     // Gemini BRAND_ONLY causes: text crop, font names rendered as text, logo duplication.
     if (isBrandOnly) {
+      logPipelineEvent(jobId, 'BRAND_SHARP_ONLY', isMLImport ? 'ML import' : 'generated');
       // Use the ORIGINAL source image, not a previous corrupted output.
       // ML imports (no hero): swatch is the original image.
       // Generated images: hero is the original composition.
@@ -185,10 +189,12 @@ async function regenerateJob(
       }
       if (brand) {
         imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, undefined, null));
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name);
       }
       imageBuffer = Buffer.from(await ensureOutputSpec(imageBuffer, 1200));
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
       await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
+      logPipelineEvent(jobId, 'UPLOAD', outputPath);
       await supabase.from('generation_jobs').update({
         status: 'approved',
         output_storage_path: outputPath,
@@ -199,6 +205,7 @@ async function regenerateJob(
         qa_feedback: 'Auto-approved (BRAND_ONLY Sharp)',
         updated_at: new Date().toISOString(),
       }).eq('id', jobId);
+      logPipelineEvent(jobId, 'STATUS', 'approved', { sharp_only: true });
       console.log(`[regenerateJob] BRAND_ONLY Sharp-only: logo overlay applied, skipped Gemini`);
       return;
     }
@@ -223,6 +230,8 @@ async function regenerateJob(
         console.error('[regenerateJob] Shot type detection failed:', err);
       }
     }
+
+    logPipelineEvent(jobId, 'SHOT_TYPE', effectiveShotType, { cached: !!(heroShot as Record<string, unknown>)?.detected_shot_type });
 
     // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;
@@ -250,6 +259,8 @@ async function regenerateJob(
     }
 
     const temperature = isBrandOnly ? 0.2 : getEffectiveTemperature(strategy, mode, attempt);
+
+    logPipelineEvent(jobId, 'MODE_SELECTED', mode as string, { temperature, attempt });
 
     // Detect dark swatches for prompt adjustments (skip for BRAND_ONLY)
     const darkSwatch = isBrandOnly ? false : await isSwatchDark(swatchBuffer);
@@ -497,6 +508,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Generate — escalate to Pro model. Quilts escalate earlier (Flash can't reproduce fine textures)
     const proThreshold = category === 'quilts' ? 1 : 2;
     const useProModel = attempt >= proThreshold;
+
+    logPipelineEvent(jobId, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {
+      temperature, mode: mode as string, brand: brand?.name || null,
+    });
+
     let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
@@ -552,8 +568,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     if (!result.success || !result.imageBase64) {
+      logPipelineEvent(jobId, 'GENERATION_DONE', 'failed', { error: result.error, duration_ms: result.durationMs });
       throw new Error(result.error || 'Generation failed');
     }
+
+    logPipelineEvent(jobId, 'GENERATION_DONE', 'success', { duration_ms: result.durationMs });
 
     // Post-process: ensure 1200x1200 sRGB
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
@@ -564,7 +583,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       try {
         imageBuffer = await clearLogoZone(imageBuffer, brand, textElements);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, textElements);
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name);
       } catch (brandErr) {
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });
         console.error('[regenerateJob] Brand processing failed (non-blocking):', brandErr);
       }
     }
@@ -591,6 +612,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           if (!verification.pass && attempt < 4) {
             // BLOCK: verification failed — delegate retry to process-next chain
             const feedback = verification.feedback || verification.issues.join('. ');
+            logPipelineEvent(jobId, 'VERIFICATION', 'FAIL', { score: verification.score, issues: verification.issues });
+            logPipelineEvent(jobId, 'VERIFICATION_RETRY', feedback, { new_attempt: attempt + 1 });
             console.log(`[regenerateJob] ⚠ Verification BLOCKED (score: ${verification.score}): ${feedback} — delegating to process-next`);
             await supabase.from('generation_jobs').update({
               status: 'pending',
@@ -608,9 +631,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             }
             return;
           } else if (!verification.pass) {
+            logPipelineEvent(jobId, 'VERIFICATION', 'FAIL_MAX_RETRIES', { score: verification.score, feedback: verification.feedback });
             console.log(`[regenerateJob] ⚠ Verification FAILED (max retries): ${verification.feedback}`);
             promptMetadata.verification_feedback = verification.feedback;
           } else {
+            logPipelineEvent(jobId, 'VERIFICATION', 'PASS', { score: verification.score });
             console.log(`[regenerateJob] ✓ Verification passed (score: ${verification.score})`);
           }
         }
@@ -629,6 +654,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         upsert: true,
       });
 
+    logPipelineEvent(jobId, 'UPLOAD', outputPath);
+
     // BRAND_ONLY: auto-approve (skip QA). Regular: send to QA.
     const finalStatus = isBrandOnly ? 'approved' : 'qa_pending';
 
@@ -646,6 +673,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })
       .eq('id', jobId);
+
+    logPipelineEvent(jobId, 'STATUS', finalStatus, { qa_triggered: !isBrandOnly });
 
     // Trigger QA for this job (skip for BRAND_ONLY — already approved)
     if (isBrandOnly) {
@@ -671,6 +700,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    logPipelineEvent(jobId, 'ERROR', errorMessage);
+
     await supabase
       .from('generation_jobs')
       .update({

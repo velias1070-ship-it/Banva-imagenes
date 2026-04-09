@@ -20,6 +20,7 @@ import { verifySwatch } from '@/lib/swatch-verifier';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
 import { MAX_QA_RETRIES } from '@/lib/constants';
+import { logPipelineEvent } from '@/lib/pipeline-log';
 
 // Vercel serverless: max execution time — one job per invocation (~25s)
 export const maxDuration = 60;
@@ -337,6 +338,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
 
+  logPipelineEvent(job.id, 'PICKED_UP', 'process-next chain', { batch_id: batchId, attempt: job.attempt, brand_only: isBrandOnly });
+
   try {
     // Download hero and swatch
     const [heroRes, swatchRes] = await Promise.all([
@@ -447,6 +450,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Using cached shot type: ${effectiveShotType}`);
     }
 
+    logPipelineEvent(job.id, 'SHOT_TYPE', effectiveShotType, { cached: !!job.hero_shot.detected_shot_type });
+
     // ── Determine effective generation mode ──
     let effectiveMode = projectSettings.generation.mode !== 'auto'
       ? projectSettings.generation.mode
@@ -484,6 +489,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       ? projectSettings.generation.temperature
       : baseTemperature;
 
+    logPipelineEvent(job.id, 'MODE_SELECTED', effectiveMode, { temperature, force_edit: forceEdit });
+
     console.log(
       `[process-next] Job ${job.id.substring(0, 8)} — ` +
       `category: ${category}, mode: ${effectiveMode}, shotType: ${effectiveShotType}, attempt: ${job.attempt}, temp: ${temperature}` +
@@ -505,6 +512,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         swatchBase64 = croppedSwatch.toString('base64');
       }
     }
+
+    logPipelineEvent(job.id, 'PREPROCESS', isBrandOnly ? 'skip' : 'done', {
+      crop_swatch: strategy.preprocessing.crop_swatch,
+      flatten_hero: strategy.preprocessing.flatten_hero,
+      flatten_swatch_ai: strategy.preprocessing.flatten_swatch_ai || false,
+    });
 
     // Save cropped (pre-flatten) swatch for verification — the AI flattener can
     // misinterpret textures (e.g. waffle weave → diamond), so the verifier must
@@ -596,6 +609,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         }
       }
     }
+
+    logPipelineEvent(job.id, 'PATTERN_ANALYSIS', swatchPatternDescription ? 'available' : 'none', {
+      cached: !!(job.swatch.color_description && job.swatch.color_description.length > 100),
+      length: swatchPatternDescription?.length || 0,
+    });
 
     // ── Build prompt ──
     const swatchHex = job.swatch.dominant_color_hex || null;
@@ -752,6 +770,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // because Flash consistently fails with fine textures (waffle weave, pique, etc.)
     const proThreshold = category === 'quilts' ? 1 : 2;
     const useProModel = job.attempt >= proThreshold;
+
+    logPipelineEvent(job.id, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {
+      temperature, mode: effectiveMode, brand: brand?.name || null,
+    });
     let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
@@ -807,8 +829,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     if (!result.success || !result.imageBase64) {
+      logPipelineEvent(job.id, 'GENERATION_DONE', 'failed', { error: result.error, duration_ms: result.durationMs });
       throw new Error(result.error || 'Generation failed');
     }
+
+    logPipelineEvent(job.id, 'GENERATION_DONE', 'success', { duration_ms: result.durationMs });
 
     // Post-process: ensure 1200x1200 RGB
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
@@ -819,10 +844,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       try {
         imageBuffer = await clearLogoZone(imageBuffer, brand, textElements);
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, textElements);
+        logPipelineEvent(job.id, 'BRAND_OVERLAY', brand.name);
       } catch (brandErr) {
+        logPipelineEvent(job.id, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });
         console.error('[process-next] Brand processing failed (non-blocking):', brandErr);
       }
     } else {
+      logPipelineEvent(job.id, 'BRAND_OVERLAY', 'none');
       console.log(`[process-next] No brand for project ${project.id}`);
     }
 
@@ -849,6 +877,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           if (!verification.pass && job.attempt < 4) {
             // BLOCK: verification failed, auto-retry with specific feedback
             const feedback = verification.feedback || verification.issues.join('. ');
+            logPipelineEvent(job.id, 'VERIFICATION', 'FAIL', { score: verification.score, issues: verification.issues });
+            logPipelineEvent(job.id, 'VERIFICATION_RETRY', feedback, { new_attempt: job.attempt + 1 });
             console.log(`[process-next] ⚠ Verification BLOCKED ${job.swatch.name} (score: ${verification.score}): ${feedback}`);
             await supabase.from('generation_jobs').update({
               status: 'pending',
@@ -861,9 +891,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             return { chain: true, triggerQA: false };
           } else if (!verification.pass) {
             // Max retries reached — flag for human review
+            logPipelineEvent(job.id, 'VERIFICATION', 'FAIL_MAX_RETRIES', { score: verification.score, feedback: verification.feedback });
             console.log(`[process-next] ⚠ Verification FAILED (max retries) for ${job.swatch.name}: ${verification.feedback}`);
             promptMetadata.verification_feedback = verification.feedback;
           } else {
+            logPipelineEvent(job.id, 'VERIFICATION', 'PASS', { score: verification.score });
             console.log(`[process-next] ✓ Verification passed for ${job.swatch.name} (score: ${verification.score})`);
           }
         }
@@ -887,6 +919,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         upsert: true,
       });
 
+    logPipelineEvent(job.id, 'UPLOAD', outputPath);
+
     // BRAND_ONLY: auto-approve (skip QA — saves 1 Flash call + 3 image downloads)
     // Regular: send to QA for evaluation
     const finalStatus = isBrandOnly ? 'approved' : 'qa_pending';
@@ -903,6 +937,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       })
       .eq('id', job.id);
 
+    logPipelineEvent(job.id, 'STATUS', finalStatus, { qa_triggered: !isBrandOnly });
+
     // Increment API call counter (non-blocking — column may not exist yet)
     Promise.resolve(
       supabase.from('generation_jobs')
@@ -917,6 +953,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    logPipelineEvent(job.id, 'ERROR', errorMessage);
+
     await supabase
       .from('generation_jobs')
       .update({
