@@ -802,9 +802,9 @@ Imagen fotorrealista de ${resolution}.`;
   }
 
   if (shotType === 'infografia') {
-    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén TODO el texto, íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil.${darkNote}${qaNote}
+    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil. Si hay texto en inglés, TRADÚCELO al español (ej: "No stitching" → "Sin costuras").${darkNote}${qaNote}
 
-Texto en español. Imagen fotorrealista de ${resolution}.`;
+Imagen fotorrealista de ${resolution}.`;
   }
 
   // Use shot-type-aware instructions if category has them
@@ -812,7 +812,7 @@ Texto en español. Imagen fotorrealista de ${resolution}.`;
 
   return `Genera la Imagen 1 con la tela de la Imagen 2. ${whatToChange}${darkNote}${qaNote}
 
-Composición de la Imagen 1. Color y textura de la Imagen 2. Texto en español. Sin marcas de agua.
+Composición de la Imagen 1. Color y textura de la Imagen 2. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
 Imagen fotorrealista de ${resolution}.`;
 }
@@ -841,9 +841,9 @@ Imagen fotorrealista de ${resolution}.`;
   }
 
   if (shotType === 'infografia') {
-    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén TODO el texto, íconos y layout gráfico exactamente igual. Solo cambia el color/patrón del textil.${darkNote}${qaNote}
+    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil. Si hay texto en inglés, TRADÚCELO al español (ej: "No stitching" → "Sin costuras").${darkNote}${qaNote}
 
-Texto en español. Imagen fotorrealista de ${resolution}.`;
+Imagen fotorrealista de ${resolution}.`;
   }
 
   // Standard reference mode: composition from Image 1, fabric from Image 2
@@ -851,7 +851,7 @@ Texto en español. Imagen fotorrealista de ${resolution}.`;
 
 Genera la misma escena de la Imagen 1 pero con la tela de la Imagen 2 en el ${strategy.label} y fundas. NO conserves la textura original de la Imagen 1. Copia el color EXACTO de la Imagen 2.${darkNote}${qaNote}
 
-Texto en español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
+Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
