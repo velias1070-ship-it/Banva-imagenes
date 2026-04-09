@@ -401,41 +401,15 @@ export async function overlayBrandLogo(
       break;
   }
 
-  // Create a soft white background plate behind the logo so it's visible over any content (text, dark areas, etc.)
-  // Plate is slightly larger than the logo with rounded edges and 80% opacity.
-  const plateWidth = logoWidth + 30;
-  const plateHeight = logoHeight + 20;
-  const plateLeft = Math.max(0, left - 15);
-  const plateTop = Math.max(0, top - 10);
-  const plate = await sharp({
-    create: {
-      width: plateWidth,
-      height: plateHeight,
-      channels: 4,
-      background: { r: 255, g: 255, b: 255, alpha: 0.85 },
-    },
-  })
-    .composite([
-      {
-        input: Buffer.from(
-          `<svg width="${plateWidth}" height="${plateHeight}"><rect x="0" y="0" width="${plateWidth}" height="${plateHeight}" rx="12" ry="12" fill="white" fill-opacity="0.85"/></svg>`
-        ),
-        top: 0,
-        left: 0,
-      },
-    ])
-    .png()
-    .toBuffer();
-
+  // Logo overlay — transparent, no background plate
   const result = await sharp(imageBuffer)
     .composite([
-      { input: plate, left: plateLeft, top: plateTop },
       { input: resizedLogo, left: Math.max(0, left), top: Math.max(0, top) },
     ])
     .png()
     .toBuffer();
 
-  console.log(`[brand] Logo overlay applied with background plate: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px)`);
+  console.log(`[brand] Logo overlay applied: ${brand.name} at ${brand.logo_position} (${logoWidth}x${logoHeight}px)`);
   return result;
 }
 

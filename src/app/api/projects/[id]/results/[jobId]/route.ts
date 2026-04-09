@@ -228,13 +228,20 @@ async function regenerateJob(
           swatchMimeType: 'image/png',
           promptText: `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
 Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
+
 IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text colors to match the brand palette below
 - CHANGE all visible text typography/fonts to match the brand fonts below
 - Keep the same text content, only change COLOR and FONT
-These changes are MANDATORY, not optional.
-CRITICAL: Do NOT crop, cut, or lose ANY content. ALL elements from Image 1 must appear in the output — including edges, borders, and bottom content.
-Everything else (product, background, people, objects) must remain as in Image 1.
+
+LOGO ZONE — A 200x200px logo will be added in the top-left corner in post-processing. If there is text in that top-left zone, MOVE that text horizontally (to the right) or vertically (slightly down within the same area) to leave the top-left 250x250px clear. DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible — only reposition text that overlaps with the top-left corner.
+
+CRITICAL CONSTRAINTS:
+- Keep image dimensions identical (1200x1200)
+- ALL elements from Image 1 must appear in the output (no cropping at edges, no missing bottom content)
+- Only change: text colors, text fonts, and reposition text in the top-left logo zone
+- Do NOT change: product, scene, background, people, layout outside the logo zone
+
 Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', brandTextElements, 'full') : ''}`,
           temperature: 0.2,
         });
