@@ -468,28 +468,24 @@ export async function overlayBrandLogo(
 export async function clearLogoZone(
   imageBuffer: Buffer,
   brand: BrandConfig,
-  textElements: TextElement[] | null | undefined
 ): Promise<Buffer> {
-  if (!textElements?.length) return imageBuffer;
-
   const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
   if (!logoAtTop) return imageBuffer;
-
-  const hasTopText = textElements.some(el => el.position === 'top');
-  if (!hasTopText) return imageBuffer;
 
   const metadata = await sharp(imageBuffer).metadata();
   const imgW = metadata.width || 1200;
   const imgH = metadata.height || 1200;
 
-  // Calculate shift: logo height + margin (the area the logo occupies vertically)
-  // We only need to shift enough for the logo, not the full logo_size_px (which is max width)
-  // Logo is resized to fit inside logo_size_px x logo_size_px, so height <= logo_size_px
-  const shiftPx = Math.round(brand.logo_size_px * 0.45); // ~45% of logo size = enough clearance
+  // Shift = full logo height + 2x margin so the logo bbox sits entirely inside
+  // the cleared (sampled background) strip at the top.
+  // Logo bbox = margin + logo_size_px + margin → min shift is logo_size_px + 2*margin.
+  const shiftPx = brand.logo_size_px + brand.logo_margin_px * 2;
 
-  // Sample the top-left 1px strip to get the background color
+  // Sample 5px strip from the top to get a more robust background color
+  // (the very first row could contain text antialiasing).
+  const sampleH = Math.min(5, imgH);
   const topStrip = await sharp(imageBuffer)
-    .extract({ left: 0, top: 0, width: imgW, height: 1 })
+    .extract({ left: 0, top: 0, width: imgW, height: sampleH })
     .resize(1, 1)
     .raw()
     .toBuffer();
@@ -498,7 +494,8 @@ export async function clearLogoZone(
   const bgG = topStrip[1] || 255;
   const bgB = topStrip[2] || 255;
 
-  // Create canvas with sampled background color, paste image shifted down
+  // Create canvas with sampled background color, paste image shifted down.
+  // The image content shifts down by shiftPx; the bottom shiftPx is cropped.
   const shifted = await sharp({
     create: {
       width: imgW,

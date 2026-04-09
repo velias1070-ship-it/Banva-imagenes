@@ -286,40 +286,31 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
         finalBuffer = sourceBuffer;
       }
 
-      // Always apply Sharp logo overlay — pass detected text elements for smart positioning
+      // Always apply Sharp logo overlay at the brand book position.
+      // If the logo zone has visible content (text), shift the image down via
+      // clearLogoZone first to make room. The logo NEVER moves away from the
+      // brand book corner — content is shifted instead.
       let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
       if (brand) {
-        // Re-detect text on the FINAL image (Gemini may have moved things)
-        let finalTextElements: import('@/lib/brand').TextElement[] | null = null;
-        try {
-          const ta = await analyzeTextElements(imageBuffer.toString('base64'), 'image/png');
-          if (ta?.elements?.length) finalTextElements = ta.elements;
-        } catch {}
-        // Decide if logo will be overridden away from brand book.
-        // Two conditions BOTH must be true:
-        //  1. Text detected at top zone (general signal)
-        //  2. The specific logo bounding box has visible content (busyness check)
-        // This prevents over-firing when Gemini did move the text out of the
-        // logo zone (text is still "at top" but the corner itself is clear).
-        const topTextDetected = !!finalTextElements?.some((el) => el.position === 'top');
+        // Detect if the logo bounding box has visible content (text/edges)
         const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-        let willOverride = false;
+        let zoneCleared = false;
         let zoneBusyness = 0;
-        if (topTextDetected && logoAtTop) {
+        if (logoAtTop) {
           const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
           zoneBusyness = zoneCheck.busyness;
-          willOverride = !zoneCheck.clear;
-          if (willOverride) {
-            logPipelineEvent(jobId, 'BRAND_LOGO_OVERRIDE', `logo zone busy (stddev ${zoneBusyness.toFixed(1)}) — moving away from ${brand.logo_position}`);
+          if (!zoneCheck.clear) {
+            // Shift content down to clear the logo zone, then logo goes top-left as configured
+            imageBuffer = await clearLogoZone(imageBuffer, brand);
+            zoneCleared = true;
+            logPipelineEvent(jobId, 'BRAND_ZONE_CLEARED', `shifted content down to free ${brand.logo_position} (stddev was ${zoneBusyness.toFixed(1)})`);
           } else {
             logPipelineEvent(jobId, 'BRAND_LOGO_ZONE_CLEAR', `keeping ${brand.logo_position} (stddev ${zoneBusyness.toFixed(1)})`);
           }
         }
-        // Pass null when zone is clear so overlayBrandLogo uses brand book position;
-        // pass real text elements when zone is busy so smart corner kicks in.
-        const elementsForOverlay = willOverride ? finalTextElements : null;
-        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', elementsForOverlay));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { text_elements: finalTextElements?.length || 0, overridden: willOverride, zone_busyness: Math.round(zoneBusyness) });
+        // Always pass null elements — logo stays at brand book position, no smart corner.
+        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null));
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { zone_cleared: zoneCleared, zone_busyness: Math.round(zoneBusyness) });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
@@ -707,11 +698,17 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: shift overlapping text + overlay logo
+    // Brand post-processing: shift content if logo zone is busy + overlay logo
     if (brand) {
       try {
-        imageBuffer = await clearLogoZone(imageBuffer, brand, textElements);
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, textElements);
+        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+        if (logoAtTop) {
+          const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
+          if (!zoneCheck.clear) {
+            imageBuffer = await clearLogoZone(imageBuffer, brand);
+          }
+        }
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, null);
         logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name);
       } catch (brandErr) {
         logPipelineEvent(jobId, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });

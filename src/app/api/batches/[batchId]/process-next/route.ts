@@ -12,7 +12,7 @@ import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
-import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
+import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, isLogoZoneClear, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
@@ -839,11 +839,17 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: shift overlapping text + overlay logo
+    // Brand post-processing: shift content if logo zone is busy + overlay logo
     if (brand) {
       try {
-        imageBuffer = await clearLogoZone(imageBuffer, brand, textElements);
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, textElements);
+        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+        if (logoAtTop) {
+          const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
+          if (!zoneCheck.clear) {
+            imageBuffer = await clearLogoZone(imageBuffer, brand);
+          }
+        }
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, null);
         logPipelineEvent(job.id, 'BRAND_OVERLAY', brand.name);
       } catch (brandErr) {
         logPipelineEvent(job.id, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });
