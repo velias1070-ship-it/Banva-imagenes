@@ -63,6 +63,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const inventoryDb = getInventorySupabase();
   const body = await request.json().catch(() => ({}));
   const filterSwatchIds: string[] | undefined = body.swatch_ids;
+  const force: boolean = body.force === true;
 
   // Get project
   const { data: project } = await supabase
@@ -185,10 +186,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
       continue;
     }
 
-    // Skip if already imported from Cannon
-    if (swatchesWithCannonImport.has(swatch.id)) {
+    // Skip if already imported from Cannon (unless force=true)
+    if (!force && swatchesWithCannonImport.has(swatch.id)) {
       results.push({ swatch: swatch.name, sku: swatch.sku_suffix, images_imported: 0, errors: ['Ya importado de Cannon'] });
       continue;
+    }
+
+    // Force mode: delete previous Cannon imports for this swatch
+    if (force && swatchesWithCannonImport.has(swatch.id)) {
+      const { data: oldJobs } = await supabase
+        .from('generation_jobs')
+        .select('id, output_storage_path, prompt_metadata')
+        .in('batch_id', batchIds)
+        .eq('swatch_id', swatch.id)
+        .eq('status', 'approved');
+      for (const oldJob of oldJobs || []) {
+        const meta = oldJob.prompt_metadata as Record<string, unknown> | null;
+        if (meta?.strategy === 'cannon_import') {
+          if (oldJob.output_storage_path) {
+            await supabase.storage.from('images').remove([oldJob.output_storage_path]);
+          }
+          await supabase.from('generation_jobs').delete().eq('id', oldJob.id);
+        }
+      }
     }
 
     const swatchResult = { swatch: swatch.name, sku: swatch.sku_suffix, images_imported: 0, errors: [] as string[] };

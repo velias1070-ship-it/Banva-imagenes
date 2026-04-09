@@ -738,7 +738,7 @@ export default function ResultsPage() {
       const res = await fetch(`/api/projects/${id}/import-cannon`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ swatch_ids: [swatchId] }),
+        body: JSON.stringify({ swatch_ids: [swatchId], force: true }),
       });
       const data = await res.json();
       if (res.ok) {
