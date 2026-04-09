@@ -97,21 +97,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const batchIds = (allBatches || []).map((b) => b.id);
 
+  // Delete existing ML import jobs for this swatch (re-import = overwrite)
   if (batchIds.length > 0) {
     const { data: existingJobs } = await supabase
       .from('generation_jobs')
       .select('id, prompt_metadata')
       .in('batch_id', batchIds)
-      .eq('swatch_id', swatchId)
-      .eq('status', 'approved');
+      .eq('swatch_id', swatchId);
 
-    const alreadyImported = (existingJobs || []).some((j) => {
-      const meta = j.prompt_metadata as Record<string, unknown> | null;
-      return meta?.strategy === 'ml_import';
-    });
+    const oldImportIds = (existingJobs || [])
+      .filter((j) => {
+        const meta = j.prompt_metadata as Record<string, unknown> | null;
+        return meta?.strategy === 'ml_import';
+      })
+      .map((j) => j.id);
 
-    if (alreadyImported) {
-      return NextResponse.json({ error: 'Ya se importaron fotos de ML para esta variante' }, { status: 409 });
+    if (oldImportIds.length > 0) {
+      await supabase.from('generation_jobs').delete().in('id', oldImportIds);
+      console.log(`[import-ml] Deleted ${oldImportIds.length} old ML imports for swatch ${swatchId} — re-importing`);
     }
   }
 
