@@ -234,13 +234,14 @@ IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text typography/fonts to match the brand fonts below
 - Keep the same text content, only change COLOR and FONT
 
-LOGO ZONE — A 200x200px logo will be added in the top-left corner in post-processing. If there is text in that top-left zone, MOVE that text horizontally (to the right) or vertically (slightly down within the same area) to leave the top-left 250x250px clear. DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible — only reposition text that overlaps with the top-left corner.
+TEXT POSITION — If any text exists in the top-left 250x250px corner area, MOVE that text horizontally to the right so it starts after x=260px. Keep the natural background of Image 1 visible in the top-left corner — do NOT paint anything new there, do NOT add a white rectangle, do NOT add a colored box, do NOT add any plate. The top-left corner must keep the EXACT same background pixels as Image 1 (wood, wall, fabric, whatever was there).
 
 CRITICAL CONSTRAINTS:
 - Keep image dimensions identical (1200x1200)
 - ALL elements from Image 1 must appear in the output (no cropping at edges, no missing bottom content)
-- Only change: text colors, text fonts, and reposition text in the top-left logo zone
-- Do NOT change: product, scene, background, people, layout outside the logo zone
+- Only change: text colors, text fonts, and reposition text that overlaps the top-left corner
+- Do NOT add backgrounds, plates, rectangles, or boxes anywhere
+- Do NOT change: product, scene, background, people, layout
 
 Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', brandTextElements, 'full') : ''}`,
           temperature: 0.2,
