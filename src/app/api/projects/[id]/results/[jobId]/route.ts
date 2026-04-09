@@ -193,6 +193,19 @@ async function regenerateJob(
       try {
         logPipelineEvent(jobId, 'BRAND_GEMINI_TRY', 'attempting Gemini BRAND_ONLY');
         const sourceB64 = sourceBuffer.toString('base64');
+
+        // Detect text elements so brand prompt knows what to shift away from logo zone
+        let brandTextElements: import('@/lib/brand').TextElement[] | null = null;
+        if (brand && (brand.logo_position === 'top-left' || brand.logo_position === 'top-right')) {
+          try {
+            const ta = await analyzeTextElements(sourceB64, 'image/png');
+            if (ta?.elements?.length) {
+              brandTextElements = ta.elements;
+              logPipelineEvent(jobId, 'BRAND_TEXT_DETECTED', `${ta.elements.length} elements`);
+            }
+          } catch {}
+        }
+
         const geminiResult = await generateImage({
           heroImageBase64: sourceB64,
           heroMimeType: 'image/png',
@@ -207,7 +220,7 @@ IMPORTANT — You MUST apply the brand changes specified below:
 These changes are MANDATORY, not optional.
 CRITICAL: Do NOT crop, cut, or lose ANY content. ALL elements from Image 1 must appear in the output — including edges, borders, and bottom content.
 Everything else (product, background, people, objects) must remain as in Image 1.
-Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', null, 'full') : ''}`,
+Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', brandTextElements, 'full') : ''}`,
           temperature: 0.2,
         });
 
