@@ -164,7 +164,13 @@ async function regenerateJob(
     // ── BRAND_ONLY: Sharp-only (logo overlay). Skip Gemini entirely. ──
     // Gemini BRAND_ONLY causes: text crop, font names rendered as text, logo duplication.
     if (isBrandOnly) {
-      let imageBuffer: Buffer = Buffer.from(heroBuffer);
+      // Use the ORIGINAL source image, not a previous corrupted output.
+      // ML imports (no hero): swatch is the original image.
+      // Generated images: hero is the original composition.
+      const originalPath = isMLImport ? swatch.storage_path : (heroShot?.storage_path || existingOutput);
+      const { data: originalData } = await supabase.storage.from('images').download(originalPath);
+      if (!originalData) throw new Error('Failed to download original image for BRAND_ONLY');
+      let imageBuffer: Buffer = Buffer.from(await originalData.arrayBuffer());
       // Load brand for logo overlay
       let brand: BrandConfig | null = null;
       if (brandId) {
