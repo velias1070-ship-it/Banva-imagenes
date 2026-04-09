@@ -250,20 +250,32 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
         });
 
         if (geminiResult.success && geminiResult.imageBase64) {
-          // Quick check: compare image sizes — if Gemini output is much smaller, likely cropped
+          // Verify Gemini output is not cropped using PIXEL DIMENSIONS, not byte size.
+          // Byte size is unreliable: a clean recolor of a busy PNG can shrink bytes
+          // to 20% even when the image is full-size, because brand colors flatten
+          // text regions and Gemini compresses differently than the source.
           const geminiBuffer = Buffer.from(geminiResult.imageBase64, 'base64');
-          const sourceSize = sourceBuffer.length;
-          const geminiSize = geminiBuffer.length;
-          const sizeRatio = geminiSize / sourceSize;
+          const sharp = (await import('sharp')).default;
+          const [srcMeta, gemMeta] = await Promise.all([
+            sharp(sourceBuffer).metadata(),
+            sharp(geminiBuffer).metadata(),
+          ]);
+          const srcW = srcMeta.width || 1;
+          const srcH = srcMeta.height || 1;
+          const gemW = gemMeta.width || 0;
+          const gemH = gemMeta.height || 0;
+          const widthRatio = gemW / srcW;
+          const heightRatio = gemH / srcH;
+          // Cropped if EITHER dimension fell below 70% of source
+          const cropped = widthRatio < 0.7 || heightRatio < 0.7;
 
-          // If output is less than 30% of source size, likely severely cropped/corrupted
-          if (sizeRatio < 0.3) {
-            logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', `size ratio ${sizeRatio.toFixed(2)} — likely cropped`);
+          if (cropped) {
+            logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', `${gemW}x${gemH} vs source ${srcW}x${srcH} — cropped`);
             finalBuffer = sourceBuffer;
           } else {
             finalBuffer = geminiBuffer;
             usedGemini = true;
-            logPipelineEvent(jobId, 'BRAND_GEMINI_OK', `preserved (size ratio ${sizeRatio.toFixed(2)})`);
+            logPipelineEvent(jobId, 'BRAND_GEMINI_OK', `${gemW}x${gemH} (source ${srcW}x${srcH})`);
           }
         } else {
           logPipelineEvent(jobId, 'BRAND_GEMINI_FAILED', geminiResult.error || 'no image');
