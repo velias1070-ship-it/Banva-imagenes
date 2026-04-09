@@ -17,6 +17,7 @@ interface SearchResult {
   permalink: string;
   picture_count: number;
   thumbnail: string | null;
+  sku: string | null;
 }
 
 interface SourceDetail {
@@ -103,6 +104,7 @@ export default function ReplicatePage() {
             permalink: data.permalink,
             picture_count: data.pictures.length,
             thumbnail: data.pictures[0]?.url || null,
+            sku: data.sku || null,
           }]);
           setTotalResults(1);
           setSearching(false);
@@ -341,6 +343,11 @@ export default function ReplicatePage() {
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-[10px] text-muted-foreground font-mono">{listing.item_id}</span>
+                        {listing.sku && (
+                          <span className="text-[10px] font-mono text-blue-700 bg-blue-50 px-1 rounded">
+                            SKU: {listing.sku}
+                          </span>
+                        )}
                         <Badge variant="secondary" className={`text-[9px] h-4 px-1 ${statusColor(listing.status)}`}>
                           {listing.status}
                         </Badge>

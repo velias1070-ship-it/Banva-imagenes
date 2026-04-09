@@ -16,6 +16,16 @@ interface MlItemResponse {
   status: string;
   permalink: string;
   pictures: Array<{ id: string; secure_url: string; size: string }>;
+  seller_custom_field?: string | null;
+  attributes?: Array<{ id: string; value_name?: string | null }>;
+}
+
+function extractSku(item: MlItemResponse): string | null {
+  // Try seller_custom_field first (legacy)
+  if (item.seller_custom_field) return item.seller_custom_field;
+  // Then SELLER_SKU attribute
+  const skuAttr = item.attributes?.find((a) => a.id === 'SELLER_SKU');
+  return skuAttr?.value_name || null;
 }
 
 const SELLER_ID = '1953806321';
@@ -77,7 +87,7 @@ export async function GET(request: NextRequest) {
     for (let i = 0; i < allIds.length; i += 20) {
       const batchIds = allIds.slice(i, i + 20);
       const batch = await mlGet<Array<{ code: number; body: MlItemResponse }>>(
-        `/items?ids=${batchIds.join(',')}&attributes=id,title,status,permalink,pictures`
+        `/items?ids=${batchIds.join(',')}&attributes=id,title,status,permalink,pictures,seller_custom_field,attributes`
       );
       if (batch) allItems.push(...batch);
     }
@@ -91,6 +101,7 @@ export async function GET(request: NextRequest) {
         permalink: r.body.permalink,
         picture_count: r.body.pictures?.length || 0,
         thumbnail: r.body.pictures?.[0]?.secure_url || null,
+        sku: extractSku(r.body),
       }))
       // Sort: active first, then paused, then closed
       .sort((a, b) => {
@@ -114,7 +125,7 @@ export async function GET(request: NextRequest) {
   }
 
   const item = await mlGet<MlItemResponse>(
-    `/items/${itemId}?attributes=id,title,status,permalink,pictures`
+    `/items/${itemId}?attributes=id,title,status,permalink,pictures,seller_custom_field,attributes`
   );
   if (!item) {
     return NextResponse.json({ error: 'Failed to fetch ML item' }, { status: 500 });
@@ -125,6 +136,7 @@ export async function GET(request: NextRequest) {
     title: item.title,
     status: item.status,
     permalink: item.permalink,
+    sku: extractSku(item),
     pictures: (item.pictures || []).map((p) => ({
       id: p.id,
       url: p.secure_url,
