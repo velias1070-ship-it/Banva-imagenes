@@ -234,12 +234,14 @@ IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text typography/fonts to match the brand fonts below
 - Keep the same text content, only change COLOR and FONT
 
-TEXT POSITION — If any text exists in the top-left 250x250px corner area, MOVE that text horizontally to the right so it starts after x=260px. Keep the natural background of Image 1 visible in the top-left corner — do NOT paint anything new there, do NOT add a white rectangle, do NOT add a colored box, do NOT add any plate. The top-left corner must keep the EXACT same background pixels as Image 1 (wood, wall, fabric, whatever was there).
+REPOSITION TITLE — MANDATORY: There is a title text near the top of Image 1. SHIFT it horizontally to the right by approximately 260 pixels so it does not occupy the top-left 250x250px corner. The title and subtitle must START at x=260px (not from the left edge). This is REQUIRED — the top-left 250x250px area must have NO text.
+
+KEEP THE BACKGROUND NATURAL — The top-left corner where the title used to be should now show the SAME background pixels as Image 1 (the wood headboard, wall, fabric, etc. — whatever is naturally there). Do NOT paint a white rectangle. Do NOT add a colored box. Do NOT add any plate or background. Just remove the text from that area and let the original background show through.
 
 CRITICAL CONSTRAINTS:
 - Keep image dimensions identical (1200x1200)
 - ALL elements from Image 1 must appear in the output (no cropping at edges, no missing bottom content)
-- Only change: text colors, text fonts, and reposition text that overlaps the top-left corner
+- The title text MUST be moved right (shift x +260px), not deleted
 - Do NOT add backgrounds, plates, rectangles, or boxes anywhere
 - Do NOT change: product, scene, background, people, layout
 
