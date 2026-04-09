@@ -13,7 +13,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
-import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, type BrandConfig } from '@/lib/brand';
+import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, isLogoZoneClear, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
@@ -283,15 +283,31 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
           const ta = await analyzeTextElements(imageBuffer.toString('base64'), 'image/png');
           if (ta?.elements?.length) finalTextElements = ta.elements;
         } catch {}
-        // Decide if logo will be overridden away from brand book due to text overlap
+        // Decide if logo will be overridden away from brand book.
+        // Two conditions BOTH must be true:
+        //  1. Text detected at top zone (general signal)
+        //  2. The specific logo bounding box has visible content (busyness check)
+        // This prevents over-firing when Gemini did move the text out of the
+        // logo zone (text is still "at top" but the corner itself is clear).
         const topTextDetected = !!finalTextElements?.some((el) => el.position === 'top');
         const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-        const willOverride = topTextDetected && logoAtTop;
-        if (willOverride) {
-          logPipelineEvent(jobId, 'BRAND_LOGO_OVERRIDE', `text at top — moving logo away from ${brand.logo_position}`);
+        let willOverride = false;
+        let zoneBusyness = 0;
+        if (topTextDetected && logoAtTop) {
+          const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
+          zoneBusyness = zoneCheck.busyness;
+          willOverride = !zoneCheck.clear;
+          if (willOverride) {
+            logPipelineEvent(jobId, 'BRAND_LOGO_OVERRIDE', `logo zone busy (stddev ${zoneBusyness.toFixed(1)}) — moving away from ${brand.logo_position}`);
+          } else {
+            logPipelineEvent(jobId, 'BRAND_LOGO_ZONE_CLEAR', `keeping ${brand.logo_position} (stddev ${zoneBusyness.toFixed(1)})`);
+          }
         }
-        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', finalTextElements));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { text_elements: finalTextElements?.length || 0, overridden: willOverride });
+        // Pass null when zone is clear so overlayBrandLogo uses brand book position;
+        // pass real text elements when zone is busy so smart corner kicks in.
+        const elementsForOverlay = willOverride ? finalTextElements : null;
+        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', elementsForOverlay));
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { text_elements: finalTextElements?.length || 0, overridden: willOverride, zone_busyness: Math.round(zoneBusyness) });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;

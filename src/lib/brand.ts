@@ -228,6 +228,42 @@ async function getCornerBusyness(
 }
 
 /**
+ * Check if the brand book's preferred logo zone is clear of content.
+ * Measures pixel variance (stddev) of the logo bounding box region.
+ * Used to decide whether to override the brand book position when text
+ * is detected in the same vertical zone but may have been moved sideways.
+ *
+ * Returns true if the zone is empty enough for the logo (low variance).
+ * Returns false if the zone has visible content (text, product edges, etc).
+ */
+export async function isLogoZoneClear(imageBuffer: Buffer, brand: BrandConfig): Promise<{ clear: boolean; busyness: number }> {
+  const metadata = await sharp(imageBuffer).metadata();
+  const imgWidth = metadata.width || 1200;
+  const imgHeight = metadata.height || 1200;
+
+  const margin = brand.logo_margin_px;
+  const regionW = brand.logo_size_px + margin * 2;
+  const regionH = brand.logo_size_px + margin * 2;
+
+  const busyness = await getCornerBusyness(
+    imageBuffer,
+    imgWidth,
+    imgHeight,
+    brand.logo_position,
+    regionW,
+    regionH,
+    margin,
+  );
+
+  // Threshold tuned empirically:
+  //  - empty wood/wall/sky background: stddev ~ 5-20
+  //  - text overlay in region: stddev > 30
+  //  - product/model with detail: stddev > 40
+  const CLEAR_THRESHOLD = 25;
+  return { clear: busyness < CLEAR_THRESHOLD, busyness };
+}
+
+/**
  * Find the best corner for the logo — the one with least content.
  * Prefers the configured corner if it's reasonably empty.
  */
