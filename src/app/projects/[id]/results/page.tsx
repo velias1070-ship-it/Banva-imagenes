@@ -90,6 +90,10 @@ export default function ResultsPage() {
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
   const [editingJob, setEditingJob] = useState<string | null>(null);
   const [importingCannon, setImportingCannon] = useState(false);
+  const [importingCannonSwatch, setImportingCannonSwatch] = useState<Set<string>>(new Set());
+  // Project where per-swatch Cannon import button is enabled
+  const PER_SWATCH_CANNON_PROJECT = 'f047dcc1-1c96-440c-99af-e7c0af622f89';
+  const showPerSwatchCannon = id === PER_SWATCH_CANNON_PROJECT;
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
@@ -725,6 +729,39 @@ export default function ResultsPage() {
       }
     } catch {
       toast.error('Error de conexion');
+    }
+  }
+
+  async function handleImportCannonForSwatch(swatchId: string) {
+    setImportingCannonSwatch((prev) => new Set(prev).add(swatchId));
+    try {
+      const res = await fetch(`/api/projects/${id}/import-cannon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ swatch_ids: [swatchId] }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const detail = data.details?.[0];
+        if (detail?.images_imported > 0) {
+          toast.success(`${detail.images_imported} imagenes importadas de Cannon`);
+          await fetchResults();
+        } else if (detail?.errors?.length) {
+          toast.error(detail.errors[0]);
+        } else {
+          toast.error('No se importaron imagenes');
+        }
+      } else {
+        toast.error(data.error || 'Error importando');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setImportingCannonSwatch((prev) => {
+        const next = new Set(prev);
+        next.delete(swatchId);
+        return next;
+      });
     }
   }
 
@@ -1605,6 +1642,26 @@ export default function ResultsPage() {
                             )}
                             <span className="hidden sm:inline">Traer de ML</span>
                           </Button>
+                          {showPerSwatchCannon && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 gap-1.5 text-xs text-muted-foreground"
+                              disabled={importingCannonSwatch.has(swatchId)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleImportCannonForSwatch(swatchId);
+                              }}
+                              title="Importar fotos de Cannon para este SKU"
+                            >
+                              {importingCannonSwatch.has(swatchId) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Download className="h-3.5 w-3.5" />
+                              )}
+                              <span className="hidden sm:inline">Cannon</span>
+                            </Button>
+                          )}
                           {group.ml_listing.permalink && (
                             <a
                               href={group.ml_listing.permalink}
