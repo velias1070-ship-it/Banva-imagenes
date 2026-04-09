@@ -75,11 +75,8 @@ export default function GeneratePage() {
       const proj = await projRes.json();
       if (proj.brand_id) {
         setHasBrand(true);
-        // Auto-enable brand for all heroes
-        if (heroStatusRes.ok) {
-          const hData: HeroWithStatus[] = await heroStatusRes.json();
-          setBrandHeroIds(new Set(hData.map((h) => h.id)));
-        }
+        // Brand OFF by default — user opts in per hero via checkbox
+        setBrandHeroIds(new Set());
       }
     }
   }, [id]);
