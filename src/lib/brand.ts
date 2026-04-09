@@ -90,14 +90,9 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
   const hasTypography = hasPerRoleTypography || brand.typography?.trim();
   const hasGuidelines = brand.prompt_guidelines?.trim();
   const hasColors = brand.primary_color || brand.secondary_color || brand.accent_color;
-  const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-  const isInfoShot = shotType === 'infografia';
   const hasTextElements = textElements && textElements.length > 0;
-  // Shift text when logo is at top AND hero has text in the top zone
-  const hasTopText = hasTextElements && textElements!.some(el => el.position === 'top');
-  const needsTextShift = logoAtTop && (hasTopText || isInfoShot);
 
-  if (!hasTypography && !hasGuidelines && !needsTextShift && !hasColors) {
+  if (!hasTypography && !hasGuidelines && !hasColors) {
     return '';
   }
 
@@ -107,13 +102,9 @@ export function buildBrandPromptSection(brand: BrandConfig, shotType?: string, t
     ? `\n\n=== INSTRUCCIONES DE MARCA (PRIORIDAD MAXIMA) ===`
     : `\n\n=== INSTRUCCIONES DE TEXTO ===`);
 
-  // Text shift instruction — move text out of logo zone but NEVER crop content
-  if (needsTextShift) {
-    const clearSpace = brand.logo_size_px + brand.logo_margin_px + 10;
-    const side = brand.logo_position === 'top-left' ? 'superior izquierda' : 'superior derecha';
-    const sideShort = brand.logo_position === 'top-left' ? 'izquierdo' : 'derecho';
-    parts.push(`POSICION DE TEXTO: Un logo de ${brand.logo_size_px}px se agrega en post-proceso en la esquina ${side}. Si hay texto en los primeros ${clearSpace}px del lado ${sideShort}, muévelo justo debajo de esa zona. PERO: NO deslices toda la imagen hacia abajo. NO recortes ni pierdas contenido en la parte inferior. TODO el contenido original debe seguir visible — solo reposiciona el texto que choca con la zona del logo.`);
-  }
+  // Logo is overlaid by Sharp in post-process — no need for Gemini to shift text.
+  // Previous instruction to "move text out of logo zone" caused Gemini to push
+  // content down and crop the bottom of the image.
 
   parts.push(`OBLIGATORIO: Si la imagen contiene CUALQUIER texto visible, DEBES aplicar estas reglas:`);
   if (mode === 'full') {
