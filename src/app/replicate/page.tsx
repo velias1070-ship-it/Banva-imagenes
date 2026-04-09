@@ -87,11 +87,9 @@ export default function ReplicatePage() {
     if (!q) return;
     setSearching(true);
     setListings([]);
-    setSourceId(null);
-    setSourceDetail(null);
-    setSelectedPicIds(new Set());
-    setTargetIds(new Set());
     setResults(null);
+    // Keep sourceId, sourceDetail, selectedPicIds, targetIds — user may search
+    // for the destination after selecting the source.
     try {
       // Try as SKU first if it looks like one
       if (/^[A-Za-z0-9_.-]+$/.test(q) && !q.includes(' ')) {
