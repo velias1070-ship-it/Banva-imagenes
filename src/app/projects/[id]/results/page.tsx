@@ -809,6 +809,19 @@ export default function ResultsPage() {
     }
   }
 
+  async function handleUseAsSwatch(jobId: string) {
+    if (!confirm('¿Usar esta imagen como nuevo swatch? Las futuras generaciones usarán esta imagen como referencia de diseño.')) return;
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}/use-as-swatch`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      await res.json();
+      toast.success('Swatch actualizado — futuras generaciones usarán esta imagen');
+      fetchResults();
+    } catch {
+      toast.error('Error al actualizar swatch');
+    }
+  }
+
   async function handleGenerate15P(jobId: string) {
     toast.info('Generando variante 1.5 plaza...');
     try {
@@ -1105,6 +1118,18 @@ export default function ResultsPage() {
                 >
                   <Palette className="h-3 w-3 mr-1" />
                   Brand
+                </Button>
+              )}
+              {job.status === 'approved' && job.output_storage_path && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs text-orange-600"
+                  onClick={() => handleUseAsSwatch(job.id)}
+                  title="Usar esta imagen como swatch para futuras generaciones"
+                >
+                  <Palette className="h-3 w-3 mr-1" />
+                  Swatch
                 </Button>
               )}
               {job.status !== 'approved' && (
