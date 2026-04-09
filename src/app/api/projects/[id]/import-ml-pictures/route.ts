@@ -97,23 +97,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const batchIds = (allBatches || []).map((b) => b.id);
 
-  // Find ML pictures already imported for this swatch (skip duplicates by ml_picture_id)
-  const alreadyImportedPicIds = new Set<string>();
+  // Map ml_picture_id → job_id for existing ML imports of this swatch (will be replaced)
+  const existingByPicId = new Map<string, string>();
   if (batchIds.length > 0) {
     const { data: existingJobs } = await supabase
       .from('generation_jobs')
-      .select('prompt_metadata')
+      .select('id, prompt_metadata')
       .in('batch_id', batchIds)
       .eq('swatch_id', swatchId);
 
     for (const j of existingJobs || []) {
       const meta = j.prompt_metadata as Record<string, unknown> | null;
       if (meta?.strategy === 'ml_import' && typeof meta?.ml_picture_id === 'string') {
-        alreadyImportedPicIds.add(meta.ml_picture_id);
+        existingByPicId.set(meta.ml_picture_id, j.id);
       }
-    }
-    if (alreadyImportedPicIds.size > 0) {
-      console.log(`[import-ml] ${alreadyImportedPicIds.size} pictures already imported for swatch ${swatchId} — will skip`);
     }
   }
 
@@ -147,20 +144,22 @@ export async function POST(request: NextRequest, context: RouteContext) {
     batchId = newBatch!.id;
   }
 
-  // Filter pictures: by selection if provided, then skip ones already imported
-  const requestedPictures = selectedPictureIds?.length
+  // Filter pictures by selection if provided
+  const picturesToImport = selectedPictureIds?.length
     ? item.pictures.filter((p) => selectedPictureIds.includes(p.id))
     : item.pictures;
 
-  const picturesToImport = requestedPictures.filter((p) => !alreadyImportedPicIds.has(p.id));
-  const skippedCount = requestedPictures.length - picturesToImport.length;
-
   if (!picturesToImport.length) {
-    return NextResponse.json({
-      error: skippedCount > 0
-        ? `Las ${skippedCount} fotos seleccionadas ya fueron importadas anteriormente`
-        : 'None of the selected pictures were found on the ML listing',
-    }, { status: 400 });
+    return NextResponse.json({ error: 'None of the selected pictures were found on the ML listing' }, { status: 400 });
+  }
+
+  // Delete jobs for pictures we're about to re-import (overwrite with fresh copy)
+  const idsToReplace = picturesToImport
+    .map((p) => existingByPicId.get(p.id))
+    .filter((id): id is string => !!id);
+  if (idsToReplace.length > 0) {
+    await supabase.from('generation_jobs').delete().in('id', idsToReplace);
+    console.log(`[import-ml] Replacing ${idsToReplace.length} existing pictures with fresh copies`);
   }
 
   // Download and import each picture
