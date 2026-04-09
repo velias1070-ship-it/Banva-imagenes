@@ -172,12 +172,27 @@ async function regenerateJob(
 
     // ── BRAND_ONLY: Try Gemini (colors + typography + text shift), fallback to Sharp (logo only) ──
     if (isBrandOnly) {
-      const sourcePath = existingOutput || (isMLImport ? swatch.storage_path : heroShot?.storage_path);
-      logPipelineEvent(jobId, 'BRAND_START', isMLImport ? 'ML import' : 'generated', { source: sourcePath });
+      // Use pre-brand backup if it exists (avoids accumulating logos on multiple Brand clicks)
+      const preBrandPath = `projects/${projectId}/generated/${jobId}_pre_brand.png`;
+      let sourcePath: string;
+      let sourceBuffer: Buffer;
 
-      const { data: sourceData } = await supabase.storage.from('images').download(sourcePath!);
-      if (!sourceData) throw new Error('Failed to download source image for BRAND_ONLY');
-      const sourceBuffer = Buffer.from(await sourceData.arrayBuffer());
+      const { data: preBrandData } = await supabase.storage.from('images').download(preBrandPath);
+      if (preBrandData) {
+        // Backup exists from previous Brand click — use it (clean version without logo)
+        sourcePath = preBrandPath;
+        sourceBuffer = Buffer.from(await preBrandData.arrayBuffer());
+        logPipelineEvent(jobId, 'BRAND_START', 'using pre-brand backup', { source: preBrandPath });
+      } else {
+        // First Brand click — use existing output, then save backup before applying logo
+        sourcePath = existingOutput || (isMLImport ? swatch.storage_path : heroShot?.storage_path)!;
+        const { data: sourceData } = await supabase.storage.from('images').download(sourcePath);
+        if (!sourceData) throw new Error('Failed to download source image for BRAND_ONLY');
+        sourceBuffer = Buffer.from(await sourceData.arrayBuffer());
+        // Save backup for future Brand clicks
+        await supabase.storage.from('images').upload(preBrandPath, sourceBuffer, { contentType: 'image/png', upsert: true });
+        logPipelineEvent(jobId, 'BRAND_START', isMLImport ? 'ML import' : 'generated', { source: sourcePath, backup_saved: true });
+      }
 
       // Load brand
       let brand: BrandConfig | null = null;
