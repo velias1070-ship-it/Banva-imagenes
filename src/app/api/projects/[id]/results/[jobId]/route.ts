@@ -322,20 +322,30 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
             continue;
           }
 
+          // CRITICAL: verify on the SAME pixel space we will use for the overlay.
+          // ensureOutputSpec resizes the Gemini buffer to 1200x1200. The bbox
+          // detection MUST run on the resized buffer, otherwise Gemini Flash may
+          // miss text on the smaller raw output and report a false 0% overlap
+          // even when the title is clearly at top-left.
+          const resizedBuffer = await ensureOutputSpec(geminiBuffer, 1200);
+          const resizedMeta = await sharp(resizedBuffer).metadata();
+          const rW = resizedMeta.width || 1200;
+          const rH = resizedMeta.height || 1200;
+
           // Verify: detect text bboxes and measure overlap with brand book logo zone
           let attemptOverlap = 0;
           let attemptBboxes: Array<{ x: number; y: number; width: number; height: number; text: string }> | null = null;
           if (brand) {
             try {
               const detected = await detectTextBboxes(
-                geminiBuffer.toString('base64'),
+                resizedBuffer.toString('base64'),
                 'image/png',
-                gemW,
-                gemH,
+                rW,
+                rH,
               );
               if (detected && detected.length > 0) {
                 attemptBboxes = detected;
-                const choice = chooseBestCornerByBbox(gemW, gemH, brand, detected);
+                const choice = chooseBestCornerByBbox(rW, rH, brand, detected);
                 const brandBookEntry = choice.allCorners.find((c) => c.corner === brand.logo_position);
                 attemptOverlap = brandBookEntry ? brandBookEntry.overlap : 0;
               }
@@ -346,12 +356,16 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
           // Save bboxes from this attempt to feed into the next attempt's prompt
           lastFailedBboxes = attemptBboxes;
 
-          logPipelineEvent(jobId, 'BRAND_VERIFY', `attempt ${attempt}: ${gemW}x${gemH}, logo zone overlap ${(attemptOverlap * 100).toFixed(0)}%`);
+          // Log a sample bbox so we can see what Gemini detected (debugging false negatives)
+          const bboxSample = attemptBboxes && attemptBboxes.length > 0
+            ? `${attemptBboxes.length} bboxes, first="${attemptBboxes[0].text.replace(/\s+/g, ' ').slice(0, 40)}" at (${attemptBboxes[0].x},${attemptBboxes[0].y},${attemptBboxes[0].width}x${attemptBboxes[0].height})`
+            : 'no bboxes';
+          logPipelineEvent(jobId, 'BRAND_VERIFY', `attempt ${attempt}: ${rW}x${rH}, overlap ${(attemptOverlap * 100).toFixed(0)}% [${bboxSample}]`);
 
-          // Track best result so far
+          // Track best result so far — store the RESIZED buffer (already 1200x1200)
           if (attemptOverlap < bestOverlap) {
             bestOverlap = attemptOverlap;
-            bestBuffer = geminiBuffer;
+            bestBuffer = resizedBuffer;
             bestAttempt = attempt;
           }
 
@@ -371,15 +385,16 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       }
 
       if (bestBuffer) {
-        finalBuffer = bestBuffer;
+        finalBuffer = bestBuffer; // already 1200x1200 from per-attempt resize
         usedGemini = true;
         logPipelineEvent(jobId, 'BRAND_GEMINI_OK', `chosen attempt ${bestAttempt} (overlap ${(bestOverlap * 100).toFixed(0)}%)`);
       } else {
+        finalBuffer = await ensureOutputSpec(sourceBuffer, 1200);
         logPipelineEvent(jobId, 'BRAND_GEMINI_FALLBACK', 'all attempts failed — using source');
       }
 
-      // Logo ALWAYS at brand book position
-      let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
+      // Logo ALWAYS at brand book position (finalBuffer is already 1200x1200)
+      let imageBuffer = finalBuffer;
       if (brand) {
         imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null, brand.logo_position));
         logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position, final_overlap_pct: Math.round(bestOverlap * 100) });
