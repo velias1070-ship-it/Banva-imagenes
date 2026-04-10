@@ -43,20 +43,29 @@ function buildCannonImagePatterns(attrs: Record<string, string>): string[] {
 
   const patterns: string[] = [];
   if (isPolar) {
-    // With color: sabanaspolar1plazalisomalva (Liso Malva)
+    // Pattern by COLOR only: sabanaspolar1plazaaba (when FABRIC_DESIGN is generic "Estampado")
     if (colorCompact) {
+      patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
+    }
+    // Design + color: sabanaspolar1plazalisomalva (Liso Malva)
+    if (designCompact && colorCompact) {
       patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
     }
-    // Without color: sabanaspolar1plazaaba (Aba — design IS the variant)
-    patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
+    // Design only: sabanaspolar1plazaliso
+    if (designCompact) {
+      patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
+    }
   }
   if (threadCount) {
     patterns.push(`sabanas${sizeCompact}${threadCount}hilos${designCompact}`);
   }
   if (!patterns.length) {
     patterns.push(`sabanas${sizeCompact}144hilos${designCompact}`);
+    if (colorCompact) {
+      patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
+      patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
+    }
     patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
-    if (colorCompact) patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
   }
   return patterns;
 }
@@ -287,14 +296,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
       swatchResult.debug!.patterns = patterns;
 
       let workingPattern: string | null = null;
-      // Find first pattern where _1 exists
+      // Find first pattern where _1 exists AND is a real image (not Cannon's tiny placeholder)
       for (const p of patterns) {
         try {
-          const res = await fetch(cannonUrl(p, 1), { headers: { 'Accept': 'image/*' }, method: 'HEAD' });
-          if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
-            workingPattern = p;
-            break;
-          }
+          const res = await fetch(cannonUrl(p, 1), { headers: { 'Accept': 'image/*' } });
+          if (!res.ok) continue;
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.startsWith('image/')) continue;
+          const buffer = Buffer.from(await res.arrayBuffer());
+          // Cannon returns ~1.7KB placeholder for missing images. Real images are >5KB.
+          if (buffer.length < 5000) continue;
+          workingPattern = p;
+          break;
         } catch { /* try next */ }
       }
 
