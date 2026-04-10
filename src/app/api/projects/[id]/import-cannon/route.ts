@@ -70,8 +70,9 @@ function buildCannonImagePatterns(attrs: Record<string, string>): string[] {
   return patterns;
 }
 
-function cannonUrl(pattern: string, index: number): string {
-  return `https://cannonhome.cl/media/catalog/product/s/a/${pattern}_${index}.jpg`;
+function cannonUrl(pattern: string, index: number, variant?: number): string {
+  const suffix = variant ? `_${index}_${variant}` : `_${index}`;
+  return `https://cannonhome.cl/media/catalog/product/s/a/${pattern}${suffix}.jpg`;
 }
 
 /**
@@ -295,20 +296,39 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const patterns = buildCannonImagePatterns(attrs);
       swatchResult.debug!.patterns = patterns;
 
-      let workingPattern: string | null = null;
-      // Find first pattern where _1 exists AND is a real image (not Cannon's tiny placeholder)
-      for (const p of patterns) {
+      // Helper: fetch URL and return buffer if it's a real image (>5KB), null otherwise
+      const tryFetch = async (url: string): Promise<Buffer | null> => {
         try {
-          const res = await fetch(cannonUrl(p, 1), { headers: { 'Accept': 'image/*' } });
-          if (!res.ok) continue;
-          const contentType = res.headers.get('content-type') || '';
-          if (!contentType.startsWith('image/')) continue;
-          const buffer = Buffer.from(await res.arrayBuffer());
-          // Cannon returns ~1.7KB placeholder for missing images. Real images are >5KB.
-          if (buffer.length < 5000) continue;
+          const res = await fetch(url, { headers: { 'Accept': 'image/*' } });
+          if (!res.ok) return null;
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.startsWith('image/')) return null;
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (buf.length < 5000) return null;
+          return buf;
+        } catch {
+          return null;
+        }
+      };
+
+      let workingPattern: string | null = null;
+      let workingVariant: number | undefined;
+      // Find first pattern where _1_1 OR _1 returns a real image
+      for (const p of patterns) {
+        // Try product-specific variant first: _1_1.jpg
+        const specific = await tryFetch(cannonUrl(p, 1, 1));
+        if (specific) {
           workingPattern = p;
+          workingVariant = 1;
           break;
-        } catch { /* try next */ }
+        }
+        // Then try generic: _1.jpg
+        const generic = await tryFetch(cannonUrl(p, 1));
+        if (generic) {
+          workingPattern = p;
+          workingVariant = undefined;
+          break;
+        }
       }
 
       swatchResult.debug!.working = workingPattern;
@@ -320,7 +340,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
       // Download all available images for the working pattern
       for (let idx = 1; idx <= 10; idx++) {
-        const url = cannonUrl(workingPattern, idx);
+        const url = cannonUrl(workingPattern, idx, workingVariant);
         try {
           const res = await fetch(url, { headers: { 'Accept': 'image/*' } });
           const contentType = res.headers.get('content-type') || '';
