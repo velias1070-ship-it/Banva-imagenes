@@ -23,6 +23,83 @@ export interface TextElementAnalysis {
 }
 
 /**
+ * Bounding box in pixel coordinates (image space).
+ */
+export interface TextBbox {
+  text: string;
+  // Pixel coords (top-left origin)
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Detect bounding boxes of all text in an image using Gemini Flash.
+ * Returns pixel-space coordinates (converted from Gemini's 0-1000 normalized space).
+ *
+ * Used to determine if text overlaps a specific region (e.g. brand logo zone)
+ * without false positives from product/scene edges.
+ */
+export async function detectTextBboxes(
+  imageBase64: string,
+  imageMimeType: string,
+  imgWidth: number,
+  imgHeight: number,
+): Promise<TextBbox[] | null> {
+  try {
+    const result = await analyzeImages({
+      images: [{ base64: imageBase64, mimeType: imageMimeType }],
+      promptText: `For each text element visible in the image (titles, subtitles, captions, labels, watermarks, anything readable as text), return its bounding box.
+
+Use Gemini's standard normalized coordinate space: numbers from 0 to 1000, in [ymin, xmin, ymax, xmax] order, where 0 is the top/left edge and 1000 is the bottom/right edge.
+
+Group all letters that visually belong to the same text element (same line of a title, same paragraph) into one box. Two stacked words of the same title go in ONE box.
+
+If there is NO text visible, respond with: { "boxes": [] }
+
+Respond with ONLY a valid JSON object, no markdown:
+{
+  "boxes": [
+    { "text": "<text content>", "box": [ymin, xmin, ymax, xmax] }
+  ]
+}`,
+      temperature: 0,
+    });
+
+    if (!result.success || !result.textResponse) return null;
+
+    let jsonStr = result.textResponse.trim();
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+
+    const parsed = JSON.parse(jsonStr);
+    if (!parsed.boxes || !Array.isArray(parsed.boxes)) return null;
+
+    const bboxes: TextBbox[] = [];
+    for (const item of parsed.boxes) {
+      if (!Array.isArray(item.box) || item.box.length !== 4) continue;
+      const [ymin, xmin, ymax, xmax] = item.box.map(Number);
+      if ([ymin, xmin, ymax, xmax].some((n) => Number.isNaN(n))) continue;
+      // Convert from 0-1000 normalized to pixel coords
+      const x = Math.round((xmin / 1000) * imgWidth);
+      const y = Math.round((ymin / 1000) * imgHeight);
+      const width = Math.round(((xmax - xmin) / 1000) * imgWidth);
+      const height = Math.round(((ymax - ymin) / 1000) * imgHeight);
+      if (width <= 0 || height <= 0) continue;
+      bboxes.push({ text: String(item.text || ''), x, y, width, height });
+    }
+
+    console.log(`[bbox-detector] Found ${bboxes.length} text bboxes`);
+    return bboxes;
+  } catch (err) {
+    console.log('[bbox-detector] Error:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/**
  * Analyze a hero image to detect and classify all visible text elements.
  * Uses Gemini Flash for fast, cheap analysis (~2s, ~$0.001).
  *

@@ -12,7 +12,8 @@ import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { detectShotType } from '@/lib/shot-type-detector';
 import { getProjectSettings } from '@/lib/project-settings';
-import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, isLogoZoneClear, type BrandConfig } from '@/lib/brand';
+import { getProjectBrand, buildBrandPromptSection, overlayBrandLogo, clearLogoZone, getLogoBbox, logoOverlapFraction, type BrandConfig } from '@/lib/brand';
+import { detectTextBboxes } from '@/lib/text-element-analyzer';
 import { analyzeTextElements } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
@@ -839,15 +840,28 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: shift content if logo zone is busy + overlay logo
+    // Brand post-processing: detect text bboxes, shift if overlap, overlay logo
     if (brand) {
       try {
-        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-        if (logoAtTop) {
-          const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
-          if (!zoneCheck.clear) {
-            imageBuffer = await clearLogoZone(imageBuffer, brand);
+        const meta = await (await import('sharp')).default(imageBuffer).metadata();
+        const imgW = meta.width || 1200;
+        const imgH = meta.height || 1200;
+        const logoBox = getLogoBbox(brand, imgW, imgH);
+        let maxOverlap = 0;
+        try {
+          const bboxes = await detectTextBboxes(imageBuffer.toString('base64'), 'image/png', imgW, imgH);
+          if (bboxes && bboxes.length > 0) {
+            for (const tb of bboxes) {
+              const overlap = logoOverlapFraction(logoBox, tb);
+              if (overlap > maxOverlap) maxOverlap = overlap;
+            }
           }
+        } catch (err) {
+          console.error('[process-next] bbox detection failed:', err);
+        }
+        if (maxOverlap > 0.15) {
+          imageBuffer = await clearLogoZone(imageBuffer, brand);
+          logPipelineEvent(job.id, 'BRAND_ZONE_CLEARED', `text overlap ${(maxOverlap * 100).toFixed(0)}%`);
         }
         imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, null);
         logPipelineEvent(job.id, 'BRAND_OVERLAY', brand.name);

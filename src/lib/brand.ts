@@ -228,6 +228,52 @@ async function getCornerBusyness(
 }
 
 /**
+ * Compute the logo's pixel bounding box from brand config and image dimensions.
+ * Returns { x, y, width, height } in pixel coordinates.
+ */
+export function getLogoBbox(brand: BrandConfig, imgWidth: number, imgHeight: number) {
+  const margin = brand.logo_margin_px;
+  const size = brand.logo_size_px;
+  let x = margin;
+  let y = margin;
+  switch (brand.logo_position) {
+    case 'top-right':
+      x = imgWidth - size - margin;
+      break;
+    case 'bottom-left':
+      y = imgHeight - size - margin;
+      break;
+    case 'bottom-right':
+      x = imgWidth - size - margin;
+      y = imgHeight - size - margin;
+      break;
+    case 'top-left':
+    default:
+      break;
+  }
+  return { x, y, width: size, height: size };
+}
+
+/**
+ * Check if a text bbox overlaps with the logo bbox.
+ * Returns the fraction of the logo bbox area that's covered by the text.
+ */
+export function logoOverlapFraction(
+  logoBox: { x: number; y: number; width: number; height: number },
+  textBox: { x: number; y: number; width: number; height: number },
+): number {
+  const x1 = Math.max(logoBox.x, textBox.x);
+  const y1 = Math.max(logoBox.y, textBox.y);
+  const x2 = Math.min(logoBox.x + logoBox.width, textBox.x + textBox.width);
+  const y2 = Math.min(logoBox.y + logoBox.height, textBox.y + textBox.height);
+  const overlapW = Math.max(0, x2 - x1);
+  const overlapH = Math.max(0, y2 - y1);
+  const overlapArea = overlapW * overlapH;
+  const logoArea = logoBox.width * logoBox.height;
+  return logoArea > 0 ? overlapArea / logoArea : 0;
+}
+
+/**
  * Check if the brand book's preferred logo zone is clear of content.
  * Measures pixel variance (stddev) of the logo bounding box region.
  * Used to decide whether to override the brand book position when text

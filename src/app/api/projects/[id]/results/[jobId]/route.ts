@@ -13,8 +13,8 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
-import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, isLogoZoneClear, type BrandConfig } from '@/lib/brand';
-import { analyzeTextElements } from '@/lib/text-element-analyzer';
+import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, isLogoZoneClear, getLogoBbox, logoOverlapFraction, type BrandConfig } from '@/lib/brand';
+import { analyzeTextElements, detectTextBboxes } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
@@ -286,31 +286,48 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
         finalBuffer = sourceBuffer;
       }
 
-      // Always apply Sharp logo overlay at the brand book position.
-      // If the logo zone has visible content (text), shift the image down via
-      // clearLogoZone first to make room. The logo NEVER moves away from the
-      // brand book corner — content is shifted instead.
+      // Apply Sharp logo overlay at the brand book position.
+      // To decide whether to shift content down, use Gemini bbox detection on
+      // the FINAL image to find actual text bounding boxes — not pixel variance.
+      // Only shift if a real text bbox overlaps the logo bbox by > 15% area.
       let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
       if (brand) {
-        // Detect if the logo bounding box has visible content (text/edges)
-        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
+        const meta = await (await import('sharp')).default(imageBuffer).metadata();
+        const imgW = meta.width || 1200;
+        const imgH = meta.height || 1200;
+        const logoBox = getLogoBbox(brand, imgW, imgH);
+
+        // Detect text bboxes via Gemini Flash on the FINAL Gemini brand output
         let zoneCleared = false;
-        let zoneBusyness = 0;
-        if (logoAtTop) {
-          const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
-          zoneBusyness = zoneCheck.busyness;
-          if (!zoneCheck.clear) {
-            // Shift content down to clear the logo zone, then logo goes top-left as configured
-            imageBuffer = await clearLogoZone(imageBuffer, brand);
-            zoneCleared = true;
-            logPipelineEvent(jobId, 'BRAND_ZONE_CLEARED', `shifted content down to free ${brand.logo_position} (stddev was ${zoneBusyness.toFixed(1)})`);
-          } else {
-            logPipelineEvent(jobId, 'BRAND_LOGO_ZONE_CLEAR', `keeping ${brand.logo_position} (stddev ${zoneBusyness.toFixed(1)})`);
+        let maxOverlap = 0;
+        let overlappingText = '';
+        try {
+          const bboxes = await detectTextBboxes(imageBuffer.toString('base64'), 'image/png', imgW, imgH);
+          if (bboxes && bboxes.length > 0) {
+            for (const tb of bboxes) {
+              const overlap = logoOverlapFraction(logoBox, tb);
+              if (overlap > maxOverlap) {
+                maxOverlap = overlap;
+                overlappingText = tb.text;
+              }
+            }
           }
+        } catch (err) {
+          console.error('[brand] bbox detection failed:', err);
         }
-        // Always pass null elements — logo stays at brand book position, no smart corner.
+
+        const OVERLAP_THRESHOLD = 0.15; // shift only when text covers >15% of the logo box
+        if (maxOverlap > OVERLAP_THRESHOLD) {
+          imageBuffer = await clearLogoZone(imageBuffer, brand);
+          zoneCleared = true;
+          logPipelineEvent(jobId, 'BRAND_ZONE_CLEARED', `text "${overlappingText.slice(0, 30)}" overlaps logo by ${(maxOverlap * 100).toFixed(0)}% — shifted content`);
+        } else {
+          logPipelineEvent(jobId, 'BRAND_LOGO_ZONE_CLEAR', `no text overlap (max ${(maxOverlap * 100).toFixed(0)}%) — keeping ${brand.logo_position}`);
+        }
+
+        // Logo always at brand book position
         imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { zone_cleared: zoneCleared, zone_busyness: Math.round(zoneBusyness) });
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { zone_cleared: zoneCleared, max_overlap_pct: Math.round(maxOverlap * 100) });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
