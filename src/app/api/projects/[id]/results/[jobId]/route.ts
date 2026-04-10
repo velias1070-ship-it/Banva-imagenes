@@ -209,7 +209,9 @@ async function regenerateJob(
       // attempt, detect text bboxes and measure overlap with the brand
       // book logo zone. If overlap > 15%, retry. Keep the best result.
       // ─────────────────────────────────────────────────────────────────
-      const MAX_ATTEMPTS = 3;
+      // 2 attempts max — 3 attempts pushes against Vercel 60s timeout for difficult images
+      // (each Gemini brand pass ~16-21s + bbox detection ~3s per attempt + setup)
+      const MAX_ATTEMPTS = 2;
       const OVERLAP_OK = 0.15; // accept threshold
       const sourceB64 = sourceBuffer.toString('base64');
 
