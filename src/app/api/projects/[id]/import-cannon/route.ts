@@ -43,15 +43,15 @@ function buildCannonImagePatterns(attrs: Record<string, string>): string[] {
 
   const patterns: string[] = [];
   if (isPolar) {
-    // Pattern by COLOR only: sabanaspolar1plazaaba (when FABRIC_DESIGN is generic "Estampado")
-    if (colorCompact) {
-      patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
-    }
-    // Design + color: sabanaspolar1plazalisomalva (Liso Malva)
+    // Most specific first: design + color (sabanaspolar1plazalisomalva)
     if (designCompact && colorCompact) {
       patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
     }
-    // Design only: sabanaspolar1plazaliso
+    // Color only (sabanaspolar1plazaaba — when FABRIC_DESIGN is generic "Estampado")
+    if (colorCompact) {
+      patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
+    }
+    // Design only (sabanaspolar1plazaliso)
     if (designCompact) {
       patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
     }
