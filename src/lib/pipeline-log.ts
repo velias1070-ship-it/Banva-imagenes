@@ -9,11 +9,11 @@ export interface PipelineEvent {
 
 /**
  * Append an event to a job's pipeline_log (JSONB array).
- * Non-blocking — fire and forget. If the column doesn't exist yet,
- * the call silently fails without affecting the pipeline.
+ * Non-blocking — fire and forget.
  *
- * Uses read-then-write to append atomically.
- * Supabase returns PromiseLike, so we use void + try/catch (never .catch()).
+ * Uses atomic Postgres jsonb concat (||) via RPC to avoid lost events when
+ * many events fire in quick succession (the previous read-then-write pattern
+ * raced when several events fired within the supabase round-trip window).
  */
 export function logPipelineEvent(
   jobId: string,
@@ -32,19 +32,28 @@ export function logPipelineEvent(
   void (async () => {
     try {
       const supabase = createAdminClient();
-      const { data: job } = await supabase
-        .from('generation_jobs')
-        .select('pipeline_log')
-        .eq('id', jobId)
-        .single();
-
-      const log: PipelineEvent[] = Array.isArray(job?.pipeline_log) ? job.pipeline_log : [];
-      log.push(entry);
-
-      await supabase
-        .from('generation_jobs')
-        .update({ pipeline_log: log })
-        .eq('id', jobId);
+      // Atomic append via RPC. The function `append_pipeline_event` runs:
+      //   UPDATE generation_jobs
+      //     SET pipeline_log = COALESCE(pipeline_log, '[]'::jsonb) || $2::jsonb
+      //     WHERE id = $1
+      const rpcResult = await supabase.rpc('append_pipeline_event', {
+        p_job_id: jobId,
+        p_entry: entry,
+      });
+      // Fallback if RPC isn't installed yet — use unsafe read-write
+      if (rpcResult.error) {
+        const { data: job } = await supabase
+          .from('generation_jobs')
+          .select('pipeline_log')
+          .eq('id', jobId)
+          .single();
+        const log: PipelineEvent[] = Array.isArray(job?.pipeline_log) ? job.pipeline_log : [];
+        log.push(entry);
+        await supabase
+          .from('generation_jobs')
+          .update({ pipeline_log: log })
+          .eq('id', jobId);
+      }
     } catch {
       // Silently ignore — logging must never break the pipeline
     }
