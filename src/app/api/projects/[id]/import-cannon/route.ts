@@ -16,33 +16,47 @@ function getInventorySupabase() {
   return createClient(url, key);
 }
 
-function buildCannonImageUrls(attrs: Record<string, string>): string[] {
-  const design = attrs.FABRIC_DESIGN;
-  const model = attrs.MODEL;
-  const size = attrs.MATTRESS_SIZE;
-  if (!design) return [];
-
-  const designSlug = design
+function slugify(s: string): string {
+  return s
     .toLowerCase()
-    .replace(/\s*\d+$/, '')
     .trim()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
+    .replace(/[^a-z0-9]+/g, '');
+}
 
-  const sizeSlug = (size || '2 plazas').toLowerCase().replace(/\s+/g, '-');
-  const sizeCompact = sizeSlug.replace(/-/g, '');
-  const threadMatch = (model || '').match(/(\d+)\s*hilos/i);
-  const threadCount = threadMatch ? threadMatch[1] : '144';
-  const designCompact = designSlug.replace(/-/g, '');
+function buildCannonImagePatterns(attrs: Record<string, string>): string[] {
+  const design = attrs.FABRIC_DESIGN;
+  const model = attrs.MODEL || '';
+  const size = attrs.MATTRESS_SIZE;
+  const color = attrs.COLOR || attrs.MAIN_COLOR || '';
+  const fabric = attrs.FABRIC_COMPOSITION || attrs.FABRIC || '';
+  if (!design) return [];
 
-  // Cannon uses _1, _2, _3, etc. for multiple images
-  const urls: string[] = [];
-  for (let i = 1; i <= 10; i++) {
-    urls.push(`https://cannonhome.cl/media/catalog/product/s/a/sabanas${sizeCompact}${threadCount}hilos${designCompact}_${i}.jpg`);
+  const designCompact = slugify(design.replace(/\s*\d+$/, ''));
+  const sizeCompact = slugify(size || '2 plazas');
+  const colorCompact = slugify(color);
+  const threadMatch = model.match(/(\d+)\s*hilos/i);
+  const threadCount = threadMatch ? threadMatch[1] : null;
+
+  const isPolar = /polar|fleece/i.test(model + ' ' + fabric + ' ' + design);
+
+  const patterns: string[] = [];
+  if (isPolar && colorCompact) {
+    patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
   }
-  return urls;
+  if (threadCount) {
+    patterns.push(`sabanas${sizeCompact}${threadCount}hilos${designCompact}`);
+  }
+  if (!patterns.length) {
+    patterns.push(`sabanas${sizeCompact}144hilos${designCompact}`);
+    if (colorCompact) patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
+  }
+  return patterns;
+}
+
+function cannonUrl(pattern: string, index: number): string {
+  return `https://cannonhome.cl/media/catalog/product/s/a/${pattern}_${index}.jpg`;
 }
 
 /**
@@ -260,17 +274,37 @@ export async function POST(request: NextRequest, context: RouteContext) {
         continue;
       }
 
-      // Build Cannon URLs and try downloading each
-      const imageUrls = buildCannonImageUrls(attrs);
+      // Build Cannon URL patterns and try each one
+      const patterns = buildCannonImagePatterns(attrs);
 
-      for (const url of imageUrls) {
+      let workingPattern: string | null = null;
+      // Find first pattern where _1 exists
+      for (const p of patterns) {
+        try {
+          const res = await fetch(cannonUrl(p, 1), { headers: { 'Accept': 'image/*' }, method: 'HEAD' });
+          if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) {
+            workingPattern = p;
+            break;
+          }
+        } catch { /* try next */ }
+      }
+
+      if (!workingPattern) {
+        swatchResult.errors.push(`No images found at Cannon (tried: ${patterns.join(', ')})`);
+        results.push(swatchResult);
+        continue;
+      }
+
+      // Download all available images for the working pattern
+      for (let idx = 1; idx <= 10; idx++) {
+        const url = cannonUrl(workingPattern, idx);
         try {
           const res = await fetch(url, { headers: { 'Accept': 'image/*' } });
           const contentType = res.headers.get('content-type') || '';
-          if (!res.ok || !contentType.startsWith('image/')) break; // No more images
+          if (!res.ok || !contentType.startsWith('image/')) break;
 
           const buffer = Buffer.from(await res.arrayBuffer());
-          if (buffer.length < 5000) break; // Too small, probably 404 page
+          if (buffer.length < 5000) break;
 
           // Post-process to 1200x1200
           const processed = await ensureOutputSpec(buffer, 1200);
