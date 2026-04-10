@@ -91,9 +91,12 @@ export default function ResultsPage() {
   const [editingJob, setEditingJob] = useState<string | null>(null);
   const [importingCannon, setImportingCannon] = useState(false);
   const [importingCannonSwatch, setImportingCannonSwatch] = useState<Set<string>>(new Set());
-  // Project where per-swatch Cannon import button is enabled
-  const PER_SWATCH_CANNON_PROJECT = 'f047dcc1-1c96-440c-99af-e7c0af622f89';
-  const showPerSwatchCannon = id === PER_SWATCH_CANNON_PROJECT;
+  // Projects where per-swatch Cannon import button is enabled
+  const PER_SWATCH_CANNON_PROJECTS = new Set([
+    'f047dcc1-1c96-440c-99af-e7c0af622f89',
+    '5252726f-7f69-48be-88eb-de895e138737',
+  ]);
+  const showPerSwatchCannon = PER_SWATCH_CANNON_PROJECTS.has(id);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
