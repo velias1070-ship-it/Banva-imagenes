@@ -27,13 +27,15 @@ interface ProductGroup {
 function ProductCombobox({
   productos,
   loading,
-  selectedSlug,
-  onSelect,
+  selectedSlugs,
+  onToggle,
+  onClear,
 }: {
   productos: ProductGroup[];
   loading: boolean;
-  selectedSlug: string;
-  onSelect: (slug: string) => void;
+  selectedSlugs: string[];
+  onToggle: (slug: string) => void;
+  onClear: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -47,7 +49,9 @@ function ProductCombobox({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const selected = productos.find((p) => p.slug === selectedSlug);
+  const selectedSet = new Set(selectedSlugs);
+  const selectedProducts = productos.filter((p) => selectedSet.has(p.slug));
+  const totalVariantes = selectedProducts.reduce((sum, p) => sum + p.variantes.length, 0);
 
   const filtered = productos.filter((p) => {
     if (!query) return true;
@@ -61,52 +65,85 @@ function ProductCombobox({
     );
   });
 
+  const placeholder = loading
+    ? 'Cargando...'
+    : selectedSlugs.length === 0
+    ? 'Buscar y seleccionar productos...'
+    : `${selectedSlugs.length} producto${selectedSlugs.length !== 1 ? 's' : ''} · ${totalVariantes} variantes`;
+
   return (
     <div className="space-y-2">
-      <Label>Producto del catalogo</Label>
-      <div ref={wrapperRef} className="relative">
-        <Input
-          value={open ? query : selected ? `${selected.base_name} — ${selected.tamano}` : ''}
-          onChange={(e) => { setQuery(e.target.value); if (!open) setOpen(true); }}
-          onFocus={() => { setOpen(true); setQuery(''); }}
-          placeholder={loading ? 'Cargando...' : 'Buscar por nombre, SKU, color...'}
-          className={open ? 'ring-2 ring-ring' : ''}
-        />
-        {selected && !open && (
+      <div className="flex items-center justify-between">
+        <Label>Productos del catalogo</Label>
+        {selectedSlugs.length > 0 && (
           <button
             type="button"
-            onClick={() => { onSelect(''); setQuery(''); }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            onClick={onClear}
+            className="text-xs text-muted-foreground hover:text-foreground"
           >
-            ✕
+            Limpiar todo
           </button>
         )}
+      </div>
+      <div ref={wrapperRef} className="relative">
+        <Input
+          value={open ? query : ''}
+          onChange={(e) => { setQuery(e.target.value); if (!open) setOpen(true); }}
+          onFocus={() => { setOpen(true); }}
+          placeholder={placeholder}
+          className={open ? 'ring-2 ring-ring' : ''}
+        />
         {open && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[280px] overflow-y-auto rounded-md border bg-popover shadow-lg">
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[320px] overflow-y-auto rounded-md border bg-popover shadow-lg">
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-sm text-muted-foreground">Sin resultados</div>
             ) : (
-              filtered.map((p) => (
-                <button
-                  key={p.slug}
-                  type="button"
-                  onClick={() => { onSelect(p.slug); setOpen(false); setQuery(''); }}
-                  className={`block w-full px-3 py-2 text-left text-sm hover:bg-accent ${p.slug === selectedSlug ? 'bg-accent' : ''}`}
-                >
-                  <div className="font-medium">{p.base_name} — {p.tamano}</div>
-                  <div className="text-xs text-muted-foreground">{p.variantes.length} variantes · {p.categoria}</div>
-                </button>
-              ))
+              filtered.map((p) => {
+                const isSelected = selectedSet.has(p.slug);
+                return (
+                  <button
+                    key={p.slug}
+                    type="button"
+                    onClick={() => onToggle(p.slug)}
+                    className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent ${isSelected ? 'bg-accent' : ''}`}
+                  >
+                    <div className={`mt-0.5 h-4 w-4 flex-shrink-0 rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                      {isSelected && <span className="block text-center text-xs leading-3">✓</span>}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{p.base_name} — {p.tamano}</div>
+                      <div className="text-xs text-muted-foreground">{p.variantes.length} variantes · {p.categoria}</div>
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
         )}
       </div>
-      {selectedSlug && selected && (
-        <div className="mt-2 rounded-md bg-muted p-3 text-sm">
-          {selected.variantes.map((v) => (
-            <span key={v.sku} className="mr-2 inline-block rounded bg-background px-2 py-0.5 text-xs">
-              {v.color} <span className="text-muted-foreground">({v.sku})</span>
-            </span>
+      {selectedProducts.length > 0 && (
+        <div className="mt-2 space-y-2 rounded-md bg-muted p-3 text-sm">
+          {selectedProducts.map((p) => (
+            <div key={p.slug} className="flex items-start gap-2">
+              <button
+                type="button"
+                onClick={() => onToggle(p.slug)}
+                className="mt-0.5 text-muted-foreground hover:text-destructive"
+                title="Quitar"
+              >
+                ✕
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-medium">{p.base_name} — {p.tamano}</div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {p.variantes.map((v) => (
+                    <span key={v.sku} className="rounded bg-background px-1.5 py-0.5 text-[10px]">
+                      {v.color} <span className="text-muted-foreground">({v.sku})</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -120,7 +157,7 @@ export default function NewProjectPage() {
   const [mode, setMode] = useState<'catalog' | 'manual'>('catalog');
   const [productos, setProductos] = useState<ProductGroup[]>([]);
   const [loadingProductos, setLoadingProductos] = useState(true);
-  const [selectedProducto, setSelectedProducto] = useState<string>('');
+  const [selectedProductos, setSelectedProductos] = useState<string[]>([]);
 
   // Form fields
   const [name, setName] = useState('');
@@ -144,23 +181,64 @@ export default function NewProjectPage() {
       });
   }, []);
 
-  function handleProductoSelect(slug: string) {
-    setSelectedProducto(slug);
-    const prod = productos.find((p) => p.slug === slug);
-    if (prod) {
-      setName(prod.base_name);
-      setCategory(prod.categoria);
-      setSkuBase(prod.slug);
-      const varList = prod.variantes.map((v) => `${v.sku} (${v.color})`).join(', ');
-      setDescription(`${prod.tamano} — ${prod.variantes.length} variantes: ${varList}`);
-    }
+  function handleProductoToggle(slug: string) {
+    setSelectedProductos((prev) => {
+      const next = prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug];
+      // Auto-fill form fields based on the new selection
+      const selected = productos.filter((p) => next.includes(p.slug));
+      if (selected.length === 0) {
+        setName('');
+        setCategory('');
+        setSkuBase('');
+        setDescription('');
+      } else if (selected.length === 1) {
+        const prod = selected[0];
+        setName(prod.base_name);
+        setCategory(prod.categoria);
+        setSkuBase(prod.slug);
+        const varList = prod.variantes.map((v) => `${v.sku} (${v.color})`).join(', ');
+        setDescription(`${prod.tamano} — ${prod.variantes.length} variantes: ${varList}`);
+      } else {
+        // Multiple products combined — derive a generic name
+        const totalVariants = selected.reduce((sum, p) => sum + p.variantes.length, 0);
+        const categorias = [...new Set(selected.map((p) => p.categoria))];
+        const tamanos = [...new Set(selected.map((p) => p.tamano))];
+        // Find common prefix from base_name (e.g. "Jgo Sabana Polar AF 100%Pol Est")
+        const names = selected.map((p) => p.base_name);
+        let commonPrefix = names[0];
+        for (let i = 1; i < names.length; i++) {
+          while (commonPrefix && !names[i].startsWith(commonPrefix)) {
+            commonPrefix = commonPrefix.slice(0, -1);
+          }
+        }
+        const prefix = commonPrefix.trim().replace(/[—-]+$/, '').trim();
+        setName(prefix || `${selected.length} productos combinados`);
+        setCategory(categorias[0]);
+        setSkuBase('');
+        setDescription(
+          `${selected.length} productos · ${totalVariants} variantes · ${tamanos.join(', ')}`
+        );
+      }
+      return next;
+    });
+  }
+
+  function handleClearProductos() {
+    setSelectedProductos([]);
+    setName('');
+    setCategory('');
+    setSkuBase('');
+    setDescription('');
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
 
-    const prod = productos.find((p) => p.slug === selectedProducto);
+    // Combine variants from all selected products
+    const allVariantes = productos
+      .filter((p) => selectedProductos.includes(p.slug))
+      .flatMap((p) => p.variantes);
 
     try {
       const res = await fetch('/api/projects', {
@@ -172,7 +250,7 @@ export default function NewProjectPage() {
           sku_base: skuBase,
           description,
           brand_id: brandId || null,
-          variantes: mode === 'catalog' && prod ? prod.variantes : undefined,
+          variantes: mode === 'catalog' && allVariantes.length > 0 ? allVariantes : undefined,
         }),
       });
 
@@ -225,8 +303,9 @@ export default function NewProjectPage() {
               <ProductCombobox
                 productos={productos}
                 loading={loadingProductos}
-                selectedSlug={selectedProducto}
-                onSelect={handleProductoSelect}
+                selectedSlugs={selectedProductos}
+                onToggle={handleProductoToggle}
+                onClear={handleClearProductos}
               />
             )}
 
