@@ -227,7 +227,9 @@ async function regenerateJob(
         } catch {}
       }
 
-      const brandPromptText = `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
+      // Build prompt — accepts an optional explicit instruction for retries
+      // (e.g. "the title at coordinates X,Y must be moved").
+      const buildBrandPrompt = (extraDirective?: string) => `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
 Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
 
 IMPORTANT — You MUST apply the brand changes specified below:
@@ -235,7 +237,7 @@ IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text typography/fonts to match the brand fonts below
 - Keep the same text content, only change COLOR and FONT
 
-LOGO ZONE — A 200x200px logo will be added in the ${brand?.logo_position || 'top-left'} corner in post-processing. If there is text in that ${brand?.logo_position || 'top-left'} zone, MOVE that text horizontally (to the opposite side) or vertically (slightly down within the same area) to leave the ${brand?.logo_position || 'top-left'} 250x250px clear. DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible — only reposition text that overlaps with the ${brand?.logo_position || 'top-left'} corner.
+LOGO ZONE — A 200x200px logo will be added in the ${brand?.logo_position || 'top-left'} corner in post-processing. If there is text in that ${brand?.logo_position || 'top-left'} zone, MOVE that text horizontally (to the opposite side) or vertically (slightly down within the same area) to leave the ${brand?.logo_position || 'top-left'} 250x250px clear. DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible — only reposition text that overlaps with the ${brand?.logo_position || 'top-left'} corner.${extraDirective ? '\n\n' + extraDirective : ''}
 
 CRITICAL CONSTRAINTS:
 - Keep image dimensions identical (1200x1200)
@@ -250,18 +252,53 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
       let bestBuffer: Buffer | null = null;
       let bestOverlap = Infinity;
       let bestAttempt = 0;
+      // Carry forward bbox info from previous attempt to inject in the next prompt
+      let lastFailedBboxes: Array<{ x: number; y: number; width: number; height: number; text: string }> | null = null;
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
           logPipelineEvent(jobId, 'BRAND_GEMINI_TRY', `attempt ${attempt}/${MAX_ATTEMPTS}`);
+
+          // Build per-attempt prompt: on retry, inject explicit bbox coordinates
+          // of the text that's blocking the logo zone — much more directive than
+          // the generic "if there is text" wording, and helps Gemini move
+          // elegant/serif titles it would otherwise treat as integral design.
+          let extraDirective: string | undefined;
+          if (attempt > 1 && lastFailedBboxes && lastFailedBboxes.length > 0) {
+            const blockers = lastFailedBboxes
+              .filter((bb) => {
+                // Pick bboxes that visibly overlap the brand book corner
+                const margin = brand?.logo_margin_px ?? 60;
+                const size = brand?.logo_size_px ?? 200;
+                let lx = margin;
+                let ly = margin;
+                if (brand?.logo_position === 'top-right') lx = 1024 - size - margin;
+                const x1 = Math.max(lx, bb.x);
+                const y1 = Math.max(ly, bb.y);
+                const x2 = Math.min(lx + size, bb.x + bb.width);
+                const y2 = Math.min(ly + size, bb.y + bb.height);
+                return x2 - x1 > 0 && y2 - y1 > 0;
+              })
+              .slice(0, 3);
+            if (blockers.length > 0) {
+              const lines = blockers.map(
+                (bb) => `  - "${bb.text.replace(/\s+/g, ' ').slice(0, 80)}" currently at x=${bb.x}, y=${bb.y}, width=${bb.width}, height=${bb.height}`,
+              );
+              extraDirective = `RETRY DIRECTIVE — The previous attempt did NOT move text out of the logo zone. The following text element(s) are CURRENTLY blocking the ${brand?.logo_position || 'top-left'} corner:
+${lines.join('\n')}
+
+You MUST RELOCATE these specific text elements so they no longer overlap the ${brand?.logo_position || 'top-left'} 250x250px corner. Move them horizontally to the right side of the image, OR shift them down below y=270. Keep their content unchanged. This is REQUIRED — do not skip this step.`;
+              logPipelineEvent(jobId, 'BRAND_RETRY_DIRECTIVE', `injecting bbox directive for ${blockers.length} blocking element(s)`);
+            }
+          }
 
           const geminiResult = await generateImage({
             heroImageBase64: sourceB64,
             heroMimeType: 'image/png',
             swatchImageBase64: sourceB64,
             swatchMimeType: 'image/png',
-            promptText: brandPromptText,
-            temperature: 0.2,
+            promptText: buildBrandPrompt(extraDirective),
+            temperature: attempt === 1 ? 0.2 : 0.4, // higher temperature on retry for variation
           });
 
           if (!geminiResult.success || !geminiResult.imageBase64) {
@@ -287,6 +324,7 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
 
           // Verify: detect text bboxes and measure overlap with brand book logo zone
           let attemptOverlap = 0;
+          let attemptBboxes: Array<{ x: number; y: number; width: number; height: number; text: string }> | null = null;
           if (brand) {
             try {
               const detected = await detectTextBboxes(
@@ -296,6 +334,7 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
                 gemH,
               );
               if (detected && detected.length > 0) {
+                attemptBboxes = detected;
                 const choice = chooseBestCornerByBbox(gemW, gemH, brand, detected);
                 const brandBookEntry = choice.allCorners.find((c) => c.corner === brand.logo_position);
                 attemptOverlap = brandBookEntry ? brandBookEntry.overlap : 0;
@@ -304,6 +343,8 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
               console.error(`[brand] attempt ${attempt} bbox detection failed:`, err);
             }
           }
+          // Save bboxes from this attempt to feed into the next attempt's prompt
+          lastFailedBboxes = attemptBboxes;
 
           logPipelineEvent(jobId, 'BRAND_VERIFY', `attempt ${attempt}: ${gemW}x${gemH}, logo zone overlap ${(attemptOverlap * 100).toFixed(0)}%`);
 
