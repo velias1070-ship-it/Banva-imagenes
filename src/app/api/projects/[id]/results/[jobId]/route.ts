@@ -63,9 +63,14 @@ export async function POST(_request: NextRequest, context: RouteContext) {
 
   // Parse optional body
   let mode: string | undefined;
+  let forceMode: 'edit' | 'reference' | undefined;
   try {
     const body = await _request.json();
     mode = body?.mode;
+    // Allow caller to force a specific generation_mode (overrides category default + auto-detect)
+    if (body?.force_mode === 'edit' || body?.force_mode === 'reference') {
+      forceMode = body.force_mode;
+    }
   } catch {
     // No body or invalid JSON — normal regeneration
   }
@@ -119,7 +124,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -134,7 +139,8 @@ async function regenerateJob(
   category: string,
   projectId: string,
   projectMetadata?: Record<string, unknown> | null,
-  brandId?: string | null
+  brandId?: string | null,
+  forceMode?: 'edit' | 'reference',
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string> | null;
@@ -442,7 +448,11 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
 
     // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;
-    if (!isBrandOnly) {
+    if (forceMode) {
+      mode = forceMode;
+      console.log(`[regenerateJob] Mode forced via API: ${mode}`);
+      logPipelineEvent(jobId, 'MODE_FORCED', mode, { source: 'api_param' });
+    } else if (!isBrandOnly) {
       if (effectiveShotType === 'detail' || effectiveShotType === 'infografia') {
         mode = 'edit';
         console.log(`[regenerateJob] ${effectiveShotType} shot detected — forcing edit mode`);
