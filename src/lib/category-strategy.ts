@@ -40,7 +40,13 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
   quilts: {
     key: 'quilts',
     label: 'Quilts',
-    generation_mode: 'reference',
+    // Hybrid: edit by default (preserve hero scene literally), escalate to
+    // reference only when QA detects hero contamination > 0.6 on retry.
+    // Edit mode works for most quilts (flat printed patterns + waffle/light
+    // textures). Reference mode only kicks in when stitching 3D conflicts
+    // (e.g., hero has mandala stitching, swatch has basket weave) and Gemini
+    // can't replace the embossed pattern, leaving hero stitching bleeding through.
+    generation_mode: 'edit',
     retry_escalation: 'reference',
     preprocessing: { crop_swatch: true, flatten_hero: false, flatten_swatch_ai: false },
     prompt: {
