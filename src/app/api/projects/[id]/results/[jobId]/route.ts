@@ -13,7 +13,7 @@ import {
 import { analyzeSwatchColor } from '@/lib/swatch-analyzer';
 import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
-import { buildBrandPromptSection, overlayBrandLogo, clearLogoZone, isLogoZoneClear, getLogoBbox, logoOverlapFraction, type BrandConfig } from '@/lib/brand';
+import { buildBrandPromptSection, overlayBrandLogo, chooseBestCornerByBbox, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements, detectTextBboxes } from '@/lib/text-element-analyzer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
@@ -286,48 +286,37 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
         finalBuffer = sourceBuffer;
       }
 
-      // Apply Sharp logo overlay at the brand book position.
-      // To decide whether to shift content down, use Gemini bbox detection on
-      // the FINAL image to find actual text bounding boxes — not pixel variance.
-      // Only shift if a real text bbox overlaps the logo bbox by > 15% area.
+      // Decide where to place the logo using text bbox overlap detection.
+      // Strong preference for the brand book position; only deviates when text
+      // would clearly overlap the logo there AND a notably cleaner corner exists.
+      // No content shifting — preserves all original elements (top text + bottom features).
       let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
       if (brand) {
         const meta = await (await import('sharp')).default(imageBuffer).metadata();
         const imgW = meta.width || 1200;
         const imgH = meta.height || 1200;
-        const logoBox = getLogoBbox(brand, imgW, imgH);
 
         // Detect text bboxes via Gemini Flash on the FINAL Gemini brand output
-        let zoneCleared = false;
-        let maxOverlap = 0;
-        let overlappingText = '';
+        let bboxes: Array<{ x: number; y: number; width: number; height: number; text: string }> = [];
         try {
-          const bboxes = await detectTextBboxes(imageBuffer.toString('base64'), 'image/png', imgW, imgH);
-          if (bboxes && bboxes.length > 0) {
-            for (const tb of bboxes) {
-              const overlap = logoOverlapFraction(logoBox, tb);
-              if (overlap > maxOverlap) {
-                maxOverlap = overlap;
-                overlappingText = tb.text;
-              }
-            }
-          }
+          const detected = await detectTextBboxes(imageBuffer.toString('base64'), 'image/png', imgW, imgH);
+          if (detected) bboxes = detected;
+          logPipelineEvent(jobId, 'BBOX_DETECTED', `${bboxes.length} text bboxes`);
         } catch (err) {
           console.error('[brand] bbox detection failed:', err);
+          logPipelineEvent(jobId, 'BBOX_DETECT_FAILED', err instanceof Error ? err.message : 'unknown');
         }
 
-        const OVERLAP_THRESHOLD = 0.15; // shift only when text covers >15% of the logo box
-        if (maxOverlap > OVERLAP_THRESHOLD) {
-          imageBuffer = await clearLogoZone(imageBuffer, brand);
-          zoneCleared = true;
-          logPipelineEvent(jobId, 'BRAND_ZONE_CLEARED', `text "${overlappingText.slice(0, 30)}" overlaps logo by ${(maxOverlap * 100).toFixed(0)}% — shifted content`);
+        const choice = chooseBestCornerByBbox(imgW, imgH, brand, bboxes);
+        const cornersStr = choice.allCorners.map((c) => `${c.corner}=${(c.overlap * 100).toFixed(0)}%`).join(' ');
+        if (choice.overridden) {
+          logPipelineEvent(jobId, 'BRAND_LOGO_OVERRIDE', `${brand.logo_position} overlap ${(choice.allCorners.find(c => c.corner === brand.logo_position)!.overlap * 100).toFixed(0)}% → using ${choice.corner} (${(choice.overlap * 100).toFixed(0)}%) | ${cornersStr}`);
         } else {
-          logPipelineEvent(jobId, 'BRAND_LOGO_ZONE_CLEAR', `no text overlap (max ${(maxOverlap * 100).toFixed(0)}%) — keeping ${brand.logo_position}`);
+          logPipelineEvent(jobId, 'BRAND_LOGO_KEEP', `${brand.logo_position} (${(choice.overlap * 100).toFixed(0)}% overlap) | ${cornersStr}`);
         }
 
-        // Logo always at brand book position
-        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { zone_cleared: zoneCleared, max_overlap_pct: Math.round(maxOverlap * 100) });
+        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null, choice.corner));
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: choice.corner, overridden: choice.overridden, overlap_pct: Math.round(choice.overlap * 100) });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
@@ -715,18 +704,25 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: shift content if logo zone is busy + overlay logo
+    // Brand post-processing: detect text bboxes, choose best corner, overlay logo
     if (brand) {
       try {
-        const logoAtTop = brand.logo_position === 'top-left' || brand.logo_position === 'top-right';
-        if (logoAtTop) {
-          const zoneCheck = await isLogoZoneClear(imageBuffer, brand);
-          if (!zoneCheck.clear) {
-            imageBuffer = await clearLogoZone(imageBuffer, brand);
-          }
+        const meta = await (await import('sharp')).default(imageBuffer).metadata();
+        const imgW = meta.width || 1200;
+        const imgH = meta.height || 1200;
+        let bboxes: Array<{ x: number; y: number; width: number; height: number; text: string }> = [];
+        try {
+          const detected = await detectTextBboxes(imageBuffer.toString('base64'), 'image/png', imgW, imgH);
+          if (detected) bboxes = detected;
+        } catch (err) {
+          console.error('[regenerateJob] bbox detection failed:', err);
         }
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, null);
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name);
+        const choice = chooseBestCornerByBbox(imgW, imgH, brand, bboxes);
+        if (choice.overridden) {
+          logPipelineEvent(jobId, 'BRAND_LOGO_OVERRIDE', `using ${choice.corner} (${(choice.overlap * 100).toFixed(0)}% overlap) instead of ${brand.logo_position}`);
+        }
+        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, null, choice.corner);
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: choice.corner, overridden: choice.overridden });
       } catch (brandErr) {
         logPipelineEvent(jobId, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });
         console.error('[regenerateJob] Brand processing failed (non-blocking):', brandErr);

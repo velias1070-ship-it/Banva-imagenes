@@ -228,15 +228,20 @@ async function getCornerBusyness(
 }
 
 /**
- * Compute the logo's pixel bounding box from brand config and image dimensions.
+ * Compute the logo's pixel bounding box for a specific corner.
  * Returns { x, y, width, height } in pixel coordinates.
  */
-export function getLogoBbox(brand: BrandConfig, imgWidth: number, imgHeight: number) {
+export function getLogoBboxForCorner(
+  corner: string,
+  brand: BrandConfig,
+  imgWidth: number,
+  imgHeight: number,
+) {
   const margin = brand.logo_margin_px;
   const size = brand.logo_size_px;
   let x = margin;
   let y = margin;
-  switch (brand.logo_position) {
+  switch (corner) {
     case 'top-right':
       x = imgWidth - size - margin;
       break;
@@ -252,6 +257,83 @@ export function getLogoBbox(brand: BrandConfig, imgWidth: number, imgHeight: num
       break;
   }
   return { x, y, width: size, height: size };
+}
+
+/**
+ * Compute the logo's pixel bounding box from brand config and image dimensions.
+ * Uses brand.logo_position. Returns { x, y, width, height } in pixel coordinates.
+ */
+export function getLogoBbox(brand: BrandConfig, imgWidth: number, imgHeight: number) {
+  return getLogoBboxForCorner(brand.logo_position, brand, imgWidth, imgHeight);
+}
+
+/**
+ * Choose the best corner for the logo based on text bbox overlap.
+ *
+ * For each of the 4 corners, computes the maximum overlap between the logo's
+ * bounding box at that corner and any text bbox. Picks the corner with the
+ * LOWEST overlap (cleanest), with a strong preference for the brand book corner.
+ *
+ * Logic:
+ *  - If brand book corner has < 5% overlap → use it (don't deviate for tiny noise)
+ *  - Else find the lowest-overlap corner
+ *  - If brand book corner is within 5% of the best → still use brand book
+ *  - Otherwise pick the best alternative
+ *
+ * Returns the chosen corner, its overlap fraction, and whether it differs from the brand book.
+ */
+export function chooseBestCornerByBbox(
+  imgWidth: number,
+  imgHeight: number,
+  brand: BrandConfig,
+  textBboxes: Array<{ x: number; y: number; width: number; height: number; text?: string }>,
+): { corner: string; overlap: number; overridden: boolean; allCorners: Array<{ corner: string; overlap: number }> } {
+  const corners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+  const cornerOverlaps = corners.map((corner) => {
+    const logoBox = getLogoBboxForCorner(corner, brand, imgWidth, imgHeight);
+    let maxOverlap = 0;
+    for (const tb of textBboxes) {
+      const overlap = logoOverlapFraction(logoBox, tb);
+      if (overlap > maxOverlap) maxOverlap = overlap;
+    }
+    return { corner, overlap: maxOverlap };
+  });
+
+  // Sort by overlap ascending
+  const sorted = [...cornerOverlaps].sort((a, b) => a.overlap - b.overlap);
+  const best = sorted[0];
+  const brandBookEntry = cornerOverlaps.find((c) => c.corner === brand.logo_position)!;
+
+  // Strong preference for brand book corner
+  if (brandBookEntry.overlap < 0.05) {
+    // Brand book is essentially clear — use it
+    return {
+      corner: brand.logo_position,
+      overlap: brandBookEntry.overlap,
+      overridden: false,
+      allCorners: cornerOverlaps,
+    };
+  }
+
+  // Brand book has significant overlap. Use best alternative IF it's notably better.
+  // "Notably better" = at least 10 percentage points lower overlap.
+  if (brandBookEntry.overlap - best.overlap > 0.1) {
+    return {
+      corner: best.corner,
+      overlap: best.overlap,
+      overridden: best.corner !== brand.logo_position,
+      allCorners: cornerOverlaps,
+    };
+  }
+
+  // All corners similarly busy or brand book is close enough — keep brand book
+  return {
+    corner: brand.logo_position,
+    overlap: brandBookEntry.overlap,
+    overridden: false,
+    allCorners: cornerOverlaps,
+  };
 }
 
 /**
@@ -412,7 +494,8 @@ export async function overlayBrandLogo(
   imageBuffer: Buffer,
   brand: BrandConfig,
   shotType?: string,
-  textElements?: TextElement[] | null
+  textElements?: TextElement[] | null,
+  forceCorner?: string,
 ): Promise<Buffer> {
   if (!brand.apply_logo_overlay) {
     console.log('[brand] Logo overlay disabled for brand:', brand.name);
@@ -459,10 +542,9 @@ export async function overlayBrandLogo(
 
   const margin = brand.logo_margin_px;
 
-  // Smart corner ONLY when text is explicitly detected at the logo's preferred zone.
-  // findBestCornerFromText returns preferred corner when text doesn't conflict,
-  // and deviates only when there's explicit text overlap. Pixel busyness is NOT used.
-  const effectiveCorner = findBestCornerFromText(textElements, brand.logo_position);
+  // If a forceCorner was provided (computed by chooseBestCornerByBbox in the route),
+  // use it directly. Otherwise fall back to text-element role-based smart corner.
+  const effectiveCorner = forceCorner || findBestCornerFromText(textElements, brand.logo_position);
   const corner_overridden = effectiveCorner !== brand.logo_position;
 
   let left = margin;
