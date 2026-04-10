@@ -172,6 +172,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     sku: string;
     images_imported: number;
     errors: string[];
+    debug?: { attrs?: Record<string, string>; patterns?: string[]; working?: string | null };
   }[] = [];
 
   // Get all existing cannon imports for this project to avoid duplicates
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
-    const swatchResult = { swatch: swatch.name, sku: swatch.sku_suffix, images_imported: 0, errors: [] as string[] };
+    const swatchResult: typeof results[number] = { swatch: swatch.name, sku: swatch.sku_suffix, images_imported: 0, errors: [] as string[], debug: {} };
 
     try {
       // Find item_id
@@ -272,6 +273,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       for (const attr of item.attributes) {
         if (attr.value_name) attrs[attr.id] = attr.value_name;
       }
+      swatchResult.debug!.attrs = attrs;
 
       const brand = (attrs.BRAND || '').toLowerCase();
       if (!brand.includes('cannon') && !brand.includes('american family')) {
@@ -282,6 +284,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
       // Build Cannon URL patterns and try each one
       const patterns = buildCannonImagePatterns(attrs);
+      swatchResult.debug!.patterns = patterns;
 
       let workingPattern: string | null = null;
       // Find first pattern where _1 exists
@@ -295,6 +298,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         } catch { /* try next */ }
       }
 
+      swatchResult.debug!.working = workingPattern;
       if (!workingPattern) {
         swatchResult.errors.push(`No images found at Cannon (tried: ${patterns.join(', ')})`);
         results.push(swatchResult);
