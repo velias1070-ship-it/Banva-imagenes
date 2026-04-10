@@ -201,32 +201,31 @@ async function regenerateJob(
         if (brandData) brand = brandData as BrandConfig;
       }
 
-      let finalBuffer: Buffer;
+      let finalBuffer: Buffer = sourceBuffer;
       let usedGemini = false;
 
-      // Try Gemini BRAND_ONLY first (colors + typography + text shift)
-      try {
-        logPipelineEvent(jobId, 'BRAND_GEMINI_TRY', 'attempting Gemini BRAND_ONLY');
-        const sourceB64 = sourceBuffer.toString('base64');
+      // ─────────────────────────────────────────────────────────────────
+      // VERIFY + RETRY: try Gemini up to MAX_ATTEMPTS times. After each
+      // attempt, detect text bboxes and measure overlap with the brand
+      // book logo zone. If overlap > 15%, retry. Keep the best result.
+      // ─────────────────────────────────────────────────────────────────
+      const MAX_ATTEMPTS = 3;
+      const OVERLAP_OK = 0.15; // accept threshold
+      const sourceB64 = sourceBuffer.toString('base64');
 
-        // Detect text elements so brand prompt knows what to shift away from logo zone
-        let brandTextElements: import('@/lib/brand').TextElement[] | null = null;
-        if (brand && (brand.logo_position === 'top-left' || brand.logo_position === 'top-right')) {
-          try {
-            const ta = await analyzeTextElements(sourceB64, 'image/png');
-            if (ta?.elements?.length) {
-              brandTextElements = ta.elements;
-              logPipelineEvent(jobId, 'BRAND_TEXT_DETECTED', `${ta.elements.length} elements`);
-            }
-          } catch {}
-        }
+      // Pre-detect text elements once for the brand prompt
+      let brandTextElements: import('@/lib/brand').TextElement[] | null = null;
+      if (brand && (brand.logo_position === 'top-left' || brand.logo_position === 'top-right')) {
+        try {
+          const ta = await analyzeTextElements(sourceB64, 'image/png');
+          if (ta?.elements?.length) {
+            brandTextElements = ta.elements;
+            logPipelineEvent(jobId, 'BRAND_TEXT_DETECTED', `${ta.elements.length} elements`);
+          }
+        } catch {}
+      }
 
-        const geminiResult = await generateImage({
-          heroImageBase64: sourceB64,
-          heroMimeType: 'image/png',
-          swatchImageBase64: sourceB64,
-          swatchMimeType: 'image/png',
-          promptText: `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
+      const brandPromptText = `Reproduce Image 1 preserving the product, scene, composition, background, and lighting. Do NOT change the product itself.
 Image 2 is the SAME image as reference — do NOT use it to change colors or patterns.
 
 IMPORTANT — You MUST apply the brand changes specified below:
@@ -234,26 +233,40 @@ IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text typography/fonts to match the brand fonts below
 - Keep the same text content, only change COLOR and FONT
 
-REPOSITION TITLE — MANDATORY: There is a title text near the top of Image 1. SHIFT it horizontally to the right by approximately 260 pixels so it does not occupy the top-left 250x250px corner. The title and subtitle must START at x=260px (not from the left edge). This is REQUIRED — the top-left 250x250px area must have NO text.
-
-KEEP THE BACKGROUND NATURAL — The top-left corner where the title used to be should now show the SAME background pixels as Image 1 (the wood headboard, wall, fabric, etc. — whatever is naturally there). Do NOT paint a white rectangle. Do NOT add a colored box. Do NOT add any plate or background. Just remove the text from that area and let the original background show through.
+LOGO ZONE — A 200x200px logo will be added in the ${brand?.logo_position || 'top-left'} corner in post-processing. If there is text in that ${brand?.logo_position || 'top-left'} zone, MOVE that text horizontally (to the opposite side) or vertically (slightly down within the same area) to leave the ${brand?.logo_position || 'top-left'} 250x250px clear. DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible — only reposition text that overlaps with the ${brand?.logo_position || 'top-left'} corner.
 
 CRITICAL CONSTRAINTS:
 - Keep image dimensions identical (1200x1200)
 - ALL elements from Image 1 must appear in the output (no cropping at edges, no missing bottom content)
-- The title text MUST be moved right (shift x +260px), not deleted
-- Do NOT add backgrounds, plates, rectangles, or boxes anywhere
-- Do NOT change: product, scene, background, people, layout
+- Only change: text colors, text fonts, and reposition text in the logo zone
+- Do NOT change: product, scene, background, people, layout outside the logo zone
+- Do NOT add: white rectangles, colored plates, background boxes, or any new graphic elements
 
-Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', brandTextElements, 'full') : ''}`,
-          temperature: 0.2,
-        });
+Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyle', brandTextElements, 'full') : ''}`;
 
-        if (geminiResult.success && geminiResult.imageBase64) {
-          // Verify Gemini output is not cropped using PIXEL DIMENSIONS, not byte size.
-          // Byte size is unreliable: a clean recolor of a busy PNG can shrink bytes
-          // to 20% even when the image is full-size, because brand colors flatten
-          // text regions and Gemini compresses differently than the source.
+      // Best-attempt tracking
+      let bestBuffer: Buffer | null = null;
+      let bestOverlap = Infinity;
+      let bestAttempt = 0;
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          logPipelineEvent(jobId, 'BRAND_GEMINI_TRY', `attempt ${attempt}/${MAX_ATTEMPTS}`);
+
+          const geminiResult = await generateImage({
+            heroImageBase64: sourceB64,
+            heroMimeType: 'image/png',
+            swatchImageBase64: sourceB64,
+            swatchMimeType: 'image/png',
+            promptText: brandPromptText,
+            temperature: 0.2,
+          });
+
+          if (!geminiResult.success || !geminiResult.imageBase64) {
+            logPipelineEvent(jobId, 'BRAND_GEMINI_FAILED', `attempt ${attempt}: ${geminiResult.error || 'no image'}`);
+            continue;
+          }
+
           const geminiBuffer = Buffer.from(geminiResult.imageBase64, 'base64');
           const sharp = (await import('sharp')).default;
           const [srcMeta, gemMeta] = await Promise.all([
@@ -264,47 +277,69 @@ Output: 1200x1200px, RGB, PNG.${brand ? buildBrandPromptSection(brand, 'lifestyl
           const srcH = srcMeta.height || 1;
           const gemW = gemMeta.width || 0;
           const gemH = gemMeta.height || 0;
-          const widthRatio = gemW / srcW;
-          const heightRatio = gemH / srcH;
           // Cropped if EITHER dimension fell below 70% of source
-          const cropped = widthRatio < 0.7 || heightRatio < 0.7;
-
-          if (cropped) {
-            logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', `${gemW}x${gemH} vs source ${srcW}x${srcH} — cropped`);
-            finalBuffer = sourceBuffer;
-          } else {
-            finalBuffer = geminiBuffer;
-            usedGemini = true;
-            logPipelineEvent(jobId, 'BRAND_GEMINI_OK', `${gemW}x${gemH} (source ${srcW}x${srcH})`);
+          if (gemW / srcW < 0.7 || gemH / srcH < 0.7) {
+            logPipelineEvent(jobId, 'BRAND_GEMINI_CROP_DETECTED', `attempt ${attempt}: ${gemW}x${gemH} vs ${srcW}x${srcH}`);
+            continue;
           }
-        } else {
-          logPipelineEvent(jobId, 'BRAND_GEMINI_FAILED', geminiResult.error || 'no image');
-          finalBuffer = sourceBuffer;
+
+          // Verify: detect text bboxes and measure overlap with brand book logo zone
+          let attemptOverlap = 0;
+          if (brand) {
+            try {
+              const detected = await detectTextBboxes(
+                geminiBuffer.toString('base64'),
+                'image/png',
+                gemW,
+                gemH,
+              );
+              if (detected && detected.length > 0) {
+                const choice = chooseBestCornerByBbox(gemW, gemH, brand, detected);
+                const brandBookEntry = choice.allCorners.find((c) => c.corner === brand.logo_position);
+                attemptOverlap = brandBookEntry ? brandBookEntry.overlap : 0;
+              }
+            } catch (err) {
+              console.error(`[brand] attempt ${attempt} bbox detection failed:`, err);
+            }
+          }
+
+          logPipelineEvent(jobId, 'BRAND_VERIFY', `attempt ${attempt}: ${gemW}x${gemH}, logo zone overlap ${(attemptOverlap * 100).toFixed(0)}%`);
+
+          // Track best result so far
+          if (attemptOverlap < bestOverlap) {
+            bestOverlap = attemptOverlap;
+            bestBuffer = geminiBuffer;
+            bestAttempt = attempt;
+          }
+
+          // Accept if overlap is below threshold
+          if (attemptOverlap <= OVERLAP_OK) {
+            logPipelineEvent(jobId, 'BRAND_VERIFY_PASS', `attempt ${attempt} accepted (overlap ${(attemptOverlap * 100).toFixed(0)}%)`);
+            break;
+          }
+
+          // Otherwise retry (unless this was the last attempt)
+          if (attempt < MAX_ATTEMPTS) {
+            logPipelineEvent(jobId, 'BRAND_VERIFY_RETRY', `attempt ${attempt} overlap ${(attemptOverlap * 100).toFixed(0)}% > ${OVERLAP_OK * 100}% — retrying`);
+          }
+        } catch (geminiErr) {
+          logPipelineEvent(jobId, 'BRAND_GEMINI_ERROR', `attempt ${attempt}: ${geminiErr instanceof Error ? geminiErr.message : 'unknown'}`);
         }
-      } catch (geminiErr) {
-        logPipelineEvent(jobId, 'BRAND_GEMINI_ERROR', geminiErr instanceof Error ? geminiErr.message : 'unknown');
-        finalBuffer = sourceBuffer;
       }
 
-      // Logo ALWAYS at brand book position. No smart corner, no override, no shift.
-      // Bbox detection is kept for logging only (so collisions are traceable in pipeline_log).
+      if (bestBuffer) {
+        finalBuffer = bestBuffer;
+        usedGemini = true;
+        logPipelineEvent(jobId, 'BRAND_GEMINI_OK', `chosen attempt ${bestAttempt} (overlap ${(bestOverlap * 100).toFixed(0)}%)`);
+      } else {
+        logPipelineEvent(jobId, 'BRAND_GEMINI_FALLBACK', 'all attempts failed — using source');
+      }
+
+      // Logo ALWAYS at brand book position
       let imageBuffer = await ensureOutputSpec(finalBuffer, 1200);
       if (brand) {
-        // Optional: detect text bboxes for collision logging (non-blocking decision)
-        try {
-          const meta = await (await import('sharp')).default(imageBuffer).metadata();
-          const imgW = meta.width || 1200;
-          const imgH = meta.height || 1200;
-          const detected = await detectTextBboxes(imageBuffer.toString('base64'), 'image/png', imgW, imgH);
-          if (detected && detected.length > 0) {
-            const choice = chooseBestCornerByBbox(imgW, imgH, brand, detected);
-            const brandBookOverlap = choice.allCorners.find((c) => c.corner === brand.logo_position)!.overlap;
-            logPipelineEvent(jobId, 'BRAND_LOGO_OVERLAP', `${brand.logo_position}=${(brandBookOverlap * 100).toFixed(0)}% overlap (logo placed here regardless)`);
-          }
-        } catch {}
-        // Always place logo at brand book position — fixed
         imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null, brand.logo_position));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position });
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position, final_overlap_pct: Math.round(bestOverlap * 100) });
       }
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
