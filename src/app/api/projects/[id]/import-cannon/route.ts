@@ -42,14 +42,20 @@ function buildCannonImagePatterns(attrs: Record<string, string>): string[] {
   const isPolar = /polar|fleece/i.test(model + ' ' + fabric + ' ' + design);
 
   const patterns: string[] = [];
-  if (isPolar && colorCompact) {
-    patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
+  if (isPolar) {
+    // With color: sabanaspolar1plazalisomalva (Liso Malva)
+    if (colorCompact) {
+      patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
+    }
+    // Without color: sabanaspolar1plazaaba (Aba — design IS the variant)
+    patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
   }
   if (threadCount) {
     patterns.push(`sabanas${sizeCompact}${threadCount}hilos${designCompact}`);
   }
   if (!patterns.length) {
     patterns.push(`sabanas${sizeCompact}144hilos${designCompact}`);
+    patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
     if (colorCompact) patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
   }
   return patterns;
