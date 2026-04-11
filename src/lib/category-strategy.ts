@@ -848,7 +848,21 @@ Imagen fotorrealista de ${resolution}.`;
   }
 
   if (shotType === 'infografia') {
-    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil. Si hay texto en inglés, TRADÚCELO al español (ej: "No stitching" → "Sin costuras").${darkNote}${qaNote}
+    return `Genera la Imagen 1 con la tela de la Imagen 2.
+
+LAYOUT — PRESERVAR EXACTAMENTE de Imagen 1:
+La Imagen 1 es una INFOGRAFÍA con composición fija. Mantén EXACTAMENTE:
+  - Todos los íconos, logos, badges y marcas
+  - Todo el texto, posición, tamaño y color (si está en inglés tradúcelo al español, ej: "No stitching" → "Sin costuras")
+  - El layout visual completo (divisiones, columnas, fondos)
+  - El encuadre/framing de cada zona de tela visible
+
+REGLA CRÍTICA — SOLO CAMBIA LA TEXTURA DE LA TELA:
+Si una zona de la Imagen 1 muestra un CLOSE-UP de textura plana de tela (sin bordes, sin fold, sin objetos), el resultado debe seguir mostrando un CLOSE-UP de textura plana — solo cambia el color y el patrón visible. NO conviertas un close-up de textura en una almohada, un fold, un objeto con bordes, ni una vista de quilt completo.
+NO inventes bordes, sombras, esquinas, pillows, folds, ni cualquier elemento que no esté en la Imagen 1.
+NO copies la composición o framing del swatch (Imagen 2) — el swatch puede ser una foto de un producto completo, pero solo debes extraer su textura/color/patrón y aplicarlos al área de tela actual de la Imagen 1.
+
+SOLO CAMBIA: el color y el patrón de las zonas de tela.${darkNote}${qaNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
