@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage, type GeminiGenerateResult } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, tintInfografiaLeftHalf } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, tintInfografiaLeftHalf, colorNameToHex } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -502,12 +502,47 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     if (effectiveShotType === 'infografia' && !isBrandOnly) {
       try {
         logPipelineEvent(job.id, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
-        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer);
+        // Color resolution priority (must match regenerateJob):
+        //   1. Swatch name → known Spanish color map (highest confidence)
+        //   2. Cached dominant_color_hex from swatches table
+        //   3. Gemini analyzeSwatchColor (least reliable for full-product swatches)
+        let swatchHex: string | null = null;
+        let colorSource = '';
+        const swatchName = job.swatch?.name as string | null;
+        const nameHex = swatchName ? colorNameToHex(swatchName) : null;
+        if (nameHex) {
+          swatchHex = nameHex;
+          colorSource = `name "${swatchName}" → ${nameHex}`;
+        } else {
+          const cached = job.swatch?.dominant_color_hex as string | null;
+          if (cached) {
+            swatchHex = cached;
+            colorSource = `cached hex ${cached}`;
+          } else {
+            try {
+              const analysis = await analyzeSwatchColor(swatchBuffer.toString('base64'), 'image/png');
+              if (analysis?.dominantHex) {
+                swatchHex = analysis.dominantHex;
+                colorSource = `Gemini "${analysis.colorDescription}" → ${swatchHex}`;
+                await supabase.from('swatches')
+                  .update({ dominant_color_hex: swatchHex, color_description: analysis.colorDescription })
+                  .eq('id', job.swatch.id);
+              }
+            } catch (err) {
+              console.error('[process-next] swatch color analysis failed:', err);
+            }
+          }
+        }
+        if (swatchHex) {
+          logPipelineEvent(job.id, 'INFOGRAFIA_COLOR', colorSource);
+        }
+        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer, swatchHex);
         const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
-        // Build output path matching the convention used later in the file
+        // Build output path — use the EFFECTIVE shot type (what actually got processed),
+        // not the DB field, since the two can diverge (detected_shot_type wins).
         const sku = job.swatch?.sku_suffix || '';
         const color = (job.swatch?.name || '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
-        const shotTypeSlug = (job.hero_shot?.shot_type || 'gen').replace(/[^a-zA-Z0-9]+/g, '-');
+        const shotTypeSlug = (effectiveShotType || 'gen').replace(/[^a-zA-Z0-9]+/g, '-');
         const attempt = job.attempt + 1;
         const slug = [sku, color, shotTypeSlug, `v${attempt}`].filter(Boolean).join('_');
         const outputPath = `projects/${project.id}/generated/${slug}_${job.id.substring(0, 8)}.png`;
