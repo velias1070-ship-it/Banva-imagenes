@@ -71,6 +71,102 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 /**
+ * Map a Spanish color name to a saturated hex color.
+ * Used as a high-confidence fallback when Gemini's swatch analysis returns
+ * confusing results (e.g., for full-product swatches with lots of background).
+ *
+ * Returns null if the name doesn't match any known color.
+ */
+export function colorNameToHex(name: string): string | null {
+  const normalized = name.toLowerCase().trim().replace(/\s+/g, ' ');
+
+  // Map of common Spanish color names → saturated hex
+  const map: Record<string, string> = {
+    // Yellows
+    'amarillo': '#F5D830',
+    'amarillo claro': '#FFEE58',
+    'amarillo oscuro': '#F9A825',
+    'mostaza': '#D4A017',
+    'amber': '#FFBF00',
+
+    // Reds
+    'rojo': '#D0342C',
+    'rojo oscuro': '#8B0000',
+    'borgona': '#800020',
+    'borgoña': '#800020',
+    'vino': '#722F37',
+    'coral': '#FF6F61',
+    'rosa': '#E91E63',
+    'rosa palo': '#F4C2C2',
+    'rosa antiguo': '#C08081',
+    'salmon': '#FA8072',
+    'salmón': '#FA8072',
+    'fucsia': '#FF00FF',
+
+    // Oranges
+    'naranja': '#F57C00',
+    'naranjo': '#F57C00',
+    'terracota': '#C04000',
+
+    // Blues
+    'azul': '#1976D2',
+    'azul marino': '#001F3F',
+    'azul oscuro': '#1A237E',
+    'celeste': '#87CEEB',
+    'turquesa': '#1ABC9C',
+    'cian': '#00BCD4',
+    'aqua': '#00FFFF',
+
+    // Greens
+    'verde': '#388E3C',
+    'verde oliva': '#556B2F',
+    'verde olivo': '#556B2F',
+    'verde menta': '#98FF98',
+    'verde agua': '#7FFFD4',
+    'verde militar': '#4B5320',
+    'verde sage': '#9CAF88',
+    'sage': '#9CAF88',
+    'oliva': '#808000',
+
+    // Purples
+    'morado': '#7B1FA2',
+    'violeta': '#673AB7',
+    'lila': '#C8A2C8',
+    'lavanda': '#B57EDC',
+    'purpura': '#800080',
+    'púrpura': '#800080',
+
+    // Browns
+    'marron': '#6D4C41',
+    'marrón': '#6D4C41',
+    'cafe': '#6F4E37',
+    'café': '#6F4E37',
+    'chocolate': '#3E2723',
+    'beige': '#D7CCA0',
+    'arena': '#E5C8A8',
+    'tostado': '#A0826D',
+
+    // Neutrals
+    'blanco': '#FFFFFF',
+    'crema': '#FFFDD0',
+    'marfil': '#FFFFF0',
+    'negro': '#1A1A1A',
+    'gris': '#808080',
+    'gris claro': '#BDBDBD',
+    'gris oscuro': '#424242',
+    'plata': '#C0C0C0',
+
+    // Special
+    'dorado': '#D4AF37',
+    'oro': '#D4AF37',
+    'cobre': '#B87333',
+    'bronce': '#CD7F32',
+  };
+
+  return map[normalized] || null;
+}
+
+/**
  * Sharp-only color tint for infografia recoloring.
  *
  * Tints the LEFT half of the hero (where the BANVA product fabric usually

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, tintInfografiaLeftHalf } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, tintInfografiaLeftHalf, colorNameToHex } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -512,25 +512,42 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     if (effectiveShotType === 'infografia' && !isBrandOnly) {
       try {
         logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
-        // Get the swatch's dominant hex color via Gemini Flash analysis (cached
-        // in the swatch row when available, or computed fresh otherwise).
-        let swatchHex: string | null = (swatch as Record<string, unknown>).dominant_color_hex as string | null;
-        if (!swatchHex) {
-          try {
-            const analysis = await analyzeSwatchColor(swatchBuffer.toString('base64'), 'image/png');
-            if (analysis?.dominantHex) {
-              swatchHex = analysis.dominantHex;
-              // Cache for future runs
-              await supabase.from('swatches')
-                .update({ dominant_color_hex: swatchHex, color_description: analysis.colorDescription })
-                .eq('id', swatch.id);
-              logPipelineEvent(jobId, 'INFOGRAFIA_COLOR', `Gemini analyzed: ${analysis.colorDescription} (${swatchHex})`);
-            }
-          } catch (err) {
-            console.error('[regenerateJob] swatch color analysis failed:', err);
-          }
+        // Color resolution priority:
+        //   1. Swatch name → known Spanish color map (highest confidence)
+        //   2. Cached dominant_color_hex from swatches table
+        //   3. Gemini analyzeSwatchColor (least reliable for full-product swatches)
+        let swatchHex: string | null = null;
+        let colorSource = '';
+        // 1. Try swatch name mapping
+        const nameHex = swatch.name ? colorNameToHex(swatch.name) : null;
+        if (nameHex) {
+          swatchHex = nameHex;
+          colorSource = `name "${swatch.name}" → ${nameHex}`;
         } else {
-          logPipelineEvent(jobId, 'INFOGRAFIA_COLOR', `cached hex: ${swatchHex}`);
+          // 2. Try cached hex
+          const cached = (swatch as Record<string, unknown>).dominant_color_hex as string | null;
+          if (cached) {
+            swatchHex = cached;
+            colorSource = `cached hex ${cached}`;
+          } else {
+            // 3. Fallback: Gemini analysis (may be inaccurate for full-product swatches)
+            try {
+              const analysis = await analyzeSwatchColor(swatchBuffer.toString('base64'), 'image/png');
+              if (analysis?.dominantHex) {
+                swatchHex = analysis.dominantHex;
+                colorSource = `Gemini "${analysis.colorDescription}" → ${swatchHex}`;
+                // Cache for future runs
+                await supabase.from('swatches')
+                  .update({ dominant_color_hex: swatchHex, color_description: analysis.colorDescription })
+                  .eq('id', swatch.id);
+              }
+            } catch (err) {
+              console.error('[regenerateJob] swatch color analysis failed:', err);
+            }
+          }
+        }
+        if (swatchHex) {
+          logPipelineEvent(jobId, 'INFOGRAFIA_COLOR', colorSource);
         }
         const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer, swatchHex);
         const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
