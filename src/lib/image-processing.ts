@@ -4,14 +4,60 @@ const DARK_SWATCH_THRESHOLD = 115; // brightness 0-255 — swatch images include
 
 /**
  * Get the dominant color of an image as RGB values.
- * Uses Sharp stats — returns the channel-wise average of all non-transparent pixels.
+ *
+ * Uses a saturation-aware approach: filters out near-white, near-black,
+ * and near-grey pixels, then averages the remaining "colorful" pixels.
+ * This avoids the muddy mean that .stats() returns when an image has lots
+ * of white background mixed with the actual color.
+ *
+ * Falls back to channel mean if no saturated pixels found.
  */
 export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number; g: number; b: number }> {
-  const stats = await sharp(imageBuffer).stats();
+  // Resize to a small thumbnail for fast analysis
+  const { data, info } = await sharp(imageBuffer)
+    .resize(150, 150, { fit: 'inside' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const channels = info.channels;
+  let sumR = 0, sumG = 0, sumB = 0, count = 0;
+
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+
+    // Compute saturation (HSL): max-min / max if max>0
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const saturation = max === 0 ? 0 : (max - min) / max;
+    const brightness = max;
+
+    // Skip pixels that are: too dark (text/shadow), too light (white bg), or too desaturated (grey)
+    if (brightness < 40 || brightness > 240) continue;
+    if (saturation < 0.25) continue;
+
+    sumR += r;
+    sumG += g;
+    sumB += b;
+    count++;
+  }
+
+  if (count === 0) {
+    // Fallback: use simple mean
+    const stats = await sharp(imageBuffer).stats();
+    return {
+      r: Math.round(stats.channels[0]?.mean ?? 200),
+      g: Math.round(stats.channels[1]?.mean ?? 200),
+      b: Math.round(stats.channels[2]?.mean ?? 200),
+    };
+  }
+
   return {
-    r: Math.round(stats.channels[0]?.mean ?? 200),
-    g: Math.round(stats.channels[1]?.mean ?? 200),
-    b: Math.round(stats.channels[2]?.mean ?? 200),
+    r: Math.round(sumR / count),
+    g: Math.round(sumG / count),
+    b: Math.round(sumB / count),
   };
 }
 
