@@ -74,11 +74,36 @@ Respond with ONLY a valid JSON object, no markdown:
       jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
 
-    const parsed = JSON.parse(jsonStr);
-    if (!parsed.boxes || !Array.isArray(parsed.boxes)) return null;
+    // Try strict JSON parse first. If it fails (Gemini Flash sometimes returns
+    // malformed JSON with stray characters or hallucinated cyrillic letters
+    // mid-string), fall back to a regex extraction of individual entries.
+    let entries: Array<{ text: string; box: number[] }> = [];
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.boxes && Array.isArray(parsed.boxes)) {
+        entries = parsed.boxes;
+      }
+    } catch {
+      // Regex fallback: extract {"text": "...", "box": [y,x,y,x]} fragments.
+      // Even if the surrounding JSON is broken, we can recover individual bboxes.
+      const re = /"text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"\s*,\s*"box"\s*:\s*\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(jsonStr)) !== null) {
+        entries.push({
+          text: m[1].replace(/\\(.)/g, '$1'),
+          box: [Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])],
+        });
+      }
+      if (entries.length > 0) {
+        console.log(`[bbox-detector] Recovered ${entries.length} bboxes via regex fallback (JSON was malformed)`);
+      } else {
+        console.log('[bbox-detector] JSON parse failed and regex fallback found nothing');
+        return null;
+      }
+    }
 
     const bboxes: TextBbox[] = [];
-    for (const item of parsed.boxes) {
+    for (const item of entries) {
       if (!Array.isArray(item.box) || item.box.length !== 4) continue;
       const [ymin, xmin, ymax, xmax] = item.box.map(Number);
       if ([ymin, xmin, ymax, xmax].some((n) => Number.isNaN(n))) continue;
