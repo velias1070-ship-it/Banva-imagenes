@@ -913,8 +913,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // ── Swatch Fidelity Verification (Gemini 2.5 Pro) — blocks bad images ──
     // Skip for multi-pass (each pass is targeted, verification would exceed 60s timeout)
+    // Skip for infografias (color-only edit, verifier expects full pattern match)
     const isMultiPass = !!promptMetadata.multipass;
-    if (!isBrandOnly && !isMultiPass) {
+    const isInfografia = effectiveShotType === 'infografia';
+    if (isInfografia) {
+      logPipelineEvent(job.id, 'VERIFICATION', 'skipped (infografia color-only edit)');
+    }
+    if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const generatedB64 = imageBuffer.toString('base64');
         // Use the cropped (pre-flatten) swatch for verification — the AI flattener

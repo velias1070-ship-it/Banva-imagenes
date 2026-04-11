@@ -991,8 +991,16 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // ── Swatch Fidelity Verification (Gemini 2.5 Pro) — blocks bad images ──
     // Skip for multi-pass (each pass is targeted, verification would exceed 60s timeout)
+    // Skip for infografias — they use color-only edit (recolor BANVA side to swatch
+    // hue, no pattern application). The verifier compares the result against the
+    // swatch and expects full pattern reproduction, so it would always fail for
+    // intentional color-only edits.
     const isMultiPass = !!promptMetadata.multipass;
-    if (!isBrandOnly && !isMultiPass) {
+    const isInfografia = effectiveShotType === 'infografia';
+    if (isInfografia) {
+      logPipelineEvent(jobId, 'VERIFICATION', 'skipped (infografia color-only edit)');
+    }
+    if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const { verifySwatch } = await import('@/lib/swatch-verifier');
         const generatedB64 = imageBuffer.toString('base64');
