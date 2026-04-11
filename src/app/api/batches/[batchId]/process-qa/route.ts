@@ -193,6 +193,18 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
   }
 
   try {
+    // ML imports have no hero — auto-approve and skip QA
+    if (!job.hero_shot) {
+      await supabase.from('generation_jobs').update({
+        status: 'approved',
+        qa_score: 1.0,
+        qa_feedback: 'Auto-approved (ML import)',
+        updated_at: new Date().toISOString(),
+      }).eq('id', claimedJobId);
+      console.log(`[process-qa] ML import auto-approved: ${claimedJobId.substring(0, 8)}`);
+      return true;
+    }
+
     // Download 3 images: generated + swatch + hero
     const [generatedRes, swatchRes, heroRes] = await Promise.all([
       supabase.storage.from('images').download(job.output_storage_path),

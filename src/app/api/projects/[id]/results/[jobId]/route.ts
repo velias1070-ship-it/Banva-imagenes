@@ -423,6 +423,17 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       return;
     }
 
+    // ML imports cannot be regenerated with Gemini — they're pre-imported MercadoLibre photos
+    // with no hero shot. Return as-is (already approved).
+    if (isMLImport) {
+      logPipelineEvent(jobId, 'ML_IMPORT_SKIP', 'cannot regenerate ML imports');
+      await supabase.from('generation_jobs').update({
+        status: 'approved',
+        updated_at: new Date().toISOString(),
+      }).eq('id', jobId);
+      return;
+    }
+
     // Auto-detect shot type — use cache, skip for BRAND_ONLY
     let effectiveShotType = heroShot ? ((heroShot as Record<string, unknown>).detected_shot_type as string || heroShot.shot_type || 'lifestyle') : 'lifestyle';
     if (isBrandOnly || !heroShot) {

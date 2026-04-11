@@ -338,6 +338,24 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   }
 
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
+  const isMLImport = !job.hero_shot || job.prompt_adjustment === 'ML_IMPORT';
+
+  // ML imports have no hero_shot — they shouldn't go through Gemini generation.
+  // If one ends up here (e.g. delegated from regenerateJob after verification failed),
+  // mark as approved using the existing output instead of crashing.
+  if (isMLImport) {
+    logPipelineEvent(job.id, 'ML_IMPORT_SKIP', 'process-next received ML import — auto-approving', { batch_id: batchId });
+    await supabase
+      .from('generation_jobs')
+      .update({
+        status: 'approved',
+        qa_score: 1.0,
+        qa_feedback: 'Auto-approved (ML import)',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id);
+    return { chain: true, triggerQA: false };
+  }
 
   logPipelineEvent(job.id, 'PICKED_UP', 'process-next chain', { batch_id: batchId, attempt: job.attempt, brand_only: isBrandOnly });
 
