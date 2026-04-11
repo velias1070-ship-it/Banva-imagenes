@@ -226,22 +226,26 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     console.log(`[process-next] Self-healed: triggered QA chain for ${staleQaCount} stale qa_pending jobs`);
   }
 
-  // Get ONE pending job with relations
-  const { data: jobs } = await supabase
-    .from('generation_jobs')
-    .select(`
-      *,
-      hero_shot:hero_shots(*),
-      swatch:swatches(*)
-    `)
-    .eq('batch_id', batchId)
-    .eq('status', 'pending')
-    .order('created_at', { ascending: true })
-    .limit(1);
+  // ── ATOMIC CLAIM ──
+  // Uses claim_next_job() RPC which wraps UPDATE...WHERE status='pending'
+  // FOR UPDATE SKIP LOCKED in a single atomic statement. Two concurrent
+  // invocations of process-next cannot claim the same job. Fixes the
+  // re-pickup / parallel-pickup race that caused jobs to be processed 3-8
+  // times in the historical data (135 jobs with 2+ PICKED_UP events).
+  const workerId = `${process.env.VERCEL_REGION || 'local'}-${crypto.randomUUID().slice(0, 8)}`;
+  const { data: claimedJobs, error: claimErr } = await supabase
+    .rpc('claim_next_job', { p_batch_id: batchId, p_worker_id: workerId });
 
-  if (!jobs?.length) {
-    // No more pending jobs — generation chain complete
-    console.log('[process-next] No pending jobs for batch:', batchId);
+  if (claimErr) {
+    console.error('[process-next] claim_next_job RPC failed:', claimErr.message);
+    return { chain: false, triggerQA: false };
+  }
+
+  const claimedJob = Array.isArray(claimedJobs) && claimedJobs.length > 0 ? claimedJobs[0] : null;
+
+  if (!claimedJob) {
+    // No more pending jobs — generation chain complete (or claimed by another worker)
+    console.log('[process-next] No pending jobs claimable for batch:', batchId);
 
     // Safety net: ensure QA chain is running for any remaining qa_pending or qa_processing
     const { count: qaNeededCount } = await supabase
@@ -275,7 +279,18 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     return { chain: false, triggerQA: false };
   }
 
-  const job = jobs[0];
+  // Fetch hero_shot and swatch for the claimed job (the RPC returns the raw
+  // job row without joins — two lookups are fine, they're both single-row by PK).
+  const [{ data: heroShotData }, { data: swatchData }] = await Promise.all([
+    claimedJob.hero_shot_id
+      ? supabase.from('hero_shots').select('*').eq('id', claimedJob.hero_shot_id).single()
+      : Promise.resolve({ data: null }),
+    claimedJob.swatch_id
+      ? supabase.from('swatches').select('*').eq('id', claimedJob.swatch_id).single()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  const job = { ...claimedJob, hero_shot: heroShotData, swatch: swatchData };
   const project = batch.project;
   const category = project?.category || 'textile';
   const strategy = getCategoryStrategy(category);
@@ -529,19 +544,29 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       ? projectSettings.generation.mode
       : getEffectiveMode(strategy, job.attempt);
 
-    // For categories that default to 'reference': auto-detect if edit mode is better.
-    // If hero and swatch have the same pattern type, edit mode just changes color
-    // and preserves the existing texture — much more reliable than generating from scratch.
+    // Pattern comparison decides the correct mode:
+    //   - patterns SIMILAR     → edit   (color change only, preserves texture)
+    //   - patterns DIFFERENT   → from_scratch (edit mode would filter hero's pattern)
+    //   - quilts specifically: documented Gemini limitation with 3D quilting textures,
+    //     so mismatched patterns MUST go to from_scratch or they waste 3-8 attempts
+    //     chasing a pattern that edit mode physically cannot change.
+    //   - not run for BRAND_ONLY (we're not changing the product).
     let patternSimilarity: boolean | null = null;
-    if (effectiveMode === 'reference' && !isBrandOnly) {
+    let patternAutoSwitchReason: string | null = null;
+    if (!isBrandOnly && job.hero_shot) {
       try {
         patternSimilarity = await arePatternsSimlar(
           heroBase64, job.hero_shot.mime_type || 'image/png',
           swatchBase64, 'image/png',
         );
-        if (patternSimilarity) {
+        if (patternSimilarity === true && effectiveMode === 'reference') {
           effectiveMode = 'edit';
-          console.log(`[process-next] Patterns similar → switching to edit mode (color change only)`);
+          patternAutoSwitchReason = 'patterns_similar_reference_to_edit';
+          console.log(`[process-next] Patterns similar → switching to edit (color change only)`);
+        } else if (patternSimilarity === false && effectiveMode === 'edit' && category === 'quilts') {
+          effectiveMode = 'from_scratch';
+          patternAutoSwitchReason = 'patterns_differ_quilts_edit_to_from_scratch';
+          console.log(`[process-next] Quilts with different pattern → switching to from_scratch (edit mode cannot replace 3D quilting)`);
         }
       } catch (err) {
         console.error('[process-next] Pattern comparison failed (using default):', err);
@@ -827,6 +852,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       swatch_pattern_analyzed: !!swatchPatternDescription,
       // ─── Observability v1 (commit 1 — data capture) ───
       pattern_similarity: patternSimilarity,          // null | true | false
+      pattern_auto_switch_reason: patternAutoSwitchReason, // null | reason string
       shot_type_detection: shotTypeDetectionMeta,     // {confidence, description, overridden}
       force_edit: forceEdit,
       force_edit_reason: forceEdit
@@ -834,13 +860,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             ? effectiveShotType
             : 'infografia_edit_default')
         : null,
+      worker_id: workerId,
     };
 
-    // Mark as generating
+    // Persist prompt + attempt increment. Status was already set to 'generating'
+    // atomically by claim_next_job() at the top of this function.
     await supabase
       .from('generation_jobs')
       .update({
-        status: 'generating',
         prompt_text: prompt,
         attempt: job.attempt + 1,
         prompt_metadata: promptMetadata,
