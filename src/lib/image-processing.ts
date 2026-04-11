@@ -201,20 +201,43 @@ export async function tintInfografiaLeftHalf(
   const H = heroMeta.height || 1200;
   const halfW = Math.floor(W / 2);
 
-  // Crop the swatch to its fabric region (avoids bedroom scene / props
-  // bleeding into the output when the swatch is a full lifestyle photo).
-  const swatchFabric = await cropSwatchToFabric(swatchBuffer);
+  // Tighter fabric crop than cropSwatchToFabric — the generic crop takes
+  // y 30%-70%, which for a bedroom lifestyle swatch still includes pillows
+  // and the top of the headboard. Infografia composition needs ONLY flat
+  // fabric surface, so we take y 55%-90% (the middle-lower portion of the
+  // quilt, well away from headboard/pillows/footer).
+  const swatchMeta = await sharp(swatchBuffer).metadata();
+  const sw = swatchMeta.width || 800;
+  const sh = swatchMeta.height || 800;
+  const cropLeft = Math.round(sw * 0.20);
+  const cropTop = Math.round(sh * 0.55);
+  const cropW = Math.round(sw * 0.60);
+  const cropH = Math.round(sh * 0.35);
+  const fabricCrop = await sharp(swatchBuffer)
+    .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+    .toBuffer();
 
-  // Resize the cropped swatch to exactly the left-half dimensions so we
-  // cover the whole Banva side without tiling artefacts.
-  const swatchLayer = await sharp(swatchFabric)
+  // Brighten the fabric crop before compositing. The raw crop has real-world
+  // shading and folds that make the average pixel ~60-70% lightness, so a
+  // multiply blend with the hero's gray waffle (~85% lightness) produces
+  // muddy colors. We lift midtones so the fabric AVERAGE is near-white while
+  // the pattern (darker flowers, shadows) stays visible in contrast. Linear
+  // a=1.4, b=20 approximately maps 120 -> 188, 200 -> 300(clamped), 40 -> 76.
+  const brightenedFabric = await sharp(fabricCrop)
+    .linear(1.35, 15)
+    .modulate({ saturation: 1.2 })  // boost saturation slightly after brightening
+    .toBuffer();
+
+  // Resize the cropped+brightened fabric to the left-half dimensions.
+  const swatchLayer = await sharp(brightenedFabric)
     .resize(halfW, H, { fit: 'cover', position: 'center' })
     .png()
     .toBuffer();
 
-  // Composite with multiply blend: dark pixels (text, icons, checkmarks)
-  // stay dark (dark × swatch = dark), light pixels (waffle background)
-  // take on the swatch pattern.
+  // Multiply blend: text/icons (dark) × fabric = still dark → preserved.
+  // Waffle (light gray) × fabric (brightened) = fabric pattern at near-full
+  // saturation because the fabric was pre-lifted to compensate for the hero
+  // not being pure white.
   const result = await sharp(heroBuffer)
     .composite([
       {
@@ -227,7 +250,7 @@ export async function tintInfografiaLeftHalf(
     .png()
     .toBuffer();
 
-  console.log(`[image-processing] Applied swatch fabric to infografia left half (${halfW}x${H})`);
+  console.log(`[image-processing] Applied swatch fabric (tight crop + brighten) to infografia left half (${halfW}x${H})`);
   return result;
 }
 
