@@ -855,34 +855,9 @@ Imagen fotorrealista de ${resolution}.`;
   }
 
   if (shotType === 'infografia') {
-    const swatchColorName = colorDescription || swatchName || 'el color del swatch';
-    return `Recolor task on a marketing infographic.
+    return `Toma Imagen 1 (infografía de comparación Banva Home vs Others) y reemplaza la tela del LADO IZQUIERDO (bajo "Banva Home") con la tela de Imagen 2. El resultado debe ser idéntico a Imagen 1 excepto que el fabric del lado izquierdo ahora es el de Imagen 2 (color + patrón + textura completos del swatch).
 
-Image 1 is a fixed marketing layout (an infographic comparing a product). Image 2 is the new color swatch (${swatchColorName}).
-
-PRESERVE EXACTAMENTE de Imagen 1 (no cambies NADA de esto):
-  - El layout completo: divisiones, columnas, fondos, tamaños
-  - TODO el texto: cada palabra, cada checkmark, cada X mark, cada badge
-  - Todos los iconos, logos y elementos gráficos
-  - Posición, tamaño y color de cada texto
-  - El encuadre/framing de cada zona de tela
-  - El LADO DERECHO (bajo "Others", "Otros", o el lado de competidor) DEBE quedar IDÉNTICO a Imagen 1 — misma tela, misma textura, mismo aspecto. NO le apliques el swatch al lado de competidor.
-
-EL ÚNICO CAMBIO PERMITIDO:
-Recolorea la tela del LADO IZQUIERDO (bajo "Banva Home" o el lado del producto propio) para que coincida con el color "${swatchColorName}" de Imagen 2.
-  - Mantén la MISMA textura de tela (waffle, dots, channels — lo que sea que tenga)
-  - Mantén la MISMA forma, mismo encuadre close-up — NO conviertas el close-up en almohada, fold, ni objeto con bordes
-  - Mantén el mismo brillo, sombras, iluminación
-  - SOLO cambia el HUE (tono de color) para que el blanco se vea ${swatchColorName}
-  - NO apliques el patrón floral/estampado del swatch — solo su color dominante
-  - NO inventes flores, hojas, formas decorativas en la tela
-
-PROHIBIDO:
-  - Cambiar cualquier texto
-  - Modificar el lado derecho ("Others")
-  - Aplicar el patrón floral del swatch (solo el color)
-  - Inventar bordes, almohadas, objetos
-  - Cambiar el layout o framing${darkNote}${qaNote}
+El lado derecho ("Others"), todo el texto, los checkmarks, los iconos, el logo, la gota/ilustración, el layout y el framing quedan EXACTAMENTE IGUAL a Imagen 1 — no los toques.${darkNote}${qaNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
