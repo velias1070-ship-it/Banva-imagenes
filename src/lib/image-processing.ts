@@ -218,16 +218,20 @@ export async function tintInfografiaLeftHalf(
     .png()
     .toBuffer();
 
-  // Composite the tint over the LEFT half using multiply blend mode.
-  // Multiply darkens dark areas (text/icons stay dark) and tints light areas
-  // (white fabric becomes the swatch color).
+  // Composite the tint over the LEFT half using overlay blend mode.
+  // Overlay multiplies dark pixels (text/icons stay dark and readable) AND
+  // screens light pixels (gray waffle becomes the full swatch color instead
+  // of muddy/olive). Multiply alone produces olive/khaki when the hero is
+  // not pure white — e.g. Amarillo (#F5D830) multiplied by gray waffle gives
+  // mustard instead of yellow. Overlay fixes that by treating light and dark
+  // areas differently.
   const result = await sharp(heroBuffer)
     .composite([
       {
         input: tintLayer,
         left: 0,
         top: 0,
-        blend: 'multiply',
+        blend: 'overlay',
       },
     ])
     .png()
