@@ -48,7 +48,13 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     // can't replace the embossed pattern, leaving hero stitching bleeding through.
     generation_mode: 'edit',
     retry_escalation: 'reference',
-    preprocessing: { crop_swatch: true, flatten_hero: false, flatten_swatch_ai: false },
+    // flatten_hero: true — pre-process the hero with Sharp (linear lift + gaussian
+    // blur + contrast reduce) to remove its 3D relief (waffle dots, channel
+    // stitching) BEFORE sending to Gemini. This prevents hero texture from
+    // bleeding through when the swatch is a flat printed pattern. NOTE: this is
+    // the simple Sharp flattener, NOT the AI swatch flattener (flatten_swatch_ai)
+    // which had separate bugs and stays disabled.
+    preprocessing: { crop_swatch: true, flatten_hero: true, flatten_swatch_ai: false },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
