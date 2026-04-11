@@ -841,15 +841,27 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             imgW,
             imgH,
           );
-          if (detected && detected.length > 0) {
+          // Diagnostic logging — see exactly what bbox detection returned
+          if (!detected) {
+            logPipelineEvent(jobId, 'BRAND_BAKED_IN_CHECK', 'detection returned null (parse failure?)');
+          } else if (detected.length === 0) {
+            logPipelineEvent(jobId, 'BRAND_BAKED_IN_CHECK', '0 bboxes detected');
+          } else {
+            const overlapping = detected
+              .map((tb) => ({ tb, overlap: logoOverlapFraction(logoBox, tb) }))
+              .filter((x) => x.overlap >= 0.05);
+            const summary = overlapping
+              .slice(0, 3)
+              .map((x) => `"${x.tb.text.replace(/\s+/g, ' ').slice(0, 20)}" ${(x.overlap * 100).toFixed(0)}%`)
+              .join(', ');
+            logPipelineEvent(jobId, 'BRAND_BAKED_IN_CHECK', `${detected.length} bboxes, ${overlapping.length} in zone${overlapping.length > 0 ? ': ' + summary : ''}`);
+
             // Build all words of the brand name (case-insensitive) for matching
             const brandWords = brand.name
               .toLowerCase()
               .split(/\s+/)
               .filter((w) => w.length >= 4); // ignore short words like "de", "la"
-            for (const tb of detected) {
-              const overlap = logoOverlapFraction(logoBox, tb);
-              if (overlap < 0.05) continue; // bbox not in logo zone
+            for (const { tb, overlap } of overlapping) {
               const text = tb.text.toLowerCase();
               const hasBrandWord = brandWords.some((w) => text.includes(w));
               if (hasBrandWord) {
@@ -860,6 +872,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             }
           }
         } catch (detectErr) {
+          logPipelineEvent(jobId, 'BRAND_BAKED_IN_ERROR', detectErr instanceof Error ? detectErr.message : String(detectErr));
           console.error('[regenerateJob] Brand baked-in detection failed:', detectErr);
         }
 
