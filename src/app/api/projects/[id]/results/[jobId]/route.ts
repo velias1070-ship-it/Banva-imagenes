@@ -872,11 +872,62 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Detection: bbox text in the logo bbox containing the brand name.
     if (brand) {
       try {
-        // Pre-check from the hero source: if the hero already had brand
-        // baked in, we know edit mode preserved it → skip overlay.
-        let brandAlreadyVisible = heroHasBrandBakedIn;
+        // Decision: skip Sharp overlay only if the brand is ACTUALLY visible
+        // in the result's logo zone (not just because the hero had it — Gemini
+        // sometimes covers the brand area with the new fabric pattern, in which
+        // case we need to re-add the brand via Sharp).
+        //
+        // Strategy: if heroHasBrandBakedIn was true, compare the hero's logo
+        // zone region with the result's logo zone region pixel-by-pixel. If
+        // they're similar (low MAE), Gemini preserved → skip overlay. If
+        // they diverge (high MAE), Gemini modified → apply overlay.
+        let brandAlreadyVisible = false;
         if (heroHasBrandBakedIn) {
-          logPipelineEvent(jobId, 'BRAND_BAKED_IN', 'hero source had brand baked in — skipping overlay');
+          try {
+            const sharpCmp = (await import('sharp')).default;
+            const meta = await sharpCmp(imageBuffer).metadata();
+            const imgW = meta.width || 1200;
+            const imgH = meta.height || 1200;
+            const { getLogoBbox } = await import('@/lib/brand');
+            const logoBox = getLogoBbox(brand, imgW, imgH);
+            // Extract result logo zone
+            const resultRegion = await sharpCmp(imageBuffer)
+              .extract({ left: logoBox.x, top: logoBox.y, width: logoBox.width, height: logoBox.height })
+              .resize(100, 100, { fit: 'fill' })
+              .greyscale()
+              .raw()
+              .toBuffer();
+            // Extract hero logo zone (resized to same dims for comparison)
+            const heroMeta = await sharpCmp(heroBuffer).metadata();
+            const hW = heroMeta.width || imgW;
+            const hH = heroMeta.height || imgH;
+            // Use proportional logo zone in hero (in case dimensions differ)
+            const heroLogoX = Math.round((logoBox.x / imgW) * hW);
+            const heroLogoY = Math.round((logoBox.y / imgH) * hH);
+            const heroLogoW = Math.round((logoBox.width / imgW) * hW);
+            const heroLogoH = Math.round((logoBox.height / imgH) * hH);
+            const heroRegion = await sharpCmp(heroBuffer)
+              .extract({ left: heroLogoX, top: heroLogoY, width: heroLogoW, height: heroLogoH })
+              .resize(100, 100, { fit: 'fill' })
+              .greyscale()
+              .raw()
+              .toBuffer();
+            // Compute mean absolute difference (0-255)
+            let diffSum = 0;
+            for (let i = 0; i < resultRegion.length; i++) {
+              diffSum += Math.abs(resultRegion[i] - heroRegion[i]);
+            }
+            const mae = diffSum / resultRegion.length;
+            // Threshold: if MAE < 25, the regions look similar → brand preserved
+            if (mae < 25) {
+              brandAlreadyVisible = true;
+              logPipelineEvent(jobId, 'BRAND_BAKED_IN', `hero logo zone matches result (MAE ${mae.toFixed(1)}) — Gemini preserved, skipping overlay`);
+            } else {
+              logPipelineEvent(jobId, 'BRAND_LOGO_DIVERGED', `hero MAE ${mae.toFixed(1)} > 25 — Gemini modified logo zone, will apply overlay`);
+            }
+          } catch (cmpErr) {
+            logPipelineEvent(jobId, 'BRAND_BAKED_IN_ERROR', cmpErr instanceof Error ? cmpErr.message : 'compare failed');
+          }
         }
         try {
           const sharp = (await import('sharp')).default;
