@@ -176,6 +176,52 @@ async function regenerateJob(
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
 
+    // Pre-check: does the HERO source already have the brand baked in?
+    // We check the hero (not the result) because:
+    //   - hero is stable, never modified
+    //   - if hero has brand, edit mode preserves it → result has brand
+    //   - post-Gemini detection is unreliable: flatten/blur can make text
+    //     unrecognizable to bbox detection even though it's still visible
+    // This flag is consumed later, before the Sharp overlay step.
+    let heroHasBrandBakedIn = false;
+    if (!isMLImport && heroBuffer.length > 0) {
+      try {
+        // Lazy-load brand and check for its text in hero's logo zone
+        const brandIdEarly = brandId || (projectMetadata?.brand_id as string | undefined);
+        if (brandIdEarly) {
+          const { data: brandEarly } = await supabase.from('brands').select('name, logo_position, logo_size_px, logo_margin_px').eq('id', brandIdEarly).single();
+          if (brandEarly?.name) {
+            const sharpEarly = (await import('sharp')).default;
+            const heroMeta = await sharpEarly(heroBuffer).metadata();
+            const hW = heroMeta.width || 1200;
+            const hH = heroMeta.height || 1200;
+            const { getLogoBboxForCorner, logoOverlapFraction } = await import('@/lib/brand');
+            const logoBoxHero = getLogoBboxForCorner(brandEarly.logo_position, brandEarly as BrandConfig, hW, hH);
+            const heroBboxes = await detectTextBboxes(heroBuffer.toString('base64'), heroShot?.mime_type || 'image/png', hW, hH);
+            if (heroBboxes && heroBboxes.length > 0) {
+              const brandWords = brandEarly.name.toLowerCase().split(/\s+/).filter((w: string) => w.length >= 4);
+              for (const tb of heroBboxes) {
+                const overlap = logoOverlapFraction(logoBoxHero, tb);
+                if (overlap < 0.05) continue;
+                if (brandWords.some((w: string) => tb.text.toLowerCase().includes(w))) {
+                  heroHasBrandBakedIn = true;
+                  logPipelineEvent(jobId, 'HERO_BRAND_BAKED_IN', `"${tb.text.replace(/\s+/g, ' ').slice(0, 30)}" in hero logo zone (overlap ${(overlap * 100).toFixed(0)}%)`);
+                  break;
+                }
+              }
+              if (!heroHasBrandBakedIn) {
+                logPipelineEvent(jobId, 'HERO_BRAND_CHECK', `${heroBboxes.length} bboxes, none match brand at logo zone`);
+              }
+            } else {
+              logPipelineEvent(jobId, 'HERO_BRAND_CHECK', 'no bboxes in hero');
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[regenerateJob] hero brand check failed:', err);
+      }
+    }
+
     // ── BRAND_ONLY: Try Gemini (colors + typography + text shift), fallback to Sharp (logo only) ──
     if (isBrandOnly) {
       // Use pre-brand backup if it exists (avoids accumulating logos on multiple Brand clicks)
@@ -826,8 +872,12 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Detection: bbox text in the logo bbox containing the brand name.
     if (brand) {
       try {
-        // Check if the brand is already baked into the logo zone
-        let brandAlreadyVisible = false;
+        // Pre-check from the hero source: if the hero already had brand
+        // baked in, we know edit mode preserved it → skip overlay.
+        let brandAlreadyVisible = heroHasBrandBakedIn;
+        if (heroHasBrandBakedIn) {
+          logPipelineEvent(jobId, 'BRAND_BAKED_IN', 'hero source had brand baked in — skipping overlay');
+        }
         try {
           const sharp = (await import('sharp')).default;
           const meta = await sharp(imageBuffer).metadata();
