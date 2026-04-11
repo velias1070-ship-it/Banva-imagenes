@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, tintInfografiaLeftHalf } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -502,6 +502,38 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     }
 
     logPipelineEvent(jobId, 'SHOT_TYPE', effectiveShotType, { cached: !!(heroShot as Record<string, unknown>)?.detected_shot_type });
+
+    // ── INFOGRAFIA SHORTCUT: skip Gemini entirely, use Sharp tint ──
+    // Gemini corrupts text content in infografias (replaces words with similar-
+    // looking gibberish like "Mantene y eclocamiento de complexa"). For comparison
+    // shots like Banva vs Others infografias, the layout/text are CRITICAL and
+    // must be preserved pixel-perfect. Sharp tint of the left half achieves
+    // recoloring without ever touching text/badges/right side.
+    if (effectiveShotType === 'infografia' && !isBrandOnly) {
+      try {
+        logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
+        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer);
+        const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
+        const outputPath = `projects/${projectId}/generated/${jobId}.png`;
+        await supabase.storage.from('images').upload(outputPath, tintedBuffer, { contentType: 'image/png', upsert: true });
+        logPipelineEvent(jobId, 'UPLOAD', outputPath);
+        await supabase.from('generation_jobs').update({
+          status: 'approved',
+          output_storage_path: outputPath,
+          generation_time_ms: 0,
+          gemini_model_used: 'sharp-tint',
+          attempt: attempt + 1,
+          qa_score: 1.0,
+          qa_feedback: 'Auto-approved (infografia Sharp tint)',
+          updated_at: new Date().toISOString(),
+        }).eq('id', jobId);
+        logPipelineEvent(jobId, 'STATUS', 'approved', { method: 'sharp-tint' });
+        return;
+      } catch (err) {
+        logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT_FAILED', err instanceof Error ? err.message : 'unknown');
+        console.error('[regenerateJob] Infografia Sharp tint failed, falling back to Gemini:', err);
+      }
+    }
 
     // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;

@@ -3,6 +3,76 @@ import sharp from 'sharp';
 const DARK_SWATCH_THRESHOLD = 115; // brightness 0-255 — swatch images include context (pillows, bg) that raise the average
 
 /**
+ * Get the dominant color of an image as RGB values.
+ * Uses Sharp stats — returns the channel-wise average of all non-transparent pixels.
+ */
+export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number; g: number; b: number }> {
+  const stats = await sharp(imageBuffer).stats();
+  return {
+    r: Math.round(stats.channels[0]?.mean ?? 200),
+    g: Math.round(stats.channels[1]?.mean ?? 200),
+    b: Math.round(stats.channels[2]?.mean ?? 200),
+  };
+}
+
+/**
+ * Sharp-only color tint for infografia recoloring.
+ *
+ * Tints the LEFT half of the hero (where the BANVA product fabric usually
+ * is) towards the swatch's dominant color. The RIGHT half (Others / competitor)
+ * stays untouched. Text, badges, icons, layout — all preserved pixel-perfect
+ * because Gemini is never called on this image.
+ *
+ * Strategy: tint via multiply blend on white-ish pixels only. Dark pixels
+ * (text, icons) stay dark and unchanged.
+ */
+export async function tintInfografiaLeftHalf(
+  heroBuffer: Buffer,
+  swatchBuffer: Buffer,
+): Promise<Buffer> {
+  // Get hero dimensions
+  const heroMeta = await sharp(heroBuffer).metadata();
+  const W = heroMeta.width || 1200;
+  const H = heroMeta.height || 1200;
+  const halfW = Math.floor(W / 2);
+
+  // Get the swatch's dominant color (the actual swatch fabric color)
+  // We use the cropped swatch (just the fabric area, not background)
+  // to get a more accurate dominant color.
+  const { r, g, b } = await getDominantColor(swatchBuffer);
+
+  // Build a tint overlay: a solid color of swatch tone, half-width, full height
+  const tintLayer = await sharp({
+    create: {
+      width: halfW,
+      height: H,
+      channels: 4,
+      background: { r, g, b, alpha: 1 },
+    },
+  })
+    .png()
+    .toBuffer();
+
+  // Composite the tint over the LEFT half using multiply blend mode.
+  // Multiply darkens dark areas (text/icons stay dark) and tints light areas
+  // (white fabric becomes the swatch color).
+  const result = await sharp(heroBuffer)
+    .composite([
+      {
+        input: tintLayer,
+        left: 0,
+        top: 0,
+        blend: 'multiply',
+      },
+    ])
+    .png()
+    .toBuffer();
+
+  console.log(`[image-processing] Tinted infografia left half with swatch color rgb(${r},${g},${b})`);
+  return result;
+}
+
+/**
  * Analyze average brightness of an image.
  * Returns value 0-255 where 0=black, 255=white.
  */

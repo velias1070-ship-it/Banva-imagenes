@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, tintInfografiaLeftHalf } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -470,6 +470,47 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     }
 
     logPipelineEvent(job.id, 'SHOT_TYPE', effectiveShotType, { cached: !!job.hero_shot.detected_shot_type });
+
+    // ── INFOGRAFIA SHORTCUT: skip Gemini, use Sharp tint ──
+    if (effectiveShotType === 'infografia' && !isBrandOnly) {
+      try {
+        logPipelineEvent(job.id, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
+        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer);
+        const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
+        // Build output path matching the convention used later in the file
+        const sku = job.swatch?.sku_suffix || '';
+        const color = (job.swatch?.name || '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+        const shotTypeSlug = (job.hero_shot?.shot_type || 'gen').replace(/[^a-zA-Z0-9]+/g, '-');
+        const attempt = job.attempt + 1;
+        const slug = [sku, color, shotTypeSlug, `v${attempt}`].filter(Boolean).join('_');
+        const outputPath = `projects/${project.id}/generated/${slug}_${job.id.substring(0, 8)}.png`;
+        await supabase.storage.from('images').upload(outputPath, tintedBuffer, { contentType: 'image/png', upsert: true });
+        logPipelineEvent(job.id, 'UPLOAD', outputPath);
+        await supabase.from('generation_jobs').update({
+          status: 'approved',
+          output_storage_path: outputPath,
+          generation_time_ms: 0,
+          gemini_model_used: 'sharp-tint',
+          attempt,
+          qa_score: 1.0,
+          qa_feedback: 'Auto-approved (infografia Sharp tint)',
+          updated_at: new Date().toISOString(),
+        }).eq('id', job.id);
+        logPipelineEvent(job.id, 'STATUS', 'approved', { method: 'sharp-tint' });
+        // Update batch counters and chain to next job
+        await supabase
+          .from('generation_batches')
+          .update({
+            completed_count: (batch.completed_count || 0) + 1,
+            approved_count: (batch.approved_count || 0) + 1,
+          })
+          .eq('id', batchId);
+        return { chain: true, triggerQA: false };
+      } catch (err) {
+        logPipelineEvent(job.id, 'INFOGRAFIA_SHARP_TINT_FAILED', err instanceof Error ? err.message : 'unknown');
+        console.error('[process-next] Infografia Sharp tint failed, falling back to Gemini:', err);
+      }
+    }
 
     // ── Determine effective generation mode ──
     let effectiveMode = projectSettings.generation.mode !== 'auto'
