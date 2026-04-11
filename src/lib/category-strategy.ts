@@ -63,11 +63,19 @@ There are NO sheets and NO fitted sheets in this product.`,
       what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
 
       what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
-Match what the swatch (Image 2) actually shows:
-  - If the swatch is a FLAT PRINTED pattern (e.g. floral, geometric print on smooth fabric) → make the result FLAT and smooth, NO quilting stitching, NO embossed texture, NO channels, NO dots. Only the printed pattern on flat fabric.
+
+PATTERN COVERAGE — CRITICAL:
+The pattern from Image 2 MUST cover EVERY part of the visible fabric UNIFORMLY.
+Do NOT leave any blank, white, or empty areas — every square inch of fabric must show the swatch pattern at the same density as Image 2.
+If you see fabric without pattern, you have failed.
+
+SURFACE TYPE — match what the swatch (Image 2) actually shows:
+  - If the swatch is a FLAT PRINTED pattern (floral, geometric print on smooth fabric) → make the result FLAT and smooth, NO quilting stitching, NO embossed texture, NO channels, NO dots. Only the printed pattern on flat fabric.
   - If the swatch shows visible QUILTING (channel stitching, diamond stitching, waffle, etc) → reproduce that exact quilting pattern.
   - DO NOT invent texture that is not present in Image 2.
   - DO NOT preserve any texture from Image 1 (the hero) — the hero's relief, waffle, channel stitching, etc must be COMPLETELY removed.
+
+COMPOSITION — preserve from Image 1:
 Maintain EXACTLY the same fabric folds, creases, draping, and disposition as Image 1.
 The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern/surface changes.
 If Image 1 shows a comparison (left vs right), apply the new pattern to BOTH sides.
