@@ -65,6 +65,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   let mode: string | undefined;
   let forceMode: 'edit' | 'reference' | undefined;
   let skipFlatten = false;
+  let useGemini = false;
   try {
     const body = await _request.json();
     mode = body?.mode;
@@ -74,6 +75,9 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     }
     if (body?.skip_flatten === true) {
       skipFlatten = true;
+    }
+    if (body?.use_gemini === true) {
+      useGemini = true;
     }
   } catch {
     // No body or invalid JSON — normal regeneration
@@ -128,7 +132,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten, useGemini);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -146,6 +150,7 @@ async function regenerateJob(
   brandId?: string | null,
   forceMode?: 'edit' | 'reference',
   skipFlatten: boolean = false,
+  useGemini: boolean = false,
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string> | null;
@@ -514,7 +519,7 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     // shots like Banva vs Others infografias, the layout/text are CRITICAL and
     // must be preserved pixel-perfect. Sharp tint of the left half achieves
     // recoloring without ever touching text/badges/right side.
-    if (effectiveShotType === 'infografia' && !isBrandOnly) {
+    if (effectiveShotType === 'infografia' && !isBrandOnly && !useGemini) {
       try {
         logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
         // Color resolution priority:
