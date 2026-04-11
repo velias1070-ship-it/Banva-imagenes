@@ -950,6 +950,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
         gemini_model_used: useProModel ? (process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview'),
+        error_message: null,
         updated_at: new Date().toISOString(),
         ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })
