@@ -812,6 +812,17 @@ export function buildEditPrompt(
   const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
 
   if (shotType === 'detail') {
+    // If the strategy has a category-specific detail rule, use it (overrides generic).
+    // This is crucial for quilts where we must NOT invent texture and must NOT
+    // preserve hero relief.
+    const detailRule = strategy.prompt.what_to_change_detail;
+    if (detailRule) {
+      return `Genera la Imagen 1 (close-up de tela) con la tela de la Imagen 2.
+
+${detailRule}${darkNote}${qaNote}
+
+Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
+    }
     return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}
 
 Imagen fotorrealista de ${resolution}.`;
