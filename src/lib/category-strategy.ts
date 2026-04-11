@@ -888,30 +888,9 @@ Imagen fotorrealista de ${resolution}.`;
   // Use shot-type-aware instructions if category has them
   const whatToChange = strategy.prompt.what_to_change;
 
-  return `TAREA: PIXEL-EDIT de Imagen 1. El output debe ser byte-por-byte idéntico a Imagen 1, excepto las superficies textiles del producto, que deben tomar el color, patrón y textura de Imagen 2.
+  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}
 
-${whatToChange}${darkNote}${qaNote}
-
-PRESERVACIÓN PIXEL-EXACT — Imagen 1 es SAGRADA fuera de la tela:
-Las siguientes zonas deben quedar 100% idénticas a Imagen 1, pixel a pixel — NO regenerar, NO reinterpretar, NO mejorar, NO suavizar:
-  - CARAS: cada rasgo facial (ojos, cejas, nariz, boca, mentón, mejillas, arrugas, lunares), la MISMA expresión exacta (sonrisa, mirada, apertura de boca). NO cambies la sonrisa, ni el ángulo de la cabeza, ni la dirección de la mirada.
-  - PIEL: cada poro, sombra, tono, reflejo, pecas, vellosidad — idéntico.
-  - PELO: cada mechón, onda, rizo, reflejo, color, posición individual — idéntico.
-  - MANOS Y BRAZOS: cada dedo, uña, nudillo, vena, pose y posición exactas.
-  - ROPA no-textil (si la hay): idéntica.
-  - FONDO: muebles, paredes, ventanas, decoración, plantas, lámparas — idéntico.
-  - CABECERA DE CAMA, MUEBLES, PISO, ALFOMBRA — idéntico.
-  - ILUMINACIÓN: dirección, intensidad, temperatura de color, sombras, reflejos — idéntico.
-  - FRAMING: encuadre, crop, ángulo, perspectiva — idéntico.
-
-LO ÚNICO QUE PUEDE CAMBIAR: las superficies de TELA del producto (cobertor, fundas de almohada, sábanas si están visibles). Solo esos pixeles.
-
-Imagínalo como una máscara: estás aplicando el patrón del swatch SOLO dentro del área del producto textil, dejando TODO lo demás intocado.
-
-Composición de la Imagen 1. Color y textura solo en la tela de la Imagen 2. Si hay texto en inglés, traducir al español. Sin marcas de agua.
-
-FOCO Y PROFUNDIDAD DE CAMPO — PRESERVAR EXACTAMENTE:
-Mantén EXACTAMENTE el mismo plano focal y profundidad de campo que Imagen 1. Lo que estaba en foco en Imagen 1 queda en foco. Lo que estaba desenfocado queda desenfocado. NO traslades el foco a la tela.
+Imagen 1 es la composición exacta: mantén personas, rostros, expresiones, manos, pelo, fondo, muebles, iluminación, encuadre y foco idénticos. Solo la tela cambia. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
 Imagen fotorrealista de ${resolution}.`;
 }
