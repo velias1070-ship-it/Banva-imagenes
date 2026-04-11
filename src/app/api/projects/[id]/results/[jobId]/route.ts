@@ -64,12 +64,16 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Parse optional body
   let mode: string | undefined;
   let forceMode: 'edit' | 'reference' | undefined;
+  let skipFlatten = false;
   try {
     const body = await _request.json();
     mode = body?.mode;
     // Allow caller to force a specific generation_mode (overrides category default + auto-detect)
     if (body?.force_mode === 'edit' || body?.force_mode === 'reference') {
       forceMode = body.force_mode;
+    }
+    if (body?.skip_flatten === true) {
+      skipFlatten = true;
     }
   } catch {
     // No body or invalid JSON — normal regeneration
@@ -124,7 +128,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -141,6 +145,7 @@ async function regenerateJob(
   projectMetadata?: Record<string, unknown> | null,
   brandId?: string | null,
   forceMode?: 'edit' | 'reference',
+  skipFlatten: boolean = false,
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string> | null;
@@ -908,7 +913,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         // BEFORE sending to Gemini. This prevents hero texture bleeding into
         // the result when the swatch is a flat printed pattern.
         let heroBufferForGen: Buffer = heroBuffer;
-        if (strategy.preprocessing.flatten_hero) {
+        if (strategy.preprocessing.flatten_hero && !skipFlatten) {
           try {
             const flattened = await flattenHeroEmboss(heroBuffer);
             heroBufferForGen = Buffer.from(flattened);
@@ -916,6 +921,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           } catch (err) {
             console.error('[regenerateJob] flattenHeroEmboss failed:', err);
           }
+        } else if (skipFlatten) {
+          logPipelineEvent(jobId, 'HERO_FLATTEN_SKIPPED', 'api_param', { mode });
         }
         const heroBase64 = heroBufferForGen.toString('base64');
         result = await generateImage({
