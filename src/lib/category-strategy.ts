@@ -64,21 +64,32 @@ There are NO sheets and NO fitted sheets in this product.`,
 
       what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
 
-PATTERN COVERAGE — CRITICAL:
-The pattern from Image 2 MUST cover EVERY part of the visible fabric UNIFORMLY.
-Do NOT leave any blank, white, or empty areas — every square inch of fabric must show the swatch pattern at the same density as Image 2.
-If you see fabric without pattern, you have failed.
+SINGLE FABRIC RULE — CRITICAL:
+Image 1 shows a SINGLE piece of fabric viewed from different angles in a close-up shot.
+Even if you see what looks like a fold, a corner held up, fabric laying flat behind, multiple layers, or different lighting on different parts — IT IS ALL THE SAME ONE PIECE OF FABRIC.
+You MUST apply the swatch pattern UNIFORMLY to EVERY single visible fabric surface in the image:
+  - The folded/held corner
+  - The fabric behind the fold
+  - The fabric laying flat
+  - The fabric in shadow
+  - The fabric in highlight
+  - The reverse/back side if visible
+ALL of these are the same fabric. ALL must show the same swatch pattern at the same density. Do NOT treat the background fabric as separate — it is the same piece.
+
+PATTERN COVERAGE:
+The pattern from Image 2 MUST cover EVERY square inch of visible fabric UNIFORMLY.
+Do NOT leave any blank, white, or empty areas. Do NOT show waffle, dots, or channel stitching in any "background" area — that would mean you treated it as a different fabric.
+If you see ANY fabric without the swatch pattern, you have failed.
 
 SURFACE TYPE — match what the swatch (Image 2) actually shows:
   - If the swatch is a FLAT PRINTED pattern (floral, geometric print on smooth fabric) → make the result FLAT and smooth, NO quilting stitching, NO embossed texture, NO channels, NO dots. Only the printed pattern on flat fabric.
   - If the swatch shows visible QUILTING (channel stitching, diamond stitching, waffle, etc) → reproduce that exact quilting pattern.
   - DO NOT invent texture that is not present in Image 2.
-  - DO NOT preserve any texture from Image 1 (the hero) — the hero's relief, waffle, channel stitching, etc must be COMPLETELY removed.
+  - DO NOT preserve any texture from Image 1 (the hero) — the hero's relief, waffle, channel stitching, etc must be COMPLETELY removed from EVERY area.
 
 COMPOSITION — preserve from Image 1:
 Maintain EXACTLY the same fabric folds, creases, draping, and disposition as Image 1.
 The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern/surface changes.
-If Image 1 shows a comparison (left vs right), apply the new pattern to BOTH sides.
 DO NOT change the fabric's physical form, folds, or arrangement.`,
 
       final_check: `Verifica: ¿el quilt tiene el diseño de la imagen 2 y NO el patrón original?`,
