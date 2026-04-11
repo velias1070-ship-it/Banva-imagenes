@@ -47,7 +47,12 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     // (e.g., hero has mandala stitching, swatch has basket weave) and Gemini
     // can't replace the embossed pattern, leaving hero stitching bleeding through.
     generation_mode: 'edit',
-    retry_escalation: 'reference',
+    // Stay in edit mode on verifier retries — reference mode loses the hero's exact
+    // composition. The verifier typically rejects for fabric fidelity, not composition,
+    // and retrying in edit mode with Pro + feedback usually succeeds. Reference mode
+    // only triggers via QA's hero_contamination escalation logic (when fabric bleeds
+    // through edit mode).
+    retry_escalation: 'edit',
     // flatten_hero: true — pre-process the hero with Sharp (linear lift + gaussian
     // blur + contrast reduce) to remove its 3D relief (waffle dots, channel
     // stitching) BEFORE sending to Gemini. This prevents hero texture from
