@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -771,7 +771,21 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           useProModel,
         });
       } else {
-        const heroBase64 = heroBuffer.toString('base64');
+        // If strategy enables flatten_hero (e.g. quilts), pre-process the hero
+        // through Sharp to remove its 3D relief (waffle dots, channel stitching)
+        // BEFORE sending to Gemini. This prevents hero texture bleeding into
+        // the result when the swatch is a flat printed pattern.
+        let heroBufferForGen: Buffer = heroBuffer;
+        if (strategy.preprocessing.flatten_hero) {
+          try {
+            const flattened = await flattenHeroEmboss(heroBuffer);
+            heroBufferForGen = Buffer.from(flattened);
+            logPipelineEvent(jobId, 'HERO_FLATTENED', 'pre-generation Sharp flatten', { mode });
+          } catch (err) {
+            console.error('[regenerateJob] flattenHeroEmboss failed:', err);
+          }
+        }
+        const heroBase64 = heroBufferForGen.toString('base64');
         result = await generateImage({
           heroImageBase64: heroBase64,
           heroMimeType: heroShot?.mime_type || 'image/png',
