@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImage } from '@/lib/gemini/client';
+import { generateImage, type GeminiGenerateResult } from '@/lib/gemini/client';
 import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, tintInfografiaLeftHalf } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
@@ -448,17 +448,26 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     // ── Auto-detect shot type — use cache from hero_shots if available ──
     let effectiveShotType = job.hero_shot.detected_shot_type || job.hero_shot.shot_type || 'lifestyle';
+    let shotTypeDetectionMeta: { confidence?: number; description?: string; overridden?: boolean } | null = null;
     if (isBrandOnly) {
       console.log(`[process-next] BRAND_ONLY — using shot type: ${effectiveShotType}`);
     } else if (!job.hero_shot.detected_shot_type) {
       try {
         const detection = await detectShotType(heroBase64, job.hero_shot.mime_type || 'image/png');
-        if (detection && detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
-          console.log(
-            `[process-next] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
-            `(confidence: ${(detection.confidence * 100).toFixed(0)}%, desc: "${detection.description}")`
-          );
-          effectiveShotType = detection.detected_type;
+        if (detection) {
+          shotTypeDetectionMeta = {
+            confidence: detection.confidence,
+            description: detection.description,
+            overridden: false,
+          };
+          if (detection.confidence >= 0.7 && detection.detected_type !== effectiveShotType) {
+            console.log(
+              `[process-next] Shot type override: "${effectiveShotType}" → "${detection.detected_type}" ` +
+              `(confidence: ${(detection.confidence * 100).toFixed(0)}%, desc: "${detection.description}")`
+            );
+            effectiveShotType = detection.detected_type;
+            shotTypeDetectionMeta.overridden = true;
+          }
         }
         // Cache in hero_shots (non-blocking)
         supabase.from('hero_shots').update({ detected_shot_type: effectiveShotType }).eq('id', job.hero_shot.id).then(() => {});
@@ -469,7 +478,10 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       console.log(`[process-next] Using cached shot type: ${effectiveShotType}`);
     }
 
-    logPipelineEvent(job.id, 'SHOT_TYPE', effectiveShotType, { cached: !!job.hero_shot.detected_shot_type });
+    logPipelineEvent(job.id, 'SHOT_TYPE', effectiveShotType, {
+      cached: !!job.hero_shot.detected_shot_type,
+      ...(shotTypeDetectionMeta || {}),
+    });
 
     // ── INFOGRAFIA SHORTCUT: skip Gemini, use Sharp tint ──
     if (effectiveShotType === 'infografia' && !isBrandOnly) {
@@ -520,13 +532,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // For categories that default to 'reference': auto-detect if edit mode is better.
     // If hero and swatch have the same pattern type, edit mode just changes color
     // and preserves the existing texture — much more reliable than generating from scratch.
+    let patternSimilarity: boolean | null = null;
     if (effectiveMode === 'reference' && !isBrandOnly) {
       try {
-        const similar = await arePatternsSimlar(
+        patternSimilarity = await arePatternsSimlar(
           heroBase64, job.hero_shot.mime_type || 'image/png',
           swatchBase64, 'image/png',
         );
-        if (similar) {
+        if (patternSimilarity) {
           effectiveMode = 'edit';
           console.log(`[process-next] Patterns similar → switching to edit mode (color change only)`);
         }
@@ -812,6 +825,15 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       } : null,
       logo_overlay_expected: brand?.apply_logo_overlay || false,
       swatch_pattern_analyzed: !!swatchPatternDescription,
+      // ─── Observability v1 (commit 1 — data capture) ───
+      pattern_similarity: patternSimilarity,          // null | true | false
+      shot_type_detection: shotTypeDetectionMeta,     // {confidence, description, overridden}
+      force_edit: forceEdit,
+      force_edit_reason: forceEdit
+        ? (effectiveShotType === 'detail' || effectiveShotType === 'doblada'
+            ? effectiveShotType
+            : 'infografia_edit_default')
+        : null,
     };
 
     // Mark as generating
@@ -834,7 +856,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     logPipelineEvent(job.id, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {
       temperature, mode: effectiveMode, brand: brand?.name || null,
     });
-    let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
+    let result: GeminiGenerateResult | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
     if (false && category === 'sabanas' && effectiveMode === 'edit') {
@@ -960,8 +982,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (isInfografia) {
       logPipelineEvent(job.id, 'VERIFICATION', 'skipped (infografia color-only edit)');
     }
+    let verificationRaw: Record<string, unknown> | null = null;
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
+        const verifyStart = Date.now();
         const generatedB64 = imageBuffer.toString('base64');
         // Use the cropped (pre-flatten) swatch for verification — the AI flattener
         // can misinterpret textures, causing false passes when both the flattened
@@ -977,6 +1001,15 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
+          verificationRaw = {
+            score: verification.score,
+            pass: verification.pass,
+            issues: verification.issues,
+            feedback: verification.feedback,
+            pattern_description: swatchPatternDescription,
+            duration_ms: Date.now() - verifyStart,
+            attempt: job.attempt,
+          };
           if (!verification.pass && job.attempt < 4) {
             // BLOCK: verification failed, auto-retry with specific feedback
             const feedback = verification.feedback || verification.issues.join('. ');
@@ -988,6 +1021,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
               attempt: job.attempt + 1,
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               prompt_metadata: promptMetadata,
+              verification_raw: verificationRaw,
               updated_at: new Date().toISOString(),
             }).eq('id', job.id);
             // Chain continues — process-next will pick this job up again with the feedback
@@ -1037,6 +1071,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         gemini_model_used: useProModel ? (process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview'),
         error_message: null,
         updated_at: new Date().toISOString(),
+        // ─── Observability v1 captures ───
+        swatch_pattern_text: swatchPatternDescription,
+        verification_raw: verificationRaw,
+        gemini_response_meta: result.meta || null,
+        prompt_metadata: promptMetadata,
         ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })
       .eq('id', job.id);

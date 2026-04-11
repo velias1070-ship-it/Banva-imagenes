@@ -34,6 +34,32 @@ export interface GeminiGenerateRequest {
   useProModel?: boolean;      // Escalate to Pro model for difficult cases
 }
 
+export interface GeminiSafetyRating {
+  category: string;
+  probability: string;
+  blocked?: boolean;
+}
+
+export interface GeminiUsageMetadata {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  totalTokenCount?: number;
+  cachedContentTokenCount?: number;
+}
+
+export interface GeminiResponseMeta {
+  finishReason?: string;
+  safetyRatings?: GeminiSafetyRating[];
+  usageMetadata?: GeminiUsageMetadata;
+  modelVersion?: string;
+  googleRequestId?: string;
+  modelUsed?: string;
+  // Populated on failure paths too, so we can diagnose why "No image in response"
+  textResponse?: string;
+  httpStatus?: number;
+  rawErrorBody?: string;
+}
+
 export interface GeminiGenerateResult {
   success: boolean;
   imageBase64?: string;
@@ -42,6 +68,31 @@ export interface GeminiGenerateResult {
   error?: string;
   errorCode?: string;
   durationMs: number;
+  meta?: GeminiResponseMeta;
+}
+
+function extractMeta(
+  data: Record<string, unknown> | undefined,
+  headers: Headers | undefined,
+  modelUsed: string,
+): GeminiResponseMeta {
+  const candidate = (data?.candidates as Array<Record<string, unknown>> | undefined)?.[0];
+  const usage = data?.usageMetadata as Record<string, unknown> | undefined;
+  return {
+    finishReason: candidate?.finishReason as string | undefined,
+    safetyRatings: candidate?.safetyRatings as GeminiSafetyRating[] | undefined,
+    usageMetadata: usage
+      ? {
+          promptTokenCount: usage.promptTokenCount as number | undefined,
+          candidatesTokenCount: usage.candidatesTokenCount as number | undefined,
+          totalTokenCount: usage.totalTokenCount as number | undefined,
+          cachedContentTokenCount: usage.cachedContentTokenCount as number | undefined,
+        }
+      : undefined,
+    modelVersion: data?.modelVersion as string | undefined,
+    googleRequestId: headers?.get('x-goog-request-id') || undefined,
+    modelUsed,
+  };
 }
 
 export async function generateImage(request: GeminiGenerateRequest): Promise<GeminiGenerateResult> {
@@ -94,8 +145,10 @@ export async function generateImage(request: GeminiGenerateRequest): Promise<Gem
       const durationMs = Date.now() - start;
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMsg = errorData?.error?.message || `HTTP ${response.status}`;
+        const rawErrorBody = await response.text().catch(() => '');
+        let errorData: Record<string, unknown> = {};
+        try { errorData = JSON.parse(rawErrorBody); } catch {}
+        const errorMsg = (errorData as { error?: { message?: string } })?.error?.message || `HTTP ${response.status}`;
 
         // Retry on rate limit errors
         if (isRateLimitError(errorMsg) && attempt < MAX_RETRIES) {
@@ -110,11 +163,17 @@ export async function generateImage(request: GeminiGenerateRequest): Promise<Gem
           error: errorMsg,
           errorCode: String(response.status),
           durationMs,
+          meta: {
+            ...extractMeta(errorData, response.headers, model),
+            httpStatus: response.status,
+            rawErrorBody: rawErrorBody.slice(0, 2000),
+          },
         };
       }
 
       const data = await response.json();
       const responseParts = data?.candidates?.[0]?.content?.parts || [];
+      const meta = extractMeta(data, response.headers, model);
 
       let imageBase64: string | undefined;
       let imageMimeType: string | undefined;
@@ -135,6 +194,7 @@ export async function generateImage(request: GeminiGenerateRequest): Promise<Gem
           error: 'No image in Gemini response',
           textResponse,
           durationMs,
+          meta: { ...meta, textResponse },
         };
       }
 
@@ -144,6 +204,7 @@ export async function generateImage(request: GeminiGenerateRequest): Promise<Gem
         imageMimeType,
         textResponse,
         durationMs,
+        meta: { ...meta, textResponse },
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -189,6 +250,7 @@ export interface GeminiAnalysisResult {
   error?: string;
   errorCode?: string;
   durationMs: number;
+  meta?: GeminiResponseMeta;
 }
 
 export async function analyzeImages(request: GeminiAnalysisRequest): Promise<GeminiAnalysisResult> {
@@ -227,8 +289,10 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
       const durationMs = Date.now() - start;
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMsg = errorData?.error?.message || `HTTP ${response.status}`;
+        const rawErrorBody = await response.text().catch(() => '');
+        let errorData: Record<string, unknown> = {};
+        try { errorData = JSON.parse(rawErrorBody); } catch {}
+        const errorMsg = (errorData as { error?: { message?: string } })?.error?.message || `HTTP ${response.status}`;
 
         if (isRateLimitError(errorMsg) && attempt < MAX_RETRIES) {
           const delay = getRetryDelay(errorMsg, attempt);
@@ -242,11 +306,17 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
           error: errorMsg,
           errorCode: String(response.status),
           durationMs,
+          meta: {
+            ...extractMeta(errorData, response.headers, GEMINI_ANALYSIS_MODEL),
+            httpStatus: response.status,
+            rawErrorBody: rawErrorBody.slice(0, 2000),
+          },
         };
       }
 
       const data = await response.json();
       const responseParts = data?.candidates?.[0]?.content?.parts || [];
+      const meta = extractMeta(data, response.headers, GEMINI_ANALYSIS_MODEL);
 
       let textResponse: string | undefined;
       for (const part of responseParts) {
@@ -260,6 +330,7 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
           success: false,
           error: 'No text in Gemini analysis response',
           durationMs,
+          meta,
         };
       }
 
@@ -267,6 +338,7 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
         success: true,
         textResponse,
         durationMs,
+        meta: { ...meta, textResponse },
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -325,17 +397,34 @@ export async function analyzeWithProModel(request: GeminiAnalysisRequest): Promi
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return { success: false, error: errorData?.error?.message || `HTTP ${response.status}`, durationMs: Date.now() - start };
+      const rawErrorBody = await response.text().catch(() => '');
+      let errorData: Record<string, unknown> = {};
+      try { errorData = JSON.parse(rawErrorBody); } catch {}
+      return {
+        success: false,
+        error: (errorData as { error?: { message?: string } })?.error?.message || `HTTP ${response.status}`,
+        durationMs: Date.now() - start,
+        meta: {
+          ...extractMeta(errorData, response.headers, GEMINI_VERIFY_MODEL),
+          httpStatus: response.status,
+          rawErrorBody: rawErrorBody.slice(0, 2000),
+        },
+      };
     }
 
     const data = await response.json();
+    const meta = extractMeta(data, response.headers, GEMINI_VERIFY_MODEL);
     const textResponse = data?.candidates?.[0]?.content?.parts
       ?.filter((p: Record<string, unknown>) => p.text)
       .map((p: Record<string, string>) => p.text)
       .join('\n') || '';
 
-    return { success: true, textResponse, durationMs: Date.now() - start };
+    return {
+      success: true,
+      textResponse,
+      durationMs: Date.now() - start,
+      meta: { ...meta, textResponse },
+    };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Unknown error', durationMs: Date.now() - start };
   }
