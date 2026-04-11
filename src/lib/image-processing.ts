@@ -167,77 +167,67 @@ export function colorNameToHex(name: string): string | null {
 }
 
 /**
- * Sharp-only color tint for infografia recoloring.
+ * Apply the swatch fabric (full pattern + texture + color) to the LEFT half
+ * of an infografia hero, preserving the hero's text/icons/layout via blend
+ * mode compositing.
  *
- * Tints the LEFT half of the hero (where the BANVA product fabric usually
- * is) towards the swatch's dominant color. The RIGHT half (Others / competitor)
- * stays untouched. Text, badges, icons, layout — all preserved pixel-perfect
- * because Gemini is never called on this image.
+ * Previous version applied only a solid color tint (dominant color from
+ * the swatch). That lost the swatch's actual pattern entirely — e.g. a
+ * floral "Amarillo" swatch produced a flat yellow left-half with no flowers.
+ * The user wants the real fabric surface (floral watercolor pattern, quilting
+ * channels, etc.) to appear in the Banva side of the comparison shot.
  *
- * Strategy: tint via multiply blend on white-ish pixels only. Dark pixels
- * (text, icons) stay dark and unchanged.
+ * Strategy: crop the swatch to its fabric region, resize to the left-half
+ * dimensions, composite over the hero with `multiply` blend mode. Multiply
+ * keeps dark text/icons visible (dark × anything = dark) while transferring
+ * the swatch pattern onto the waffle/light areas.
+ *
+ * Gemini is never called, so text content is guaranteed pixel-perfect —
+ * which was the original motivation for the Sharp shortcut (Gemini corrupts
+ * text even with explicit "preserve text" instructions).
  *
  * @param heroBuffer The hero/source infografia image
- * @param swatchBuffer The swatch image (used to compute color if no explicit color)
- * @param explicitHex Optional explicit hex color (e.g. from analyzeSwatchColor)
+ * @param swatchBuffer The swatch image (full product photo OK, cropped internally)
+ * @param _explicitHex DEPRECATED (ignored). Kept for backwards compat until
+ *                     all callers stop passing it.
  */
 export async function tintInfografiaLeftHalf(
   heroBuffer: Buffer,
   swatchBuffer: Buffer,
-  explicitHex?: string | null,
+  _explicitHex?: string | null,
 ): Promise<Buffer> {
-  // Get hero dimensions
   const heroMeta = await sharp(heroBuffer).metadata();
   const W = heroMeta.width || 1200;
   const H = heroMeta.height || 1200;
   const halfW = Math.floor(W / 2);
 
-  // Color resolution: prefer explicit hex (from Gemini analysis), fall back
-  // to saturation-aware dominant color from the swatch image.
-  let r: number, g: number, b: number;
-  if (explicitHex) {
-    const parsed = hexToRgb(explicitHex);
-    if (parsed) {
-      ({ r, g, b } = parsed);
-    } else {
-      ({ r, g, b } = await getDominantColor(swatchBuffer));
-    }
-  } else {
-    ({ r, g, b } = await getDominantColor(swatchBuffer));
-  }
+  // Crop the swatch to its fabric region (avoids bedroom scene / props
+  // bleeding into the output when the swatch is a full lifestyle photo).
+  const swatchFabric = await cropSwatchToFabric(swatchBuffer);
 
-  // Build a tint overlay: a solid color of swatch tone, half-width, full height
-  const tintLayer = await sharp({
-    create: {
-      width: halfW,
-      height: H,
-      channels: 4,
-      background: { r, g, b, alpha: 1 },
-    },
-  })
+  // Resize the cropped swatch to exactly the left-half dimensions so we
+  // cover the whole Banva side without tiling artefacts.
+  const swatchLayer = await sharp(swatchFabric)
+    .resize(halfW, H, { fit: 'cover', position: 'center' })
     .png()
     .toBuffer();
 
-  // Composite the tint over the LEFT half using overlay blend mode.
-  // Overlay multiplies dark pixels (text/icons stay dark and readable) AND
-  // screens light pixels (gray waffle becomes the full swatch color instead
-  // of muddy/olive). Multiply alone produces olive/khaki when the hero is
-  // not pure white — e.g. Amarillo (#F5D830) multiplied by gray waffle gives
-  // mustard instead of yellow. Overlay fixes that by treating light and dark
-  // areas differently.
+  // Composite with multiply blend: dark pixels (text, icons, checkmarks)
+  // stay dark (dark × swatch = dark), light pixels (waffle background)
+  // take on the swatch pattern.
   const result = await sharp(heroBuffer)
     .composite([
       {
-        input: tintLayer,
+        input: swatchLayer,
         left: 0,
         top: 0,
-        blend: 'overlay',
+        blend: 'multiply',
       },
     ])
     .png()
     .toBuffer();
 
-  console.log(`[image-processing] Tinted infografia left half with swatch color rgb(${r},${g},${b})`);
+  console.log(`[image-processing] Applied swatch fabric to infografia left half (${halfW}x${H})`);
   return result;
 }
 
