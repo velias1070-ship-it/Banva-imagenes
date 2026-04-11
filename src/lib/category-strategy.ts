@@ -62,10 +62,14 @@ There are NO sheets and NO fitted sheets in this product.`,
 
       what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
 
-      what_to_change_detail: `Apply the color, pattern AND quilted texture from Image 2 to ALL visible fabric surfaces in Image 1.
-The swatch (Image 2) shows a QUILTED fabric — the generated image MUST reproduce the quilting stitching (channel or diamond pattern visible on the surface). The fabric must NOT look flat or smooth like a sheet.
+      what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
+Match what the swatch (Image 2) actually shows:
+  - If the swatch is a FLAT PRINTED pattern (e.g. floral, geometric print on smooth fabric) → make the result FLAT and smooth, NO quilting stitching, NO embossed texture, NO channels, NO dots. Only the printed pattern on flat fabric.
+  - If the swatch shows visible QUILTING (channel stitching, diamond stitching, waffle, etc) → reproduce that exact quilting pattern.
+  - DO NOT invent texture that is not present in Image 2.
+  - DO NOT preserve any texture from Image 1 (the hero) — the hero's relief, waffle, channel stitching, etc must be COMPLETELY removed.
 Maintain EXACTLY the same fabric folds, creases, draping, and disposition as Image 1.
-The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern/texture changes.
+The fabric shape, layers, and folding must be IDENTICAL to Image 1 — only the color/pattern/surface changes.
 If Image 1 shows a comparison (left vs right), apply the new pattern to BOTH sides.
 DO NOT change the fabric's physical form, folds, or arrangement.`,
 
@@ -86,14 +90,14 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
     },
     temperature: 0.4,
     qa_focus_areas: [
-      'quilting stitch pattern must match swatch exactly',
+      'fabric surface must match swatch exactly — flat printed → flat, quilted → quilted',
       'no pattern from hero bleeding into output',
       'pillowcases must also match swatch pattern and color',
-      'quilt MUST show visible quilted/stitched texture — if it looks like a smooth duvet/comforter, FAIL product_fidelity',
+      'do NOT invent quilting texture if the swatch is a flat printed pattern',
       'any text in the image MUST be in Spanish — English text = ml_compliance 0.0',
     ],
     learnings: [
-      'El quilt DEBE mostrar la MISMA textura acolchada que aparece en la Imagen 2 (swatch). Copiar la textura EXACTA del swatch — NO inventar otra textura diferente. Si el swatch muestra waffle, el resultado debe ser waffle. Si muestra diamante, debe ser diamante.',
+      'El quilt DEBE mostrar la MISMA superficie que el swatch (Imagen 2). Si el swatch es ESTAMPADO PRINTED PLANO (sin acolchado visible), el resultado debe ser plano sin acolchado. Si el swatch muestra acolchado (waffle, diamante, channels), el resultado debe replicar ese acolchado exacto. NO inventar acolchado que no existe en el swatch.',
       'Todo texto visible en la imagen DEBE estar en español. Nunca generar texto en inglés.',
       'El color base de la tela debe coincidir exactamente con el swatch — si el swatch es blanco, no generar crema/beige.',
       'No conservar NINGÚN relieve, textura ni patrón acolchado del hero original (imagen 1). La textura viene 100% del swatch.',
