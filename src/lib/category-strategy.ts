@@ -53,13 +53,15 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     // only triggers via QA's hero_contamination escalation logic (when fabric bleeds
     // through edit mode).
     retry_escalation: 'edit',
-    // flatten_hero: true — pre-process the hero with Sharp (linear lift + gaussian
-    // blur + contrast reduce) to remove its 3D relief (waffle dots, channel
-    // stitching) BEFORE sending to Gemini. This prevents hero texture from
-    // bleeding through when the swatch is a flat printed pattern. NOTE: this is
-    // the simple Sharp flattener, NOT the AI swatch flattener (flatten_swatch_ai)
-    // which had separate bugs and stays disabled.
-    preprocessing: { crop_swatch: true, flatten_hero: true, flatten_swatch_ai: false },
+    // flatten_hero: false — previously true with blur 5.0 + contrast reduce,
+    // but that destroyed facial features and Gemini had to regenerate faces
+    // from scratch (job 1d841d62: model's face changed every regen). Waffle
+    // and channel stitching textures don't need flattening — Gemini handles
+    // them fine when edit mode is used with the original hero. Flatten_hero
+    // should only be used for deep 3D embossed quilting (mandala / basket
+    // weave), which is a minority case; enable per-job via metadata when
+    // explicitly needed, not as the default.
+    preprocessing: { crop_swatch: true, flatten_hero: false, flatten_swatch_ai: false },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
