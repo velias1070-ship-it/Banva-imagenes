@@ -858,11 +858,50 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: logo ALWAYS at brand book position
+    // Brand post-processing: logo ALWAYS at brand book position UNLESS already baked in
     if (brand) {
       try {
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, null, brand.logo_position);
-        logPipelineEvent(job.id, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position });
+        // Check if the brand is already baked into the logo zone
+        let brandAlreadyVisible = false;
+        try {
+          const sharp = (await import('sharp')).default;
+          const meta = await sharp(imageBuffer).metadata();
+          const imgW = meta.width || 1200;
+          const imgH = meta.height || 1200;
+          const { getLogoBbox, logoOverlapFraction } = await import('@/lib/brand');
+          const logoBox = getLogoBbox(brand, imgW, imgH);
+          const detected = await detectTextBboxes(
+            imageBuffer.toString('base64'),
+            'image/png',
+            imgW,
+            imgH,
+          );
+          if (detected && detected.length > 0) {
+            const brandWords = brand.name
+              .toLowerCase()
+              .split(/\s+/)
+              .filter((w) => w.length >= 4);
+            for (const tb of detected) {
+              const overlap = logoOverlapFraction(logoBox, tb);
+              if (overlap < 0.05) continue;
+              const text = tb.text.toLowerCase();
+              if (brandWords.some((w) => text.includes(w))) {
+                brandAlreadyVisible = true;
+                logPipelineEvent(job.id, 'BRAND_BAKED_IN', `"${tb.text.slice(0, 30)}" matches brand at logo zone — skipping overlay`);
+                break;
+              }
+            }
+          }
+        } catch (detectErr) {
+          console.error('[process-next] Brand baked-in detection failed:', detectErr);
+        }
+
+        if (!brandAlreadyVisible) {
+          imageBuffer = await overlayBrandLogo(imageBuffer, brand, job.hero_shot?.shot_type, null, brand.logo_position);
+          logPipelineEvent(job.id, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position });
+        } else {
+          logPipelineEvent(job.id, 'BRAND_OVERLAY', 'skipped (already baked in)');
+        }
       } catch (brandErr) {
         logPipelineEvent(job.id, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });
         console.error('[process-next] Brand processing failed (non-blocking):', brandErr);

@@ -820,11 +820,55 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
-    // Brand post-processing: logo ALWAYS at brand book position
+    // Brand post-processing: logo ALWAYS at brand book position UNLESS the
+    // generated image already has the brand visible at the logo zone (e.g.
+    // hero source had the brand baked in and edit mode preserved it).
+    // Detection: bbox text in the logo bbox containing the brand name.
     if (brand) {
       try {
-        imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, null, brand.logo_position);
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position });
+        // Check if the brand is already baked into the logo zone
+        let brandAlreadyVisible = false;
+        try {
+          const sharp = (await import('sharp')).default;
+          const meta = await sharp(imageBuffer).metadata();
+          const imgW = meta.width || 1200;
+          const imgH = meta.height || 1200;
+          const { getLogoBbox, logoOverlapFraction } = await import('@/lib/brand');
+          const logoBox = getLogoBbox(brand, imgW, imgH);
+          const detected = await detectTextBboxes(
+            imageBuffer.toString('base64'),
+            'image/png',
+            imgW,
+            imgH,
+          );
+          if (detected && detected.length > 0) {
+            // Build all words of the brand name (case-insensitive) for matching
+            const brandWords = brand.name
+              .toLowerCase()
+              .split(/\s+/)
+              .filter((w) => w.length >= 4); // ignore short words like "de", "la"
+            for (const tb of detected) {
+              const overlap = logoOverlapFraction(logoBox, tb);
+              if (overlap < 0.05) continue; // bbox not in logo zone
+              const text = tb.text.toLowerCase();
+              const hasBrandWord = brandWords.some((w) => text.includes(w));
+              if (hasBrandWord) {
+                brandAlreadyVisible = true;
+                logPipelineEvent(jobId, 'BRAND_BAKED_IN', `"${tb.text.slice(0, 30)}" matches brand at logo zone (overlap ${(overlap * 100).toFixed(0)}%) — skipping overlay`);
+                break;
+              }
+            }
+          }
+        } catch (detectErr) {
+          console.error('[regenerateJob] Brand baked-in detection failed:', detectErr);
+        }
+
+        if (!brandAlreadyVisible) {
+          imageBuffer = await overlayBrandLogo(imageBuffer, brand, effectiveShotType, null, brand.logo_position);
+          logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position });
+        } else {
+          logPipelineEvent(jobId, 'BRAND_OVERLAY', 'skipped (already baked in)');
+        }
       } catch (brandErr) {
         logPipelineEvent(jobId, 'BRAND_OVERLAY', 'failed', { error: String(brandErr) });
         console.error('[regenerateJob] Brand processing failed (non-blocking):', brandErr);
