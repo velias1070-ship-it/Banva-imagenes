@@ -892,6 +892,9 @@ Imagen fotorrealista de ${resolution}.`;
 
 Composición de la Imagen 1. Color y textura de la Imagen 2. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
+FOCO Y PROFUNDIDAD DE CAMPO — PRESERVAR EXACTAMENTE:
+Mantén EXACTAMENTE el mismo plano focal y profundidad de campo que Imagen 1. Lo que estaba en foco en Imagen 1 (persona, rostro, manos, objeto) debe quedar en foco en el resultado. Lo que estaba desenfocado debe quedar desenfocado. NO traslades el foco a la tela. NO hagas la tela más nítida que el resto.
+
 Imagen fotorrealista de ${resolution}.`;
 }
 
