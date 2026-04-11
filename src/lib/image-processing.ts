@@ -62,6 +62,15 @@ export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number
 }
 
 /**
+ * Parse a hex color string (#RRGGBB) to RGB.
+ */
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = hex.replace('#', '').match(/^([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!m) return null;
+  return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+
+/**
  * Sharp-only color tint for infografia recoloring.
  *
  * Tints the LEFT half of the hero (where the BANVA product fabric usually
@@ -71,10 +80,15 @@ export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number
  *
  * Strategy: tint via multiply blend on white-ish pixels only. Dark pixels
  * (text, icons) stay dark and unchanged.
+ *
+ * @param heroBuffer The hero/source infografia image
+ * @param swatchBuffer The swatch image (used to compute color if no explicit color)
+ * @param explicitHex Optional explicit hex color (e.g. from analyzeSwatchColor)
  */
 export async function tintInfografiaLeftHalf(
   heroBuffer: Buffer,
   swatchBuffer: Buffer,
+  explicitHex?: string | null,
 ): Promise<Buffer> {
   // Get hero dimensions
   const heroMeta = await sharp(heroBuffer).metadata();
@@ -82,10 +96,19 @@ export async function tintInfografiaLeftHalf(
   const H = heroMeta.height || 1200;
   const halfW = Math.floor(W / 2);
 
-  // Get the swatch's dominant color (the actual swatch fabric color)
-  // We use the cropped swatch (just the fabric area, not background)
-  // to get a more accurate dominant color.
-  const { r, g, b } = await getDominantColor(swatchBuffer);
+  // Color resolution: prefer explicit hex (from Gemini analysis), fall back
+  // to saturation-aware dominant color from the swatch image.
+  let r: number, g: number, b: number;
+  if (explicitHex) {
+    const parsed = hexToRgb(explicitHex);
+    if (parsed) {
+      ({ r, g, b } = parsed);
+    } else {
+      ({ r, g, b } = await getDominantColor(swatchBuffer));
+    }
+  } else {
+    ({ r, g, b } = await getDominantColor(swatchBuffer));
+  }
 
   // Build a tint overlay: a solid color of swatch tone, half-width, full height
   const tintLayer = await sharp({

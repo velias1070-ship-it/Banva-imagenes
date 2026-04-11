@@ -512,7 +512,27 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     if (effectiveShotType === 'infografia' && !isBrandOnly) {
       try {
         logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
-        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer);
+        // Get the swatch's dominant hex color via Gemini Flash analysis (cached
+        // in the swatch row when available, or computed fresh otherwise).
+        let swatchHex: string | null = (swatch as Record<string, unknown>).dominant_color_hex as string | null;
+        if (!swatchHex) {
+          try {
+            const analysis = await analyzeSwatchColor(swatchBuffer.toString('base64'), 'image/png');
+            if (analysis?.dominantHex) {
+              swatchHex = analysis.dominantHex;
+              // Cache for future runs
+              await supabase.from('swatches')
+                .update({ dominant_color_hex: swatchHex, color_description: analysis.colorDescription })
+                .eq('id', swatch.id);
+              logPipelineEvent(jobId, 'INFOGRAFIA_COLOR', `Gemini analyzed: ${analysis.colorDescription} (${swatchHex})`);
+            }
+          } catch (err) {
+            console.error('[regenerateJob] swatch color analysis failed:', err);
+          }
+        } else {
+          logPipelineEvent(jobId, 'INFOGRAFIA_COLOR', `cached hex: ${swatchHex}`);
+        }
+        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer, swatchHex);
         const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
         const outputPath = `projects/${projectId}/generated/${jobId}.png`;
         await supabase.storage.from('images').upload(outputPath, tintedBuffer, { contentType: 'image/png', upsert: true });
