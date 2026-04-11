@@ -564,10 +564,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
           patternAutoSwitchReason = 'patterns_similar_reference_to_edit';
           console.log(`[process-next] Patterns similar → switching to edit (color change only)`);
         } else if (patternSimilarity === false && effectiveMode === 'edit' && category === 'quilts') {
-          effectiveMode = 'from_scratch';
-          patternAutoSwitchReason = 'patterns_differ_quilts_edit_to_from_scratch';
-          console.log(`[process-next] Quilts with different pattern → switching to from_scratch (edit mode cannot replace 3D quilting)`);
+          effectiveMode = 'reference';
+          patternAutoSwitchReason = 'patterns_differ_quilts_edit_to_reference';
+          console.log(`[process-next] Quilts with different pattern → switching to reference (hero kept as composition guide)`);
         }
+        logPipelineEvent(job.id, 'PATTERN_COMPARED', String(patternSimilarity), {
+          auto_switch: patternAutoSwitchReason,
+          effective_mode: effectiveMode,
+        });
       } catch (err) {
         console.error('[process-next] Pattern comparison failed (using default):', err);
       }

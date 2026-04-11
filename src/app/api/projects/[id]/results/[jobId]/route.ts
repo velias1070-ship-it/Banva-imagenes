@@ -585,16 +585,22 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       } else if (qaDetail?.hero_contamination && qaDetail.hero_contamination > 0.6 && strategy.retry_escalation) {
         mode = strategy.retry_escalation;
         console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);
-      } else if (mode === 'reference') {
-        // Auto-detect: if hero and swatch have similar patterns, use edit (color change only)
+      } else {
+        // Auto-detect pattern similarity and adjust mode.
+        //   - reference + similar patterns → edit (color change only, preserves texture)
+        //   - edit + different patterns on quilts → reference (hero kept as composition guide)
         try {
           const heroB64 = heroBuffer.toString('base64');
           const swatchB64 = swatchBuffer.toString('base64');
           const similar = await arePatternsSimlar(heroB64, heroShot?.mime_type || 'image/png', swatchB64, 'image/png');
-          if (similar) {
+          if (similar === true && mode === 'reference') {
             mode = 'edit';
             console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
+          } else if (similar === false && mode === 'edit' && category === 'quilts') {
+            mode = 'reference';
+            console.log(`[regenerateJob] Quilts with different pattern → reference mode (hero kept as composition guide)`);
           }
+          logPipelineEvent(jobId, 'PATTERN_COMPARED', String(similar), { effective_mode: mode });
         } catch (err) {
           console.error('[regenerateJob] Pattern comparison failed:', err);
         }
