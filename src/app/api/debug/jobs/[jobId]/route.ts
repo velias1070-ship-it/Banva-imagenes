@@ -27,7 +27,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     .select(`
       *,
       hero_shot:hero_shots(id, storage_path, mime_type, shot_type, detected_shot_type, text_elements),
-      swatch:swatches(id, name, storage_path, mime_type, sku_suffix, dominant_color_hex, color_description)
+      swatch:swatches(id, name, storage_path, sku_suffix, dominant_color_hex, color_description)
     `)
     .eq('id', jobId)
     .single();
