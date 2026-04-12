@@ -19,6 +19,7 @@ import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
+import { detectBedCameraAngle, hasDirectionalPattern, type BedCameraAngle } from '@/lib/bed-camera-angle';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
@@ -607,6 +608,44 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       console.log(`[regenerateJob] Discarding QA feedback (verifier passed — QA likely false negative): "${rawQaFeedback}"`);
     } else if (qaFeedback) {
       console.log(`[regenerateJob] Using QA feedback: "${qaFeedback}"`);
+    }
+
+    // Auto-rotation for directional patterns on side-angle bed shots:
+    // Gemini interprets stripe direction relative to the camera, not the bed's
+    // anatomy. Side-angle heros + horizontal-stripe swatches consistently produce
+    // stripes running along the bed length (wrong) instead of across the width
+    // (correct). Pre-rotating the cropped swatch 90° flips Gemini's interpretation
+    // and lands the stripes parallel to the foot edge. Foot-view heros work
+    // without rotation. Only applies to bed-product categories.
+    const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
+    if (
+      !isBrandOnly &&
+      rotateSwatch === 0 &&
+      ROTATION_PRONE.includes(category) &&
+      hasDirectionalPattern(swatch.color_description) &&
+      heroShot
+    ) {
+      let cachedAngle = (heroShot as Record<string, unknown>).bed_camera_angle as BedCameraAngle | null | undefined;
+      if (!cachedAngle) {
+        try {
+          cachedAngle = await detectBedCameraAngle(
+            heroBuffer.toString('base64'),
+            heroShot.mime_type || 'image/png'
+          );
+          if (cachedAngle && heroShot.id) {
+            supabase.from('hero_shots').update({ bed_camera_angle: cachedAngle }).eq('id', heroShot.id).then(() => {});
+          }
+        } catch (err) {
+          console.error('[regenerateJob] Bed camera angle detection failed:', err);
+        }
+      }
+      if (cachedAngle === 'side') {
+        rotateSwatch = 90;
+        logPipelineEvent(jobId, 'AUTO_ROTATE_SWATCH', '90deg', { reason: 'side_angle_directional_pattern' });
+        console.log(`[regenerateJob] Auto-rotating swatch 90° (side-angle hero + directional pattern)`);
+      } else if (cachedAngle) {
+        logPipelineEvent(jobId, 'BED_ANGLE_CHECKED', cachedAngle, { rotated: false });
+      }
     }
 
     // Preprocessing (skip for BRAND_ONLY — image stays unchanged)

@@ -20,6 +20,7 @@ import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { verifySwatch } from '@/lib/swatch-verifier';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
+import { detectBedCameraAngle, hasDirectionalPattern, type BedCameraAngle } from '@/lib/bed-camera-angle';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 
@@ -580,6 +581,36 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // Save original swatch before crop (flattener needs the full image, not cropped)
     const originalSwatchBase64 = swatchBase64;
 
+    // Auto-rotation for directional patterns on side-angle bed shots — see
+    // results/[jobId]/route.ts for the full rationale (dual-route sync rule).
+    let autoRotateSwatch = 0;
+    const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
+    if (
+      !isBrandOnly &&
+      ROTATION_PRONE.includes(category) &&
+      hasDirectionalPattern(job.swatch.color_description) &&
+      job.hero_shot
+    ) {
+      let cachedAngle = (job.hero_shot as Record<string, unknown>).bed_camera_angle as BedCameraAngle | null | undefined;
+      if (!cachedAngle) {
+        try {
+          cachedAngle = await detectBedCameraAngle(heroBase64, job.hero_shot.mime_type || 'image/png');
+          if (cachedAngle && job.hero_shot.id) {
+            supabase.from('hero_shots').update({ bed_camera_angle: cachedAngle }).eq('id', job.hero_shot.id).then(() => {});
+          }
+        } catch (err) {
+          console.error('[process-next] Bed camera angle detection failed:', err);
+        }
+      }
+      if (cachedAngle === 'side') {
+        autoRotateSwatch = 90;
+        logPipelineEvent(job.id, 'AUTO_ROTATE_SWATCH', '90deg', { reason: 'side_angle_directional_pattern' });
+        console.log(`[process-next] Auto-rotating swatch 90° (side-angle hero + directional pattern)`);
+      } else if (cachedAngle) {
+        logPipelineEvent(job.id, 'BED_ANGLE_CHECKED', cachedAngle, { rotated: false });
+      }
+    }
+
     if (!isBrandOnly) {
       if (strategy.preprocessing.flatten_hero) {
         const flattenedHero = await flattenHeroEmboss(heroBuffer);
@@ -588,7 +619,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
       if (strategy.preprocessing.crop_swatch) {
         const cropFn = strategy.preprocessing.tile_swatch ? cropAndTileSwatchToFabric : cropSwatchToFabric;
-        const croppedSwatch = await cropFn(swatchBuffer);
+        let croppedSwatch = await cropFn(swatchBuffer);
+        if (autoRotateSwatch) {
+          const sharpRot = (await import('sharp')).default;
+          croppedSwatch = await sharpRot(croppedSwatch).rotate(autoRotateSwatch).png().toBuffer();
+          logPipelineEvent(job.id, 'SWATCH_ROTATED', `${autoRotateSwatch}deg`);
+        }
         swatchBase64 = croppedSwatch.toString('base64');
       }
     }
