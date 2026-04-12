@@ -512,11 +512,15 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       : getEffectiveMode(strategy, job.attempt);
 
     // Pattern comparison decides the correct mode:
-    //   - patterns SIMILAR     → edit   (color change only, preserves texture)
-    //   - patterns DIFFERENT   → from_scratch (edit mode would filter hero's pattern)
-    //   - quilts specifically: documented Gemini limitation with 3D quilting textures,
-    //     so mismatched patterns MUST go to from_scratch or they waste 3-8 attempts
-    //     chasing a pattern that edit mode physically cannot change.
+    //   - patterns SIMILAR    → downgrade reference → edit (color change only)
+    //   - patterns DIFFERENT  → stay in the strategy default (edit for quilts).
+    //     The previous logic pre-emptively escalated quilts to reference/from_scratch
+    //     on pattern mismatch, but that caused reference mode to invent accent props
+    //     (pillows, throws) that didn't exist in the hero — e.g. job e00c5c59 got a
+    //     decorative white pillow that was not in the hero or the swatch. Flat textures
+    //     (waffle / piqué / channel) are fine in edit mode; only deep 3D embossed
+    //     quilting (mandala, basket weave) genuinely fails, and that case is handled
+    //     by the hero_contamination escalation in the QA retry path.
     //   - not run for BRAND_ONLY (we're not changing the product).
     let patternSimilarity: boolean | null = null;
     let patternAutoSwitchReason: string | null = null;
@@ -530,10 +534,6 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
           effectiveMode = 'edit';
           patternAutoSwitchReason = 'patterns_similar_reference_to_edit';
           console.log(`[process-next] Patterns similar → switching to edit (color change only)`);
-        } else if (patternSimilarity === false && effectiveMode === 'edit' && category === 'quilts') {
-          effectiveMode = 'reference';
-          patternAutoSwitchReason = 'patterns_differ_quilts_edit_to_reference';
-          console.log(`[process-next] Quilts with different pattern → switching to reference (hero kept as composition guide)`);
         }
         logPipelineEvent(job.id, 'PATTERN_COMPARED', String(patternSimilarity), {
           auto_switch: patternAutoSwitchReason,

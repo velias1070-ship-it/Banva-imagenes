@@ -530,9 +530,12 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
         mode = strategy.retry_escalation;
         console.log(`[regenerateJob] Hero contamination — escalating to ${mode}`);
       } else {
-        // Auto-detect pattern similarity and adjust mode.
-        //   - reference + similar patterns → edit (color change only, preserves texture)
-        //   - edit + different patterns on quilts → reference (hero kept as composition guide)
+        // Auto-detect pattern similarity and downgrade reference → edit when
+        // patterns are similar (saves a full regeneration when only a color
+        // change is needed). We do NOT pre-emptively escalate edit → reference
+        // on pattern mismatch: reference mode invents accent props (pillows,
+        // throws) that are not in the hero. The hero_contamination escalation
+        // above already handles the real failure case for deep 3D quilting.
         try {
           const heroB64 = heroBuffer.toString('base64');
           const swatchB64 = swatchBuffer.toString('base64');
@@ -540,9 +543,6 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
           if (similar === true && mode === 'reference') {
             mode = 'edit';
             console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
-          } else if (similar === false && mode === 'edit' && category === 'quilts') {
-            mode = 'reference';
-            console.log(`[regenerateJob] Quilts with different pattern → reference mode (hero kept as composition guide)`);
           }
           logPipelineEvent(jobId, 'PATTERN_COMPARED', String(similar), { effective_mode: mode });
         } catch (err) {
