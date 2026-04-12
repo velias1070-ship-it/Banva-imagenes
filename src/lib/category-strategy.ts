@@ -75,7 +75,20 @@ La imagen vende un PRODUCTO ESPECÍFICO. La cantidad de piezas del hero define e
   - Si Imagen 1 muestra 2 almohadas → el set es "quilt + 2 fundas". El resultado DEBE tener 2 almohadas.
   - NO agregar almohadas extras — eso cambia el producto que se vende.
   - NO quitar almohadas — eso también cambia el producto.
-  - CADA funda visible DEBE estar COMPLETAMENTE cubierta con el patrón de Imagen 2. Sin fundas a medio cubrir, sin fundas parcialmente blancas. Cobertura total.
+
+DENSIDAD DEL PATRÓN EN LAS FUNDAS — REGLA CRÍTICA:
+El swatch (Imagen 2) tiene un patrón con motivos (hojas, flores, formas) separados por espacio blanco de fondo. Cuando se aplica a una funda de almohada chica, NO copies el swatch literalmente como un "stamp" porque partes de la funda caerían en el espacio blanco del patrón y la funda quedaría con zonas blancas visibles.
+
+En vez de eso, la funda debe mostrar el patrón con la MISMA densidad de motivos que el cobertor — si el cobertor tiene 5 hojas visibles por metro cuadrado, la funda también debe tener aproximadamente 5 hojas visibles por metro cuadrado. Escalá el patrón (repetilo más chico si hace falta) para que CADA funda muestre al menos 3-5 motivos completos distribuidos, sin áreas grandes de fondo blanco sin decoración.
+
+LO PROHIBIDO:
+  - Funda con una mitad con patrón y otra mitad blanca → PRODUCTO DEFECTUOSO.
+  - Funda mostrando solo el fondo blanco del swatch sin hojas/motivos.
+  - Funda con un solo motivo pequeño en una esquina.
+
+LO CORRECTO:
+  - Funda cubierta UNIFORMEMENTE con hojas/motivos en toda su superficie visible.
+  - Densidad similar a la del cobertor.
 
 TODO lo demás queda IDÉNTICO a Imagen 1: muebles, lámpara, objetos de mesa de noche, alfombra, pared, cuadros, decoración.`,
 
