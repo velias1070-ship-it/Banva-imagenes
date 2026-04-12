@@ -777,10 +777,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     // Add size-aware note for 1P/1.5P bed products (skip for BRAND_ONLY)
-    const sizeNote = !isBrandOnly ? buildSizePromptNote(swatch.sku_suffix, category) : null;
+    const sizeNote = !isBrandOnly ? buildSizePromptNote(swatch.sku_suffix, category, effectiveShotType) : null;
     if (sizeNote) {
       prompt += sizeNote;
-      console.log(`[regenerateJob] Size adjustment for SKU ${swatch.sku_suffix}`);
+      console.log(`[regenerateJob] Size adjustment for SKU ${swatch.sku_suffix} (${effectiveShotType})`);
     }
 
     const promptMetadata: Record<string, unknown> = {

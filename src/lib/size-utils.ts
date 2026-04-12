@@ -63,12 +63,22 @@ export function extractSizeFromSku(sku: string | null | undefined): SizeInfo | n
  * - Category is not a bed product
  * - SKU has no size info
  * - Size is 2+ plazas (no adjustment needed — 2P is the default hero size)
+ * - Shot type is not a packshot ("main" or "doblada") — for lifestyle
+ *   banners, infografia, detail close-ups, and similar shots the bed is
+ *   illustrative, not the product being measured. Injecting size-change
+ *   instructions there gave Gemini permission to redraw the bed from
+ *   scratch using the swatch as composition reference (job 3345eb7e).
  */
 export function buildSizePromptNote(
   sku: string | null | undefined,
-  category: string
+  category: string,
+  shotType?: string
 ): string {
   if (!BED_CATEGORIES.has(category)) return '';
+
+  // Only packshots need size adjustment — lifestyle/infografia/detail/doblada
+  // etc. should inherit the hero's bed layout exactly.
+  if (shotType && shotType !== 'main') return '';
 
   const size = extractSizeFromSku(sku);
   if (!size) return '';
