@@ -730,9 +730,27 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       );
     }
 
-    // Pattern text description is NOT injected into the prompt — the swatch image is the
-    // sole reference. Text descriptions use cached data that may be wrong (e.g. "diamond"
-    // when the actual texture is piqué circular) and cause Gemini to interpret instead of copy.
+    // Pattern text description is NOT injected as a full description (text descriptions
+    // use cached data that may be wrong and cause Gemini to interpret instead of copy),
+    // BUT we extract a DIRECTIONAL hint from it when the pattern has a clear orientation.
+    // For stripes/chevrons/diagonals, Gemini edit mode tends to rotate the pattern to
+    // align with the hero's texture direction — a targeted hint fixes that without
+    // misleading Gemini about the pattern itself.
+    if (swatchPatternDescription && !isBrandOnly) {
+      const lower = swatchPatternDescription.toLowerCase();
+      let directionHint: string | null = null;
+      if (/\bhorizontal(ly)?\b/.test(lower) && !/\bvertical/.test(lower)) {
+        directionHint = 'HORIZONTAL (parallel to the bed\'s foot, running left-right across the width)';
+      } else if (/\bvertical(ly)?\b/.test(lower) && !/\bhorizontal/.test(lower)) {
+        directionHint = 'VERTICAL (running top-to-bottom, perpendicular to the bed\'s foot)';
+      } else if (/\bdiagonal(ly)?\b/.test(lower) || /\bchevron\b/.test(lower)) {
+        directionHint = 'DIAGONAL (running at an angle, as shown in the swatch)';
+      }
+      if (directionHint) {
+        prompt += `\n\nORIENTATION HINT (pre-analyzed from swatch): The fabric pattern in Imagen 2 runs ${directionHint}. The result MUST reproduce the pattern in that exact direction. Do NOT rotate the stripes/lines to match the hero's texture — the hero's waffle/channel direction is irrelevant. The swatch dictates the pattern direction.`;
+        logPipelineEvent(job.id, 'DIRECTION_HINT', directionHint.split(' ')[0]);
+      }
+    }
 
     // Add brand guidelines to prompt if project has a brand (unless SKIP_BRAND flag)
     const skipBrand = job.prompt_adjustment === 'SKIP_BRAND';
