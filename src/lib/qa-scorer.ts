@@ -36,6 +36,8 @@ export interface ScoreImageResult {
   feedback: string;
   action: QAAction;
   durationMs: number;
+  reasons?: Record<string, string>; // Per-dimension reasoning from Gemini
+  rawResponse?: string;             // Full Gemini text response for audit
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,16 +151,22 @@ Expected text colors:
   - Subtitles: ${brand.secondary_color}
   - Features/highlights: ${brand.accent_color}` : ''}
 
-RESPOND WITH ONLY a valid JSON object (no markdown, no backticks, no explanation before or after):
+RESPOND WITH ONLY a valid JSON object (no markdown, no backticks, no explanation before or after). Each score has a companion "_reason" field with a short explanation of what you observed — these reasons are saved to the database for post-hoc debugging of why a score was given:
 {
   "product_fidelity": <number>,
+  "product_fidelity_reason": "<short sentence describing what you saw>",
   "color_accuracy": <number>,
+  "color_accuracy_reason": "<short sentence>",
   "composition_match": <number>,
+  "composition_match_reason": "<short sentence about framing, camera angle, room, objects, people/animals positions>",
   "visual_quality": <number>,
+  "visual_quality_reason": "<short sentence>",
   "resolution": <number>,
   "aspect_ratio": <number>,
   "ml_compliance": <number>,
-  "hero_contamination": <number>,${brand ? '\n  "brand_compliance": <number>,' : ''}
+  "ml_compliance_reason": "<short sentence — mention text language, unwanted text overlays, logos>",
+  "hero_contamination": <number>,
+  "hero_contamination_reason": "<short sentence>",${brand ? '\n  "brand_compliance": <number>,\n  "brand_compliance_reason": "<short sentence>",' : ''}
   "feedback": "<one sentence explaining the most critical issue, or 'Excellent quality' if all good>"
 }`;
 }
@@ -167,7 +175,7 @@ RESPOND WITH ONLY a valid JSON object (no markdown, no backticks, no explanation
 // Parse Gemini's QA response into structured data
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parseQAResponse(text: string): { detail: QADetail; feedback: string } | null {
+function parseQAResponse(text: string): { detail: QADetail; feedback: string; reasons: Record<string, string>; rawResponse: string } | null {
   try {
     // Try to extract JSON from the response (handle potential markdown wrapping)
     let jsonStr = text.trim();
@@ -209,7 +217,15 @@ function parseQAResponse(text: string): { detail: QADetail; feedback: string } |
       ? parsed.feedback
       : 'No feedback provided';
 
-    return { detail, feedback };
+    // Collect per-dimension reasons for post-hoc diagnosis
+    const reasons: Record<string, string> = {};
+    for (const key of Object.keys(parsed)) {
+      if (key.endsWith('_reason') && typeof parsed[key] === 'string') {
+        reasons[key.replace(/_reason$/, '')] = parsed[key];
+      }
+    }
+
+    return { detail, feedback, reasons, rawResponse: text };
   } catch (err) {
     console.error('[qa-scorer] Failed to parse QA response:', err, '\nRaw:', text);
     return null;
@@ -271,5 +287,7 @@ export async function scoreImage(request: ScoreImageRequest): Promise<ScoreImage
     feedback: parsed.feedback,
     action,
     durationMs: result.durationMs,
+    reasons: parsed.reasons,
+    rawResponse: parsed.rawResponse,
   };
 }

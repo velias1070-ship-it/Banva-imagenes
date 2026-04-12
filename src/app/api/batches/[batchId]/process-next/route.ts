@@ -1004,6 +1004,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             pass: verification.pass,
             issues: verification.issues,
             feedback: verification.feedback,
+            checks: verification.checks || null,
+            raw_response: verification.rawResponse || null,
             pattern_description: swatchPatternDescription,
             duration_ms: Date.now() - verifyStart,
             attempt: job.attempt,

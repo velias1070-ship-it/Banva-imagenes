@@ -1021,6 +1021,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (isInfografia) {
       logPipelineEvent(jobId, 'VERIFICATION', 'skipped (infografia color-only edit)');
     }
+    let verificationRaw: Record<string, unknown> | null = null;
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const { verifySwatch } = await import('@/lib/swatch-verifier');
@@ -1037,6 +1038,16 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
+          verificationRaw = {
+            score: verification.score,
+            pass: verification.pass,
+            issues: verification.issues,
+            feedback: verification.feedback,
+            checks: verification.checks || null,
+            raw_response: verification.rawResponse || null,
+            pattern_description: swatchPatternDescription,
+            attempt,
+          };
           if (!verification.pass && attempt < 4) {
             // BLOCK: verification failed — delegate retry to process-next chain
             const feedback = verification.feedback || verification.issues.join('. ');
@@ -1097,6 +1108,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,
+        verification_raw: verificationRaw,
         updated_at: new Date().toISOString(),
         ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
       })

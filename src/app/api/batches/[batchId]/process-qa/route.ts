@@ -4,6 +4,7 @@ import { scoreImage } from '@/lib/qa-scorer';
 import { getCategoryStrategy } from '@/lib/category-strategy';
 import { shouldHaltBatch } from '@/lib/qa-criteria';
 import { getProjectSettings } from '@/lib/project-settings';
+import { logPipelineEvent } from '@/lib/pipeline-log';
 import type { BrandConfig } from '@/lib/brand';
 
 export const maxDuration = 60;
@@ -266,13 +267,28 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
         break;
     }
 
-    // Update job with QA results (from qa_processing → final status)
+    // Update job with QA results (from qa_processing → final status).
+    // qa_detail now carries the per-dimension reasons + raw Gemini response
+    // for post-hoc debugging — we fold them in as non-numeric keys so the
+    // existing QADetail consumers still work.
+    const qaDetailWithDiagnosis = {
+      ...scoreResult.detail,
+      _reasons: scoreResult.reasons || null,
+      _raw: scoreResult.rawResponse || null,
+      _shot_type: effectiveShotType || null,
+      _mode: (job.prompt_metadata as Record<string, unknown>)?.strategy || null,
+    };
+    logPipelineEvent(job.id, 'QA_SCORED', `${(scoreResult.score * 100).toFixed(0)}% ${scoreResult.action.action}`, {
+      score: scoreResult.score,
+      detail: scoreResult.detail,
+      reasons: scoreResult.reasons,
+    });
     await supabase
       .from('generation_jobs')
       .update({
         status: newStatus,
         qa_score: scoreResult.score,
-        qa_detail: scoreResult.detail,
+        qa_detail: qaDetailWithDiagnosis,
         qa_feedback: scoreResult.feedback,
         prompt_metadata: {
           ...(job.prompt_metadata || {}),
