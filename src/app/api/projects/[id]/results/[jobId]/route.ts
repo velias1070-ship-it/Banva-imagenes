@@ -592,8 +592,14 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     }
 
     // ── Get QA feedback from previous attempt ──
-    const qaFeedback = (job.qa_feedback as string) || null;
-    if (qaFeedback) {
+    // GUARD: discard QA feedback if the verifier passed — QA false negatives
+    // poison the retry prompt and cause partial pattern coverage on pillows.
+    const prevVerifierPassed = (job.prompt_metadata as Record<string, unknown>)?.verification_pass === true;
+    const rawQaFeedback = (job.qa_feedback as string) || null;
+    const qaFeedback = (rawQaFeedback && !prevVerifierPassed) ? rawQaFeedback : null;
+    if (rawQaFeedback && prevVerifierPassed) {
+      console.log(`[regenerateJob] Discarding QA feedback (verifier passed — QA likely false negative): "${rawQaFeedback}"`);
+    } else if (qaFeedback) {
       console.log(`[regenerateJob] Using QA feedback: "${qaFeedback}"`);
     }
 

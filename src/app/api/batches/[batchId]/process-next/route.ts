@@ -456,8 +456,18 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     }
 
     // ── Get QA feedback from previous attempt (for retries) ──
-    const qaFeedback = job.attempt > 0 ? (job.qa_feedback || null) : null;
-    if (qaFeedback) {
+    // GUARD: if the verifier PASSED on the previous attempt but QA flagged it,
+    // the QA feedback is likely a false negative (verifier is more reliable for
+    // fabric fidelity). Injecting wrong feedback poisons the retry — Gemini
+    // becomes confused and produces partial pattern coverage (e.g. pillowcases
+    // half-white). Only use QA feedback when the verifier also failed or was
+    // not run.
+    const prevVerifierPassed = (job.prompt_metadata as Record<string, unknown>)?.verification_pass === true;
+    const rawQaFeedback = job.attempt > 0 ? (job.qa_feedback || null) : null;
+    const qaFeedback = (rawQaFeedback && !prevVerifierPassed) ? rawQaFeedback : null;
+    if (rawQaFeedback && prevVerifierPassed) {
+      console.log(`[process-next] Discarding QA feedback (verifier passed — QA likely false negative): "${rawQaFeedback}"`);
+    } else if (qaFeedback) {
       console.log(`[process-next] Retry with QA feedback: "${qaFeedback}"`);
     }
 
