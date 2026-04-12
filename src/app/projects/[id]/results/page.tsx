@@ -95,6 +95,7 @@ export default function ResultsPage() {
   const PER_SWATCH_CANNON_PROJECTS = new Set([
     'f047dcc1-1c96-440c-99af-e7c0af622f89',
     '5252726f-7f69-48be-88eb-de895e138737',
+    '4af255ae-39ba-4c7a-b425-f794ec65e4a7',
   ]);
   const showPerSwatchCannon = PER_SWATCH_CANNON_PROJECTS.has(id);
   const [publishing, setPublishing] = useState(false);
