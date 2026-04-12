@@ -67,7 +67,17 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.`,
 
-      what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada visibles con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén TODO lo demás exactamente igual: textos, íconos, almohadas decorativas, muebles, lámpara, objetos de la mesa de noche, alfombra. NÚMERO DE ALMOHADAS: mantener EXACTAMENTE la misma cantidad, tamaño y posición de almohadas que en Imagen 1. Si Imagen 1 tiene 1 almohada, el resultado tiene 1. Si tiene 2, el resultado tiene 2. NO agregar ni quitar almohadas.`,
+      what_to_change: `Cambia SOLO la tela del cobertor y fundas de almohada visibles al diseño de Imagen 2. Ignora el relieve o acolchado de Imagen 1.
+
+REGLA DE PRODUCTO — CRÍTICA:
+La imagen vende un PRODUCTO ESPECÍFICO. La cantidad de piezas del hero define el set:
+  - Si Imagen 1 muestra 1 almohada → el set es "quilt + 1 funda". El resultado DEBE tener 1 almohada.
+  - Si Imagen 1 muestra 2 almohadas → el set es "quilt + 2 fundas". El resultado DEBE tener 2 almohadas.
+  - NO agregar almohadas extras — eso cambia el producto que se vende.
+  - NO quitar almohadas — eso también cambia el producto.
+  - CADA funda visible DEBE estar COMPLETAMENTE cubierta con el patrón de Imagen 2. Sin fundas a medio cubrir, sin fundas parcialmente blancas. Cobertura total.
+
+TODO lo demás queda IDÉNTICO a Imagen 1: muebles, lámpara, objetos de mesa de noche, alfombra, pared, cuadros, decoración.`,
 
       what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
 
