@@ -25,49 +25,159 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-function buildCannonImagePatterns(attrs: Record<string, string>): string[] {
-  const design = attrs.FABRIC_DESIGN;
+// Keeps dots (for filename size like "1.5plazas" — Cannon preserves the dot)
+function slugifyKeepDot(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9.]+/g, '');
+}
+
+// For page URL: "1.5 plazas" → "1-5-plazas" (Cannon replaces dot with dash in URL key)
+function slugifyForPageUrl(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\./g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+// "Sabanas Polar 1.5 Plazas Drago" → "Drago"
+// "Sabanas 144 Hilos 2 Plazas Oasis Verde" → "Oasis Verde"
+function extractDesignFromTitle(title: string): string | null {
+  const match = title.match(/plazas?\s+(.+?)(?:\s*[-|(].*)?$/i);
+  return match ? match[1].trim() : null;
+}
+
+function buildCannonImagePatterns(
+  attrs: Record<string, string>,
+  title?: string
+): string[] {
+  const fabricDesign = attrs.FABRIC_DESIGN;
   const model = attrs.MODEL || '';
-  const size = attrs.MATTRESS_SIZE;
+  const size = attrs.MATTRESS_SIZE || '2 plazas';
   const color = attrs.COLOR || attrs.MAIN_COLOR || '';
   const fabric = attrs.FABRIC_COMPOSITION || attrs.FABRIC || '';
-  if (!design) return [];
 
-  const designCompact = slugify(design.replace(/\s*\d+$/, ''));
-  const sizeCompact = slugify(size || '2 plazas');
+  const titleDesign = title ? extractDesignFromTitle(title) : null;
+
+  // Design candidates: title-based first (more specific than generic "Estampado")
+  const designCandidates: string[] = [];
+  const addDesign = (d: string | null | undefined) => {
+    if (!d) return;
+    const compact = slugify(d.replace(/\s*\d+$/, ''));
+    if (compact && !designCandidates.includes(compact)) designCandidates.push(compact);
+  };
+  addDesign(titleDesign);
+  addDesign(fabricDesign);
+
+  if (!designCandidates.length) return [];
+
+  // Size candidates: dot preserved first ("1.5plazas"), then stripped ("15plazas")
+  const sizeCandidates = [slugifyKeepDot(size)];
+  const sizeNoDot = slugify(size);
+  if (sizeNoDot && sizeNoDot !== sizeCandidates[0]) sizeCandidates.push(sizeNoDot);
+
   const colorCompact = slugify(color);
   const threadMatch = model.match(/(\d+)\s*hilos/i);
   const threadCount = threadMatch ? threadMatch[1] : null;
-
-  const isPolar = /polar|fleece/i.test(model + ' ' + fabric + ' ' + design);
+  const isPolar = /polar|fleece/i.test(
+    `${model} ${fabric} ${fabricDesign || ''} ${title || ''}`
+  );
 
   const patterns: string[] = [];
-  if (isPolar) {
-    // Most specific first: design + color (sabanaspolar1plazalisomalva)
-    if (designCompact && colorCompact) {
-      patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
-    }
-    // Color only (sabanaspolar1plazaaba — when FABRIC_DESIGN is generic "Estampado")
-    if (colorCompact) {
-      patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
-    }
-    // Design only (sabanaspolar1plazaliso)
-    if (designCompact) {
-      patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
+  for (const designCompact of designCandidates) {
+    for (const sizeCompact of sizeCandidates) {
+      if (isPolar) {
+        if (colorCompact) {
+          patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
+          patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
+        }
+        patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
+      }
+      if (threadCount) {
+        patterns.push(`sabanas${sizeCompact}${threadCount}hilos${designCompact}`);
+      }
+      if (!threadCount && !isPolar) {
+        patterns.push(`sabanas${sizeCompact}144hilos${designCompact}`);
+      }
     }
   }
-  if (threadCount) {
-    patterns.push(`sabanas${sizeCompact}${threadCount}hilos${designCompact}`);
-  }
-  if (!patterns.length) {
-    patterns.push(`sabanas${sizeCompact}144hilos${designCompact}`);
-    if (colorCompact) {
-      patterns.push(`sabanaspolar${sizeCompact}${colorCompact}`);
-      patterns.push(`sabanaspolar${sizeCompact}${designCompact}${colorCompact}`);
+  return [...new Set(patterns)];
+}
+
+function buildCannonPageUrls(
+  attrs: Record<string, string>,
+  title?: string
+): string[] {
+  const fabricDesign = attrs.FABRIC_DESIGN;
+  const model = attrs.MODEL || '';
+  const size = attrs.MATTRESS_SIZE || '2 plazas';
+  const fabric = attrs.FABRIC_COMPOSITION || attrs.FABRIC || '';
+
+  const titleDesign = title ? extractDesignFromTitle(title) : null;
+
+  const designCandidates: string[] = [];
+  const addDesign = (d: string | null | undefined) => {
+    if (!d) return;
+    const slug = slugifyForPageUrl(d.replace(/\s*\d+$/, ''));
+    if (slug && !designCandidates.includes(slug)) designCandidates.push(slug);
+  };
+  addDesign(titleDesign);
+  addDesign(fabricDesign);
+
+  if (!designCandidates.length) return [];
+
+  const sizeSlug = slugifyForPageUrl(size);
+  const threadMatch = model.match(/(\d+)\s*hilos/i);
+  const threadCount = threadMatch ? threadMatch[1] : null;
+  const isPolar = /polar|fleece/i.test(
+    `${model} ${fabric} ${fabricDesign || ''} ${title || ''}`
+  );
+
+  const urls: string[] = [];
+  for (const design of designCandidates) {
+    if (isPolar) {
+      urls.push(`https://cannonhome.cl/sabanas-polar-${sizeSlug}-${design}.html`);
     }
-    patterns.push(`sabanaspolar${sizeCompact}${designCompact}`);
+    if (threadCount) {
+      urls.push(`https://cannonhome.cl/sabanas-${sizeSlug}-${threadCount}-hilos-${design}.html`);
+    }
+    if (!threadCount && !isPolar) {
+      urls.push(`https://cannonhome.cl/sabanas-${sizeSlug}-144-hilos-${design}.html`);
+    }
   }
-  return patterns;
+  return [...new Set(urls)];
+}
+
+// Fetch product page and extract all sabanas*_N.jpg filenames referenced in the HTML.
+// Magento stores originals at /media/catalog/product/s/a/{filename} for filenames starting with "sa".
+async function scrapeCannonProductImages(pageUrl: string): Promise<string[]> {
+  try {
+    const res = await fetch(pageUrl, {
+      headers: { 'Accept': 'text/html', 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const matches = html.matchAll(
+      /\b(sabanas[a-z0-9.]+?_\d+(?:_\d+)?)\.(jpg|jpeg|png|webp)\b/gi
+    );
+    const filenames = new Set<string>();
+    for (const m of matches) {
+      filenames.add(`${m[1]}.${m[2].toLowerCase()}`);
+    }
+    return [...filenames].map(
+      (fn) => `https://cannonhome.cl/media/catalog/product/s/a/${fn}`
+    );
+  } catch {
+    return [];
+  }
 }
 
 function cannonUrl(pattern: string, index: number, variant?: number): string {
@@ -268,10 +378,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         continue;
       }
 
-      // Get attributes
+      // Get attributes + title (title is needed when FABRIC_DESIGN is generic like "Estampado")
       const item = await mlGet<{
+        title: string;
         attributes: Array<{ id: string; value_name: string | null }>;
-      }>(`/items/${itemId}?attributes=attributes`);
+      }>(`/items/${itemId}?attributes=title,attributes`);
 
       if (!item?.attributes) {
         swatchResult.errors.push('Could not fetch attributes');
@@ -292,8 +403,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         continue;
       }
 
-      // Build Cannon URL patterns and try each one
-      const patterns = buildCannonImagePatterns(attrs);
+      // Build Cannon URL patterns (uses title as fallback for design when FABRIC_DESIGN is generic)
+      const patterns = buildCannonImagePatterns(attrs, item.title);
       swatchResult.debug!.patterns = patterns;
 
       // Helper: fetch URL and return buffer if it's a real image (>5KB), null otherwise
@@ -332,22 +443,53 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
 
       swatchResult.debug!.working = workingPattern;
-      if (!workingPattern) {
-        swatchResult.errors.push(`No images found at Cannon (tried: ${patterns.join(', ')})`);
+
+      // Build list of image URLs to download. Prefer pattern-based discovery,
+      // fall back to scraping the Cannon product page if patterns don't match.
+      let imageUrls: string[] = [];
+      let scrapedMode = false;
+
+      if (workingPattern) {
+        for (let idx = 1; idx <= 10; idx++) {
+          imageUrls.push(cannonUrl(workingPattern, idx, workingVariant));
+        }
+      } else {
+        const pageUrls = buildCannonPageUrls(attrs, item.title);
+        (swatchResult.debug as Record<string, unknown>).page_urls = pageUrls;
+        for (const pageUrl of pageUrls) {
+          const scraped = await scrapeCannonProductImages(pageUrl);
+          if (scraped.length > 0) {
+            imageUrls = scraped;
+            scrapedMode = true;
+            (swatchResult.debug as Record<string, unknown>).scraped_from = pageUrl;
+            break;
+          }
+        }
+      }
+
+      if (imageUrls.length === 0) {
+        swatchResult.errors.push(
+          `No images found at Cannon (patterns: ${patterns.join(', ')})`
+        );
         results.push(swatchResult);
         continue;
       }
 
-      // Download all available images for the working pattern
-      for (let idx = 1; idx <= 10; idx++) {
-        const url = cannonUrl(workingPattern, idx, workingVariant);
+      // Download images. Pattern mode: stop at first gap. Scrape mode: skip gaps.
+      for (const url of imageUrls) {
         try {
           const res = await fetch(url, { headers: { 'Accept': 'image/*' } });
           const contentType = res.headers.get('content-type') || '';
-          if (!res.ok || !contentType.startsWith('image/')) break;
+          if (!res.ok || !contentType.startsWith('image/')) {
+            if (scrapedMode) continue;
+            break;
+          }
 
           const buffer = Buffer.from(await res.arrayBuffer());
-          if (buffer.length < 5000) break;
+          if (buffer.length < 5000) {
+            if (scrapedMode) continue;
+            break;
+          }
 
           // Post-process to 1200x1200
           const processed = await ensureOutputSpec(buffer, 1200);
@@ -379,7 +521,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
           swatchResult.images_imported++;
         } catch {
-          break; // Stop trying more images for this swatch
+          if (scrapedMode) continue;
+          break;
         }
       }
     } catch (err) {
