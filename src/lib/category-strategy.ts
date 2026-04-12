@@ -67,7 +67,7 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.`,
 
-      what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén todo lo demás exactamente igual, incluidos textos e íconos superpuestos.`,
+      what_to_change: `Reemplaza completamente el diseño y la textura del cobertor y las fundas de almohada visibles con el de la imagen 2. Ignora cualquier relieve o patrón acolchado de la imagen 1 — no lo conserves. Mantén TODO lo demás exactamente igual: textos, íconos, almohadas decorativas, muebles, lámpara, objetos de la mesa de noche, alfombra. NÚMERO DE ALMOHADAS: mantener EXACTAMENTE la misma cantidad, tamaño y posición de almohadas que en Imagen 1. Si Imagen 1 tiene 1 almohada, el resultado tiene 1. Si tiene 2, el resultado tiene 2. NO agregar ni quitar almohadas.`,
 
       what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
 
@@ -888,7 +888,7 @@ Imagen fotorrealista de ${resolution}.`;
 
   return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}
 
-Imagen 1 es la composición exacta: mantén personas, rostros, expresiones, manos, pelo, fondo, muebles, iluminación, encuadre y foco idénticos. Solo la tela cambia. Si hay texto en inglés, traducir al español. Sin marcas de agua.
+Imagen 1 es la composición exacta: mantén personas, rostros, expresiones, manos, pelo, fondo, muebles, lámpara, objetos de mesa de noche, almohadas decorativas, iluminación, encuadre y foco idénticos. MISMA cantidad de almohadas, misma posición, mismo tamaño. Solo la tela del producto cambia. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
 Imagen fotorrealista de ${resolution}.`;
 }
