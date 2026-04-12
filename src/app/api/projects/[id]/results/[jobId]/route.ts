@@ -65,6 +65,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   let mode: string | undefined;
   let forceMode: 'edit' | 'reference' | undefined;
   let skipFlatten = false;
+  let skipTile = false;
   try {
     const body = await _request.json();
     mode = body?.mode;
@@ -74,6 +75,9 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     }
     if (body?.skip_flatten === true) {
       skipFlatten = true;
+    }
+    if (body?.skip_tile === true) {
+      skipTile = true;
     }
   } catch {
     // No body or invalid JSON — normal regeneration
@@ -128,7 +132,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten, skipTile);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -146,6 +150,7 @@ async function regenerateJob(
   brandId?: string | null,
   forceMode?: 'edit' | 'reference',
   skipFlatten: boolean = false,
+  skipTile: boolean = false,
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string> | null;
@@ -606,9 +611,13 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     // Preprocessing (skip for BRAND_ONLY — image stays unchanged)
     let swatchBase64 = swatchBuffer.toString('base64');
     if (!isBrandOnly && strategy.preprocessing.crop_swatch) {
-      const cropFn = strategy.preprocessing.tile_swatch ? cropAndTileSwatchToFabric : cropSwatchToFabric;
+      const useTile = strategy.preprocessing.tile_swatch && !skipTile;
+      const cropFn = useTile ? cropAndTileSwatchToFabric : cropSwatchToFabric;
       const croppedSwatch = await cropFn(swatchBuffer);
       swatchBase64 = croppedSwatch.toString('base64');
+      if (skipTile && strategy.preprocessing.tile_swatch) {
+        logPipelineEvent(jobId, 'TILE_SKIPPED', 'api_param');
+      }
     }
 
     // Save cropped swatch before AI flatten — verifier needs the real texture
