@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -606,7 +606,8 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     // Preprocessing (skip for BRAND_ONLY — image stays unchanged)
     let swatchBase64 = swatchBuffer.toString('base64');
     if (!isBrandOnly && strategy.preprocessing.crop_swatch) {
-      const croppedSwatch = await cropSwatchToFabric(swatchBuffer);
+      const cropFn = strategy.preprocessing.tile_swatch ? cropAndTileSwatchToFabric : cropSwatchToFabric;
+      const croppedSwatch = await cropFn(swatchBuffer);
       swatchBase64 = croppedSwatch.toString('base64');
     }
 

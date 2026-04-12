@@ -15,6 +15,17 @@ export interface CategoryStrategy {
     crop_swatch: boolean;
     flatten_hero: boolean;
     flatten_swatch_ai?: boolean;
+    /**
+     * When true, tile the cropped swatch 2x2 before sending to Gemini.
+     * Use for categories where the product set includes small fabric
+     * surfaces (pillowcases) that would otherwise show white background
+     * from the swatch pattern's negative space. Only enable for categories
+     * where the swatch is typically a photo of a bedroom scene or full
+     * product where motifs are spread across a large area. DO NOT enable
+     * for categories where the swatch is already a close-up fabric shot
+     * (towels, curtains) — tiling would miniaturize an already-dense pattern.
+     */
+    tile_swatch?: boolean;
   };
   prompt: {
     product_context: string;
@@ -61,7 +72,7 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
     // should only be used for deep 3D embossed quilting (mandala / basket
     // weave), which is a minority case; enable per-job via metadata when
     // explicitly needed, not as the default.
-    preprocessing: { crop_swatch: true, flatten_hero: false, flatten_swatch_ai: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false, flatten_swatch_ai: false, tile_swatch: true },
     prompt: {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
@@ -212,7 +223,7 @@ Do NOT lighten the fabric to make the pattern visible — dark fabric stays dark
     label: 'Cubrecamas',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: true, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false, tile_swatch: true },
     prompt: {
       product_context: `This is a bedspread (cubrecama) — a decorative bed cover.
 The product typically includes the bedspread itself, sometimes with matching pillow shams.`,
@@ -256,7 +267,7 @@ Do NOT lighten the fabric. Texture should be subtle on dark surfaces.`,
     label: 'Plumones',
     generation_mode: 'edit',
     retry_escalation: 'edit',
-    preprocessing: { crop_swatch: true, flatten_hero: false },
+    preprocessing: { crop_swatch: true, flatten_hero: false, tile_swatch: true },
     prompt: {
       product_context: `This is a duvet/comforter (plumon) — a thick, puffy bed covering filled with down or synthetic fill.
 The plumon typically has a quilted/channel stitch pattern to keep the fill distributed evenly.`,
