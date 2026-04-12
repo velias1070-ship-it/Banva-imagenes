@@ -101,6 +101,13 @@ LO CORRECTO:
   - Funda cubierta UNIFORMEMENTE con hojas/motivos en toda su superficie visible.
   - Densidad similar a la del cobertor.
 
+DIRECCIÓN DEL PATRÓN — REGLA CRÍTICA:
+Si el swatch (Imagen 2) muestra un patrón con una DIRECCIÓN definida (rayas horizontales, rayas verticales, diagonales, chevron, etc.), el resultado DEBE reproducir ESA MISMA dirección.
+  - Rayas HORIZONTALES en el swatch → rayas HORIZONTALES en el resultado. NO agregues líneas verticales cruzando, NO conviertas rayas horizontales en plaid/tartán/tejido cruzado.
+  - Rayas VERTICALES en el swatch → rayas VERTICALES en el resultado. NO agregues horizontales.
+  - Si el swatch muestra bandas simples (como un quilt de rayas), el resultado debe mostrar bandas simples — no un tejido con hilos cruzados.
+  - La "textura de tela tejida" NO es una excusa para agregar líneas en direcciones que no están en el swatch.
+
 TODO lo demás queda IDÉNTICO a Imagen 1: muebles, lámpara, objetos de mesa de noche, alfombra, pared, cuadros, decoración.`,
 
       what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
