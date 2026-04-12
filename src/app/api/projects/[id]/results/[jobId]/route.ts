@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, tintInfografiaLeftHalf, colorNameToHex } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, ensureOutputSpec, flattenHeroEmboss } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -65,7 +65,6 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   let mode: string | undefined;
   let forceMode: 'edit' | 'reference' | undefined;
   let skipFlatten = false;
-  let useGemini = false;
   try {
     const body = await _request.json();
     mode = body?.mode;
@@ -75,9 +74,6 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     }
     if (body?.skip_flatten === true) {
       skipFlatten = true;
-    }
-    if (body?.use_gemini === true) {
-      useGemini = true;
     }
   } catch {
     // No body or invalid JSON — normal regeneration
@@ -132,7 +128,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten, useGemini);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -150,7 +146,6 @@ async function regenerateJob(
   brandId?: string | null,
   forceMode?: 'edit' | 'reference',
   skipFlatten: boolean = false,
-  useGemini: boolean = false,
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string> | null;
@@ -513,74 +508,13 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
 
     logPipelineEvent(jobId, 'SHOT_TYPE', effectiveShotType, { cached: !!(heroShot as Record<string, unknown>)?.detected_shot_type });
 
-    // ── INFOGRAFIA SHORTCUT: skip Gemini entirely, use Sharp tint ──
-    // Gemini corrupts text content in infografias (replaces words with similar-
-    // looking gibberish like "Mantene y eclocamiento de complexa"). For comparison
-    // shots like Banva vs Others infografias, the layout/text are CRITICAL and
-    // must be preserved pixel-perfect. Sharp tint of the left half achieves
-    // recoloring without ever touching text/badges/right side.
-    if (effectiveShotType === 'infografia' && !isBrandOnly && !useGemini) {
-      try {
-        logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
-        // Color resolution priority:
-        //   1. Swatch name → known Spanish color map (highest confidence)
-        //   2. Cached dominant_color_hex from swatches table
-        //   3. Gemini analyzeSwatchColor (least reliable for full-product swatches)
-        let swatchHex: string | null = null;
-        let colorSource = '';
-        // 1. Try swatch name mapping
-        const nameHex = swatch.name ? colorNameToHex(swatch.name) : null;
-        if (nameHex) {
-          swatchHex = nameHex;
-          colorSource = `name "${swatch.name}" → ${nameHex}`;
-        } else {
-          // 2. Try cached hex
-          const cached = (swatch as Record<string, unknown>).dominant_color_hex as string | null;
-          if (cached) {
-            swatchHex = cached;
-            colorSource = `cached hex ${cached}`;
-          } else {
-            // 3. Fallback: Gemini analysis (may be inaccurate for full-product swatches)
-            try {
-              const analysis = await analyzeSwatchColor(swatchBuffer.toString('base64'), 'image/png');
-              if (analysis?.dominantHex) {
-                swatchHex = analysis.dominantHex;
-                colorSource = `Gemini "${analysis.colorDescription}" → ${swatchHex}`;
-                // Cache for future runs
-                await supabase.from('swatches')
-                  .update({ dominant_color_hex: swatchHex, color_description: analysis.colorDescription })
-                  .eq('id', swatch.id);
-              }
-            } catch (err) {
-              console.error('[regenerateJob] swatch color analysis failed:', err);
-            }
-          }
-        }
-        if (swatchHex) {
-          logPipelineEvent(jobId, 'INFOGRAFIA_COLOR', colorSource);
-        }
-        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer, swatchHex);
-        const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
-        const outputPath = `projects/${projectId}/generated/${jobId}.png`;
-        await supabase.storage.from('images').upload(outputPath, tintedBuffer, { contentType: 'image/png', upsert: true });
-        logPipelineEvent(jobId, 'UPLOAD', outputPath);
-        await supabase.from('generation_jobs').update({
-          status: 'approved',
-          output_storage_path: outputPath,
-          generation_time_ms: 0,
-          gemini_model_used: 'sharp-tint',
-          attempt: attempt + 1,
-          qa_score: 1.0,
-          qa_feedback: 'Auto-approved (infografia Sharp tint)',
-          updated_at: new Date().toISOString(),
-        }).eq('id', jobId);
-        logPipelineEvent(jobId, 'STATUS', 'approved', { method: 'sharp-tint' });
-        return;
-      } catch (err) {
-        logPipelineEvent(jobId, 'INFOGRAFIA_SHARP_TINT_FAILED', err instanceof Error ? err.message : 'unknown');
-        console.error('[regenerateJob] Infografia Sharp tint failed, falling back to Gemini:', err);
-      }
-    }
+    // Infografia flows through the normal Gemini edit path — same rule as
+    // every other shot type: hero literal, only the fabric changes to the
+    // swatch's full design. The Sharp shortcut was removed after we found
+    // that Gemini only corrupted text because flatten_hero destroyed it
+    // before generation (same root cause as the face-regeneration bug for
+    // lifestyle). With flatten_hero disabled for quilts, text is preserved
+    // pixel-perfect through normal Gemini edit.
 
     // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage, type GeminiGenerateResult } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, tintInfografiaLeftHalf, colorNameToHex } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -498,81 +498,13 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       ...(shotTypeDetectionMeta || {}),
     });
 
-    // ── INFOGRAFIA SHORTCUT: skip Gemini, use Sharp tint ──
-    if (effectiveShotType === 'infografia' && !isBrandOnly) {
-      try {
-        logPipelineEvent(job.id, 'INFOGRAFIA_SHARP_TINT', 'skipping Gemini, using Sharp left-half tint');
-        // Color resolution priority (must match regenerateJob):
-        //   1. Swatch name → known Spanish color map (highest confidence)
-        //   2. Cached dominant_color_hex from swatches table
-        //   3. Gemini analyzeSwatchColor (least reliable for full-product swatches)
-        let swatchHex: string | null = null;
-        let colorSource = '';
-        const swatchName = job.swatch?.name as string | null;
-        const nameHex = swatchName ? colorNameToHex(swatchName) : null;
-        if (nameHex) {
-          swatchHex = nameHex;
-          colorSource = `name "${swatchName}" → ${nameHex}`;
-        } else {
-          const cached = job.swatch?.dominant_color_hex as string | null;
-          if (cached) {
-            swatchHex = cached;
-            colorSource = `cached hex ${cached}`;
-          } else {
-            try {
-              const analysis = await analyzeSwatchColor(swatchBuffer.toString('base64'), 'image/png');
-              if (analysis?.dominantHex) {
-                swatchHex = analysis.dominantHex;
-                colorSource = `Gemini "${analysis.colorDescription}" → ${swatchHex}`;
-                await supabase.from('swatches')
-                  .update({ dominant_color_hex: swatchHex, color_description: analysis.colorDescription })
-                  .eq('id', job.swatch.id);
-              }
-            } catch (err) {
-              console.error('[process-next] swatch color analysis failed:', err);
-            }
-          }
-        }
-        if (swatchHex) {
-          logPipelineEvent(job.id, 'INFOGRAFIA_COLOR', colorSource);
-        }
-        const tinted = await tintInfografiaLeftHalf(heroBuffer, swatchBuffer, swatchHex);
-        const tintedBuffer = await ensureOutputSpec(Buffer.from(tinted), 1200);
-        // Build output path — use the EFFECTIVE shot type (what actually got processed),
-        // not the DB field, since the two can diverge (detected_shot_type wins).
-        const sku = job.swatch?.sku_suffix || '';
-        const color = (job.swatch?.name || '').replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
-        const shotTypeSlug = (effectiveShotType || 'gen').replace(/[^a-zA-Z0-9]+/g, '-');
-        const attempt = job.attempt + 1;
-        const slug = [sku, color, shotTypeSlug, `v${attempt}`].filter(Boolean).join('_');
-        const outputPath = `projects/${project.id}/generated/${slug}_${job.id.substring(0, 8)}.png`;
-        await supabase.storage.from('images').upload(outputPath, tintedBuffer, { contentType: 'image/png', upsert: true });
-        logPipelineEvent(job.id, 'UPLOAD', outputPath);
-        await supabase.from('generation_jobs').update({
-          status: 'approved',
-          output_storage_path: outputPath,
-          generation_time_ms: 0,
-          gemini_model_used: 'sharp-tint',
-          attempt,
-          qa_score: 1.0,
-          qa_feedback: 'Auto-approved (infografia Sharp tint)',
-          updated_at: new Date().toISOString(),
-        }).eq('id', job.id);
-        logPipelineEvent(job.id, 'STATUS', 'approved', { method: 'sharp-tint' });
-        // Update batch counters and chain to next job
-        await supabase
-          .from('generation_batches')
-          .update({
-            completed_count: (batch.completed_count || 0) + 1,
-            approved_count: (batch.approved_count || 0) + 1,
-          })
-          .eq('id', batchId);
-        return { chain: true, triggerQA: false };
-      } catch (err) {
-        logPipelineEvent(job.id, 'INFOGRAFIA_SHARP_TINT_FAILED', err instanceof Error ? err.message : 'unknown');
-        console.error('[process-next] Infografia Sharp tint failed, falling back to Gemini:', err);
-      }
-    }
+    // Infografia flows through the normal Gemini edit path — same rule as every
+    // other shot type: hero literal, only the fabric changes to the swatch's.
+    // The previous Sharp-only shortcut existed because Gemini was corrupting
+    // text, but that was really flatten_hero destroying text before Gemini
+    // saw it (same root cause as the face-regeneration bug for lifestyle).
+    // With flatten_hero disabled by default in the quilts strategy, Gemini
+    // preserves text pixel-perfect.
 
     // ── Determine effective generation mode ──
     let effectiveMode = projectSettings.generation.mode !== 'auto'

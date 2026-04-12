@@ -222,7 +222,12 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     const swatchBase64 = Buffer.from(await swatchRes.data.arrayBuffer()).toString('base64');
     const heroBase64 = Buffer.from(await heroRes.data.arrayBuffer()).toString('base64');
 
-    // Score the image (with per-project QA settings + swatch hex for color accuracy)
+    // Score the image (with per-project QA settings + swatch hex for color accuracy).
+    // Prefer detected_shot_type over the DB shot_type — the DB field can be stale
+    // or user-assigned incorrectly (e.g. a user marks an infografia as lifestyle).
+    const effectiveShotType = (job.hero_shot as Record<string, unknown>).detected_shot_type as string
+      || (job.hero_shot as Record<string, unknown>).shot_type as string
+      || undefined;
     const scoreResult = await scoreImage({
       generatedBase64,
       generatedMimeType: 'image/png',
@@ -238,6 +243,7 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
       projectSettings,
       actualMode: (job.prompt_metadata as Record<string, unknown>)?.strategy as string | undefined,
       brand,
+      shotType: effectiveShotType,
     });
 
     // Determine new status based on QA action
