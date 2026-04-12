@@ -310,38 +310,69 @@ export function needsQuiltPreprocessing(category: string): boolean {
 }
 
 /**
- * Crop a swatch image to its central fabric zone.
- * When a swatch is a full lifestyle photo (bedroom scene), this extracts just
- * the quilt fabric area, avoiding furniture, walls, and background.
+ * Crop a swatch image to its central fabric zone and tile the result 2x2.
  *
- * Crop zone: y 30%-70% of height, x 15%-85% of width
- * Output: 800x800 square (Gemini prefers square input)
+ * Why tile? When Gemini receives a sparse pattern (e.g. leaves separated by
+ * white background), it maps the pattern 1:1 onto the target fabric. If the
+ * target is small (like a pillowcase), only a few motifs fit and the rest
+ * of the pillow lands on the white background of the pattern — producing
+ * "half-covered" pillows that look defective.
+ *
+ * Tiling the pattern 2x2 doubles the motif density, so pillowcases show 4x
+ * more leaves/flowers per unit area. This eliminates the half-white effect
+ * without requiring Gemini to scale the pattern on its own.
+ *
+ * Crop zone: y 45%-90% of height, x 15%-85% of width (lower-middle to avoid
+ * headboard and pillows, captures the quilt body directly).
+ * Output: 800x800 square, 2x2 tiled.
  */
 export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
   const metadata = await sharp(imageBuffer).metadata();
   const width = metadata.width || 800;
   const height = metadata.height || 800;
 
-  // Central fabric zone — aggressive crop to isolate fabric, avoiding headboard/pillows/bed frame
+  // Tight fabric zone — lower-middle of the swatch photo, where the quilt
+  // body is maximally visible without headboard/pillows/footer contamination.
   const cropLeft = Math.round(width * 0.15);
-  const cropTop = Math.round(height * 0.30);
-  const cropWidth = Math.round(width * 0.70);   // 15% to 85%
-  const cropHeight = Math.round(height * 0.40);  // 30% to 70%
+  const cropTop = Math.round(height * 0.45);
+  const cropWidth = Math.round(width * 0.70);
+  const cropHeight = Math.round(height * 0.45);
 
   console.log(`[image-processing] Cropping swatch: original ${width}x${height}, crop region x=${cropLeft}-${cropLeft + cropWidth} y=${cropTop}-${cropTop + cropHeight}`);
 
-  const cropped = await sharp(imageBuffer)
+  // Step 1: crop the fabric region and resize to a 400x400 tile
+  const tile = await sharp(imageBuffer)
     .extract({
       left: cropLeft,
       top: cropTop,
       width: Math.min(cropWidth, width - cropLeft),
       height: Math.min(cropHeight, height - cropTop),
     })
-    .resize(800, 800, { fit: 'cover' })
+    .resize(400, 400, { fit: 'cover' })
     .toBuffer();
 
-  console.log(`[image-processing] Cropped swatch to fabric zone: ${cropWidth}x${cropHeight} -> 800x800`);
-  return cropped;
+  // Step 2: tile the 400x400 fabric 2x2 into an 800x800 canvas. This doubles
+  // the motif density relative to the output surface — small fabric areas
+  // (pillowcases) end up with 4x more motifs, eliminating white halves.
+  const tiled = await sharp({
+    create: {
+      width: 800,
+      height: 800,
+      channels: 3,
+      background: { r: 255, g: 255, b: 255 },
+    },
+  })
+    .composite([
+      { input: tile, left: 0, top: 0 },
+      { input: tile, left: 400, top: 0 },
+      { input: tile, left: 0, top: 400 },
+      { input: tile, left: 400, top: 400 },
+    ])
+    .jpeg({ quality: 92 })
+    .toBuffer();
+
+  console.log(`[image-processing] Cropped + tiled swatch 2x2 -> 800x800 (denser pattern for pillowcases)`);
+  return tiled;
 }
 
 /**
