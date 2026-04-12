@@ -106,6 +106,7 @@ EVALUATE Image 1 across these 8 dimensions. Score each from 0.0 to 1.0:
    - Same camera angle? Same product placement? Same number of items?
    - For ${generationMode === 'from_scratch' ? 'from_scratch mode, evaluate if the composition is commercially appropriate (not identical to Image 3)' : 'edit/reference mode, it should closely match Image 3'}
    - Score 0.0-0.3 if the camera angle, scene layout, or room environment came from Image 2 (swatch) instead of Image 3 (hero). This is called 'composition leak'. Compare the background, furniture, wall decorations, and camera angle — they must match Image 3, NOT Image 2.
+   ${isInfografia ? `- INFOGRAFIA CLOSEUP LOCK: the hero's left side is a FLAT CLOSEUP of fabric texture. Score 0.0-0.3 if the generated image's left side shows a bed, headboard, pillows, bedroom scene, furniture, windows, or any room composition instead of a flat fabric closeup. The fabric texture must FILL the left half as a closeup — no beds, no rooms.` : ''}
 
 4. **visual_quality** (0-1): Professional photography quality?
    - Sharp focus, natural lighting, realistic textures → 1.0

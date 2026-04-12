@@ -857,7 +857,15 @@ Imagen fotorrealista de ${resolution}.`;
   if (shotType === 'infografia') {
     return `Toma Imagen 1 (infografía de comparación de producto vs competidor) y reemplaza la tela del LADO IZQUIERDO (el lado del producto propio) con la tela de Imagen 2. El fabric del lado izquierdo debe tomar el color, patrón y textura completos de Imagen 2.
 
-El lado derecho (competidor/Others), los checkmarks, los iconos, la gota/ilustración, el layout, el framing y la posición de todos los elementos quedan EXACTAMENTE IGUAL a Imagen 1.
+FRAMING — REGLA CRÍTICA:
+El LADO IZQUIERDO de Imagen 1 es un CLOSEUP PLANO de superficie textil (textura de tela ocupando toda la zona, sin cama ni habitación). El resultado DEBE mantener ese mismo closeup plano — solo cambia el patrón/color/textura de la tela, nada más.
+  - NO renders de cama, cabecera, almohadas, sábanas dobladas, ropa de cama armada.
+  - NO renders de habitación, muebles, mesa de noche, ventanas, plantas, decoración.
+  - NO incorpores NINGÚN elemento compositivo de Imagen 2 — Imagen 2 es SOLO referencia de la tela (color, patrón, textura). La composición/framing de Imagen 2 no se usa.
+  - Si Imagen 2 muestra una cama con la tela puesta, IGNORA la cama y extrae SOLO la superficie textil.
+  - El resultado debe verse como si la tela nueva estuviera aplicada pixel a pixel sobre el closeup plano del lado izquierdo original.
+
+El lado derecho (competidor/Others), los checkmarks, los iconos, la gota/ilustración, el layout, el framing, el tamaño y la posición de TODOS los elementos quedan EXACTAMENTE IGUAL a Imagen 1.
 
 TEXTO — TRADUCIR AL ESPAÑOL:
 Si la Imagen 1 contiene texto en inglés, TRADÚCELO al español. El texto DEBE estar en español en el resultado final. Ejemplos comunes:
