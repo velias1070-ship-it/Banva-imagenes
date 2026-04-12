@@ -855,9 +855,22 @@ Imagen fotorrealista de ${resolution}.`;
   }
 
   if (shotType === 'infografia') {
-    return `Toma Imagen 1 (infografía de comparación Banva Home vs Others) y reemplaza la tela del LADO IZQUIERDO (bajo "Banva Home") con la tela de Imagen 2. El resultado debe ser idéntico a Imagen 1 excepto que el fabric del lado izquierdo ahora es el de Imagen 2 (color + patrón + textura completos del swatch).
+    return `Toma Imagen 1 (infografía de comparación de producto vs competidor) y reemplaza la tela del LADO IZQUIERDO (el lado del producto propio) con la tela de Imagen 2. El fabric del lado izquierdo debe tomar el color, patrón y textura completos de Imagen 2.
 
-El lado derecho ("Others"), todo el texto, los checkmarks, los iconos, el logo, la gota/ilustración, el layout y el framing quedan EXACTAMENTE IGUAL a Imagen 1 — no los toques.${darkNote}${qaNote}
+El lado derecho (competidor/Others), los checkmarks, los iconos, la gota/ilustración, el layout, el framing y la posición de todos los elementos quedan EXACTAMENTE IGUAL a Imagen 1.
+
+TEXTO — TRADUCIR AL ESPAÑOL:
+Si la Imagen 1 contiene texto en inglés, TRADÚCELO al español. El texto DEBE estar en español en el resultado final. Ejemplos comunes:
+  - "Bedsure" / cualquier marca de competidor en el lado izquierdo → "Banva Home"
+  - "Ultrasonic Binding" → "Unión Ultrasónica"
+  - "No stitches" → "Sin costuras"
+  - "Prevent seam slippage" → "Previene deslizamiento de costuras"
+  - "Keep filling in place" → "Mantiene el relleno en su lugar"
+  - "Unraveling" → "Deshilachado"
+  - "Stiffer" → "Más rígido"
+  - "Pet-unfriendly" / "Not pet friendly" → "No apto para mascotas"
+  - "Others" puede quedar igual o traducirse a "Otros"
+Mantén la MISMA POSICIÓN y tamaño de cada texto — solo cambia el idioma del contenido.${darkNote}${qaNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
