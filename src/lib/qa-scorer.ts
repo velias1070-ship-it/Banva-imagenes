@@ -74,7 +74,7 @@ function buildQAPrompt(
 
 You are given 3 images:
 - IMAGE 1: The GENERATED product image (to be evaluated)
-- IMAGE 2: The SWATCH REFERENCE — this shows the CORRECT fabric color, pattern, and texture for the product called "${swatchName}"
+- IMAGE 2: The SWATCH REFERENCE — this IS the correct fabric (color, pattern, texture, quilting). The ONLY source of truth for what the fabric should look like. The swatch is labeled "${swatchName}" but treat that label as a COLOR NAME / VARIANT CODE ONLY — do NOT infer fabric type, material, or pattern from the label. For example, a swatch labeled "Denim" may show a floral print — the "Denim" is just the color variant name, not an instruction that the fabric is denim material. Judge ONLY by what Image 2 actually shows.
 - IMAGE 3: The HERO/COMPOSITION REFERENCE — this shows the DESIRED composition, camera angle, and scene layout
 
 The generation mode was: ${generationMode}
