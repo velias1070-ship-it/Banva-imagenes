@@ -617,12 +617,15 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     // (correct). Pre-rotating the cropped swatch 90° flips Gemini's interpretation
     // and lands the stripes parallel to the foot edge. Foot-view heros work
     // without rotation. Only applies to bed-product categories.
+    // NOTE: pattern source is generation_jobs.swatch_pattern_text (long Gemini
+    // analysis), NOT swatches.color_description (which is the short "Canela" label).
     const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
+    const jobPatternText = (job.swatch_pattern_text as string | null) || swatch.color_description;
     if (
       !isBrandOnly &&
       rotateSwatch === 0 &&
       ROTATION_PRONE.includes(category) &&
-      hasDirectionalPattern(swatch.color_description) &&
+      hasDirectionalPattern(jobPatternText) &&
       heroShot
     ) {
       let cachedAngle = (heroShot as Record<string, unknown>).bed_camera_angle as BedCameraAngle | null | undefined;

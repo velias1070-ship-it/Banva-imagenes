@@ -583,12 +583,15 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     // Auto-rotation for directional patterns on side-angle bed shots — see
     // results/[jobId]/route.ts for the full rationale (dual-route sync rule).
+    // NOTE: pattern source is job.swatch_pattern_text (long Gemini analysis),
+    // NOT swatches.color_description (which is the short "Canela" label).
     let autoRotateSwatch = 0;
     const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
+    const jobPatternText = (job.swatch_pattern_text as string | null) || job.swatch.color_description;
     if (
       !isBrandOnly &&
       ROTATION_PRONE.includes(category) &&
-      hasDirectionalPattern(job.swatch.color_description) &&
+      hasDirectionalPattern(jobPatternText) &&
       job.hero_shot
     ) {
       let cachedAngle = (job.hero_shot as Record<string, unknown>).bed_camera_angle as BedCameraAngle | null | undefined;
