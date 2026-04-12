@@ -310,30 +310,31 @@ export function needsQuiltPreprocessing(category: string): boolean {
 }
 
 /**
- * Crop a swatch image to its central fabric zone. Used for all categories
- * that set preprocessing.crop_swatch = true. Output is 800x800.
+ * Crop a swatch image to the FLAT TOP of the product (no drape).
  *
- * Crop zone: y 45%-90% of height, x 15%-85% of width — lower-middle of the
- * swatch photo, where the fabric body is maximally visible without
- * headboard/pillows/footer contamination (for bedroom lifestyle swatches)
- * or centered framing (for most other categories).
+ * Crop zone: y 50%-78%, x 20%-80% — this captures the flat top surface of
+ * the bed where the fabric's TRUE pattern direction is visible. The
+ * previous zone y 45%-90% included the front drape of the quilt, where
+ * horizontal stripes appear as vertical lines due to perspective (the
+ * fabric hangs vertically off the front of the bed). Gemini saw both the
+ * flat horizontal stripes AND the vertical drape lines and replicated
+ * both directions, producing plaid-like outputs for simple stripe swatches.
  *
- * For categories that ALSO need pattern density doubling (quilts, cubrecamas,
- * plumones — products with small pillowcase surfaces that otherwise end up
- * half-white when the pattern is sparse), use cropAndTileSwatchToFabric
- * instead of this function.
+ * Tight flat-top crop eliminates the drape perspective artifact.
+ * Output: 800x800 square (covers, which vertically stretches the tight
+ * band slightly — fine for Gemini, it still reads the pattern correctly).
  */
 export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
   const metadata = await sharp(imageBuffer).metadata();
   const width = metadata.width || 800;
   const height = metadata.height || 800;
 
-  const cropLeft = Math.round(width * 0.15);
-  const cropTop = Math.round(height * 0.45);
-  const cropWidth = Math.round(width * 0.70);
-  const cropHeight = Math.round(height * 0.45);
+  const cropLeft = Math.round(width * 0.20);
+  const cropTop = Math.round(height * 0.50);
+  const cropWidth = Math.round(width * 0.60);
+  const cropHeight = Math.round(height * 0.28);
 
-  console.log(`[image-processing] Cropping swatch: original ${width}x${height}, crop region x=${cropLeft}-${cropLeft + cropWidth} y=${cropTop}-${cropTop + cropHeight}`);
+  console.log(`[image-processing] Cropping swatch (flat-top): original ${width}x${height}, crop region x=${cropLeft}-${cropLeft + cropWidth} y=${cropTop}-${cropTop + cropHeight}`);
 
   const cropped = await sharp(imageBuffer)
     .extract({
@@ -346,7 +347,7 @@ export async function cropSwatchToFabric(imageBuffer: Buffer): Promise<Buffer> {
     .jpeg({ quality: 92 })
     .toBuffer();
 
-  console.log(`[image-processing] Cropped swatch to fabric zone -> 800x800`);
+  console.log(`[image-processing] Cropped swatch to flat-top zone -> 800x800`);
   return cropped;
 }
 
@@ -366,10 +367,11 @@ export async function cropAndTileSwatchToFabric(imageBuffer: Buffer): Promise<Bu
   const width = metadata.width || 800;
   const height = metadata.height || 800;
 
-  const cropLeft = Math.round(width * 0.15);
-  const cropTop = Math.round(height * 0.45);
-  const cropWidth = Math.round(width * 0.70);
-  const cropHeight = Math.round(height * 0.45);
+  // Same flat-top crop as cropSwatchToFabric (see that function for rationale).
+  const cropLeft = Math.round(width * 0.20);
+  const cropTop = Math.round(height * 0.50);
+  const cropWidth = Math.round(width * 0.60);
+  const cropHeight = Math.round(height * 0.28);
 
   // Step 1: crop the fabric region and resize to a 400x400 tile
   const tile = await sharp(imageBuffer)
