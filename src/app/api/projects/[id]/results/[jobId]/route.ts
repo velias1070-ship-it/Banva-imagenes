@@ -66,19 +66,18 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   let forceMode: 'edit' | 'reference' | undefined;
   let skipFlatten = false;
   let skipTile = false;
+  let rotateSwatch = 0;
+  let directionHintOverride: string | null = null;
   try {
     const body = await _request.json();
     mode = body?.mode;
-    // Allow caller to force a specific generation_mode (overrides category default + auto-detect)
     if (body?.force_mode === 'edit' || body?.force_mode === 'reference') {
       forceMode = body.force_mode;
     }
-    if (body?.skip_flatten === true) {
-      skipFlatten = true;
-    }
-    if (body?.skip_tile === true) {
-      skipTile = true;
-    }
+    if (body?.skip_flatten === true) skipFlatten = true;
+    if (body?.skip_tile === true) skipTile = true;
+    if ([90, 180, 270].includes(body?.rotate_swatch)) rotateSwatch = body.rotate_swatch;
+    if (typeof body?.direction_hint_override === 'string') directionHintOverride = body.direction_hint_override;
   } catch {
     // No body or invalid JSON — normal regeneration
   }
@@ -132,7 +131,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
-      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten, skipTile);
+      await regenerateJob(jobId, job, project?.category || 'textile', id, project?.metadata as Record<string, unknown> | null, project?.brand_id || null, forceMode, skipFlatten, skipTile, rotateSwatch, directionHintOverride);
     } catch (err) {
       console.error('Regeneration error:', err);
     }
@@ -151,6 +150,8 @@ async function regenerateJob(
   forceMode?: 'edit' | 'reference',
   skipFlatten: boolean = false,
   skipTile: boolean = false,
+  rotateSwatch: number = 0,
+  directionHintOverride: string | null = null,
 ) {
   const supabase = createAdminClient();
   const heroShot = job.hero_shot as Record<string, string> | null;
@@ -613,7 +614,12 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     if (!isBrandOnly && strategy.preprocessing.crop_swatch) {
       const useTile = strategy.preprocessing.tile_swatch && !skipTile;
       const cropFn = useTile ? cropAndTileSwatchToFabric : cropSwatchToFabric;
-      const croppedSwatch = await cropFn(swatchBuffer);
+      let croppedSwatch = await cropFn(swatchBuffer);
+      if (rotateSwatch) {
+        const sharpRot = (await import('sharp')).default;
+        croppedSwatch = await sharpRot(croppedSwatch).rotate(rotateSwatch).png().toBuffer();
+        logPipelineEvent(jobId, 'SWATCH_ROTATED', `${rotateSwatch}deg`);
+      }
       swatchBase64 = croppedSwatch.toString('base64');
       if (skipTile && strategy.preprocessing.tile_swatch) {
         logPipelineEvent(jobId, 'TILE_SKIPPED', 'api_param');
@@ -624,7 +630,7 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     const swatchBase64ForVerification = swatchBase64;
 
     // Skip AI flatten on retries — the flattener may have introduced wrong patterns
-    const skipFlatten = qaFeedback != null;
+    if (qaFeedback != null) skipFlatten = true;
     if (skipFlatten && strategy.preprocessing.flatten_swatch_ai) {
       console.log(`[regenerateJob] Skipping AI flatten on retry — using cropped swatch`);
     }
@@ -794,19 +800,24 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // Directional hint from pre-analyzed swatch pattern — fixes Gemini rotating
     // stripes/diagonals to align with the hero's texture (dual-route sync rule).
-    if (swatchPatternDescription && !isBrandOnly) {
-      const lower = swatchPatternDescription.toLowerCase();
-      let directionHint: string | null = null;
-      if (/\bhorizontal(ly)?\b/.test(lower) && !/\bvertical/.test(lower)) {
-        directionHint = 'HORIZONTAL (parallel to the bed\'s foot, running left-right across the width)';
-      } else if (/\bvertical(ly)?\b/.test(lower) && !/\bhorizontal/.test(lower)) {
-        directionHint = 'VERTICAL (running top-to-bottom, perpendicular to the bed\'s foot)';
-      } else if (/\bdiagonal(ly)?\b/.test(lower) || /\bchevron\b/.test(lower)) {
-        directionHint = 'DIAGONAL (running at an angle, as shown in the swatch)';
-      }
-      if (directionHint) {
-        prompt += `\n\nORIENTATION HINT (pre-analyzed from swatch): The fabric pattern in Imagen 2 runs ${directionHint}. The result MUST reproduce the pattern in that exact direction. Do NOT rotate the stripes/lines to match the hero's texture — the hero's waffle/channel direction is irrelevant. The swatch dictates the pattern direction.`;
-        logPipelineEvent(jobId, 'DIRECTION_HINT', directionHint.split(' ')[0]);
+    if (!isBrandOnly) {
+      if (directionHintOverride) {
+        prompt += `\n\n${directionHintOverride}`;
+        logPipelineEvent(jobId, 'DIRECTION_HINT', 'override');
+      } else if (swatchPatternDescription) {
+        const lower = swatchPatternDescription.toLowerCase();
+        let directionHint: string | null = null;
+        if (/\bhorizontal(ly)?\b/.test(lower) && !/\bvertical/.test(lower)) {
+          directionHint = 'HORIZONTAL (parallel to the bed\'s foot, running left-right across the width)';
+        } else if (/\bvertical(ly)?\b/.test(lower) && !/\bhorizontal/.test(lower)) {
+          directionHint = 'VERTICAL (running top-to-bottom, perpendicular to the bed\'s foot)';
+        } else if (/\bdiagonal(ly)?\b/.test(lower) || /\bchevron\b/.test(lower)) {
+          directionHint = 'DIAGONAL (running at an angle, as shown in the swatch)';
+        }
+        if (directionHint) {
+          prompt += `\n\nORIENTATION HINT (pre-analyzed from swatch): The fabric pattern in Imagen 2 runs ${directionHint}. The result MUST reproduce the pattern in that exact direction. Do NOT rotate the stripes/lines to match the hero's texture — the hero's waffle/channel direction is irrelevant. The swatch dictates the pattern direction.`;
+          logPipelineEvent(jobId, 'DIRECTION_HINT', directionHint.split(' ')[0]);
+        }
       }
     }
 
