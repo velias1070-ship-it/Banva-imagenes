@@ -89,6 +89,11 @@ export default function ResultsPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
   const [editingJob, setEditingJob] = useState<string | null>(null);
+  // Lifted to parent because JobCard is defined inside ResultsPage and
+  // re-creates its function reference on every poll (every 10s). That
+  // remounts all JobCards, which would reset a child's local state.
+  // Keeping the edit instruction here survives the remount.
+  const [editInstructions, setEditInstructions] = useState<Record<string, string>>({});
   const [importingCannon, setImportingCannon] = useState(false);
   const [importingCannonSwatch, setImportingCannonSwatch] = useState<Set<string>>(new Set());
   // Projects where per-swatch Cannon import button is enabled
@@ -798,6 +803,12 @@ export default function ResultsPage() {
     if (!instruction.trim()) return;
     toast.info('Editando imagen...');
     setEditingJob(null);
+    // Clear the saved instruction for this job once submitted
+    setEditInstructions((prev) => {
+      const next = { ...prev };
+      delete next[jobId];
+      return next;
+    });
     try {
       const res = await fetch(`/api/projects/${id}/results/${jobId}/edit-image`, {
         method: 'POST',
@@ -1200,6 +1211,8 @@ export default function ResultsPage() {
           {editingJob === job.id && (
             <EditPanel
               jobId={job.id}
+              instruction={editInstructions[job.id] || ''}
+              onInstructionChange={(v) => setEditInstructions((prev) => ({ ...prev, [job.id]: v }))}
               onUseAsHero={() => handleUseAsHero(job.id)}
               onGenerate15P={() => handleGenerate15P(job.id)}
               onEditImage={(instruction) => handleEditImage(job.id, instruction)}
@@ -2017,15 +2030,17 @@ export default function ResultsPage() {
   );
 }
 
-// Separate component with its own state — prevents re-render of all cards when typing
-function EditPanel({ jobId, onUseAsHero, onGenerate15P, onEditImage }: {
+// Stateless — instruction state is lifted to ResultsPage so it survives
+// JobCard remounts triggered by the 10s polling refetch.
+function EditPanel({ jobId, instruction, onInstructionChange, onUseAsHero, onGenerate15P, onEditImage }: {
   jobId: string;
+  instruction: string;
+  onInstructionChange: (value: string) => void;
   onUseAsHero: () => void;
   onGenerate15P: () => void;
   onEditImage: (instruction: string) => void;
 }) {
-  const [instruction, setInstruction] = useState('');
-
+  void jobId;
   return (
     <div className="mt-2 pt-2 border-t space-y-2">
       <div className="flex gap-1.5">
@@ -2040,7 +2055,7 @@ function EditPanel({ jobId, onUseAsHero, onGenerate15P, onEditImage }: {
         <Input
           placeholder="Instruccion (ej: cambia 1 plaza por 2 plazas)"
           value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
+          onChange={(e) => onInstructionChange(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.key === 'Enter') onEditImage(instruction);
