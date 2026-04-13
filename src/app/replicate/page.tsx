@@ -206,6 +206,22 @@ export default function ReplicatePage() {
         const err = data.summary.errors;
         if (ok > 0) toast.success(`${ok} publicación${ok !== 1 ? 'es' : ''} actualizada${ok !== 1 ? 's' : ''}`);
         if (err > 0) toast.error(`${err} error${err !== 1 ? 'es' : ''}`);
+
+        // Refresh target detail when single target so the UI reflects new picture state
+        if (ok > 0 && targetIds.size === 1 && (mode === 'swap_positions' || mode === 'append')) {
+          const targetId = Array.from(targetIds)[0];
+          try {
+            const refreshed = await fetch(`/api/replicate-pictures?item_id=${targetId}`).then((r) => r.json());
+            if (refreshed?.pictures) {
+              setTargetDetail(refreshed);
+              setDeletedTargetPicIds(new Set());
+              setMappings(new Map());
+              setSelectedSourceForMapping(null);
+            }
+          } catch {
+            // ignore — user can re-search if needed
+          }
+        }
       } else {
         toast.error(data.error || 'Error replicando');
       }
