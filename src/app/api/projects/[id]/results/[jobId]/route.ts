@@ -657,7 +657,12 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     // Preprocessing (skip for BRAND_ONLY — image stays unchanged)
     let swatchBase64 = swatchBuffer.toString('base64');
     if (!isBrandOnly && strategy.preprocessing.crop_swatch) {
-      const useTile = strategy.preprocessing.tile_swatch && !skipTile;
+      // Detail shots: skip the 2x2 tile. The tile multiplies any shadow
+      // gradient at the bottom of the crop into 4 fake "fold edges" that
+      // Gemini then copies onto the hero, inventing extra fabric layers.
+      // Verified on job 24e9e5c5 — see process-next/route.ts for full note.
+      const isDetail = effectiveShotType === 'detail';
+      const useTile = strategy.preprocessing.tile_swatch && !skipTile && !isDetail;
       const cropFn = useTile ? cropAndTileSwatchToFabric : cropSwatchToFabric;
       let croppedSwatch = await cropFn(swatchBuffer);
       if (rotateSwatch) {
@@ -668,6 +673,9 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       swatchBase64 = croppedSwatch.toString('base64');
       if (skipTile && strategy.preprocessing.tile_swatch) {
         logPipelineEvent(jobId, 'TILE_SKIPPED', 'api_param');
+      }
+      if (isDetail && strategy.preprocessing.tile_swatch) {
+        logPipelineEvent(jobId, 'TILE_SKIPPED', 'detail_shot');
       }
     }
 

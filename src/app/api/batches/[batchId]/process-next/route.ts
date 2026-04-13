@@ -621,7 +621,13 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         console.log(`[process-next] Flattened hero emboss for ${category}`);
       }
       if (strategy.preprocessing.crop_swatch) {
-        const cropFn = strategy.preprocessing.tile_swatch ? cropAndTileSwatchToFabric : cropSwatchToFabric;
+        // Detail shots: skip the 2x2 tile. Tiling exists to give pillowcases
+        // enough motif density on lifestyle bed shots, but for close-up detail
+        // shots there are no pillowcases AND the tiling multiplies any shadow
+        // gradient at the bottom of the crop into 4 fake "fold edges" that
+        // Gemini then copies onto the hero — verified on job 24e9e5c5.
+        const useTile = strategy.preprocessing.tile_swatch && effectiveShotType !== 'detail';
+        const cropFn = useTile ? cropAndTileSwatchToFabric : cropSwatchToFabric;
         let croppedSwatch = await cropFn(swatchBuffer);
         if (autoRotateSwatch) {
           const sharpRot = (await import('sharp')).default;
