@@ -396,6 +396,29 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
           const rW = resizedMeta.width || 1200;
           const rH = resizedMeta.height || 1200;
 
+          // FABRIC DRIFT CHECK: sample a center-bottom region (where the quilt
+          // body usually is, away from text/logo zones) and compare avg RGB
+          // between the source (pre_brand) and Gemini's output. If Gemini
+          // drifted the fabric (e.g. job 98827373: gray Crema → red hero), the
+          // mean RGB will diverge significantly. Reject this attempt.
+          const sourceResized = await ensureOutputSpec(sourceBuffer, 1200);
+          const sampleRegion = { left: 300, top: 700, width: 600, height: 400 };
+          const [srcStats, gemStats] = await Promise.all([
+            sharp(sourceResized).extract(sampleRegion).stats(),
+            sharp(resizedBuffer).extract(sampleRegion).stats(),
+          ]);
+          const dr = (srcStats.channels[0]?.mean ?? 0) - (gemStats.channels[0]?.mean ?? 0);
+          const dg = (srcStats.channels[1]?.mean ?? 0) - (gemStats.channels[1]?.mean ?? 0);
+          const db = (srcStats.channels[2]?.mean ?? 0) - (gemStats.channels[2]?.mean ?? 0);
+          const fabricDrift = Math.sqrt(dr * dr + dg * dg + db * db);
+          // Threshold 35: tolerates compression / minor brand text recolor,
+          // catches major hue shifts (gray → red was ~70 in testing).
+          if (fabricDrift > 35) {
+            logPipelineEvent(jobId, 'BRAND_FABRIC_DRIFT', `attempt ${attempt} rejected (rgb dist ${fabricDrift.toFixed(1)})`);
+            continue;
+          }
+          logPipelineEvent(jobId, 'BRAND_FABRIC_OK', `attempt ${attempt} drift ${fabricDrift.toFixed(1)}`);
+
           // Verify: detect text bboxes and measure overlap with brand book logo zone
           let attemptOverlap = 0;
           let attemptBboxes: Array<{ x: number; y: number; width: number; height: number; text: string }> | null = null;

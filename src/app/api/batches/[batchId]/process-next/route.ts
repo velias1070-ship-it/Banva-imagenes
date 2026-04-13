@@ -417,6 +417,41 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
     let swatchBase64 = swatchBuffer.toString('base64');
 
+    // ── BRAND_ONLY: source must be the existing job output, NOT the original hero ──
+    // The brand pass only re-paints text colors/fonts and adds the logo. It must not
+    // regenerate the product. Mirrors regenerateJob (results/[jobId]/route.ts) so that
+    // when the brand button times out and falls through to process-next, we preserve
+    // the previous variant instead of overwriting it with the hero (which would lose
+    // the swatch color applied in the original generation).
+    if (isBrandOnly) {
+      const projectId = job.swatch?.project_id as string | undefined;
+      let brandSourceBuffer: Buffer | null = null;
+      if (projectId) {
+        const preBrandPath = `projects/${projectId}/generated/${job.id}_pre_brand.png`;
+        const { data: preBrandData } = await supabase.storage.from('images').download(preBrandPath);
+        if (preBrandData) {
+          brandSourceBuffer = Buffer.from(await preBrandData.arrayBuffer());
+          logPipelineEvent(job.id, 'BRAND_SOURCE', 'pre_brand backup', { path: preBrandPath });
+        } else if (job.output_storage_path) {
+          const { data: outData } = await supabase.storage.from('images').download(job.output_storage_path);
+          if (outData) {
+            brandSourceBuffer = Buffer.from(await outData.arrayBuffer());
+            await supabase.storage.from('images').upload(preBrandPath, brandSourceBuffer, {
+              contentType: 'image/png', upsert: true,
+            });
+            logPipelineEvent(job.id, 'BRAND_SOURCE', 'previous output (backup saved)', { path: job.output_storage_path });
+          }
+        }
+      }
+      if (brandSourceBuffer) {
+        heroBase64 = brandSourceBuffer.toString('base64');
+        swatchBuffer = brandSourceBuffer;
+        swatchBase64 = brandSourceBuffer.toString('base64');
+      } else {
+        logPipelineEvent(job.id, 'BRAND_SOURCE', 'fallback to original hero (no previous output found)');
+      }
+    }
+
     // Detect dark swatches for prompt adjustments (use original swatch, not collage)
     const darkSwatch = await isSwatchDark(originalSwatchBuffer);
     if (darkSwatch) {
@@ -972,7 +1007,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       } else {
         result = await generateImage({
           heroImageBase64: heroBase64,
-          heroMimeType: job.hero_shot.mime_type || 'image/png',
+          heroMimeType: isBrandOnly ? 'image/png' : (job.hero_shot.mime_type || 'image/png'),
           swatchImageBase64: swatchBase64,
           swatchMimeType: 'image/png',
           promptText: prompt,
