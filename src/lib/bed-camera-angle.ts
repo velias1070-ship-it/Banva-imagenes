@@ -34,6 +34,11 @@ Think step by step:
 Reply ONLY a valid JSON object (no markdown, no backticks):
 {"stripes_appear": "left_right" or "top_bottom", "confidence": 0.0-1.0}`;
 
+// Uses gemini-2.5-flash explicitly (not the default 2.0-flash from
+// GEMINI_ANALYSIS_MODEL). 2.0-flash lacks the spatial reasoning for this
+// task — stress test showed it returns "left_right" 20/20 on BOTH test
+// heros (including the one that clearly needs top_bottom). 2.5-flash
+// discriminates correctly (16-17/20 single-call, 10/10 with 3-vote majority).
 async function classifyOnce(
   heroBase64: string,
   heroMimeType: string,
@@ -43,6 +48,7 @@ async function classifyOnce(
       images: [{ base64: heroBase64, mimeType: heroMimeType }],
       promptText: PROMPT,
       temperature: 0.1,
+      modelOverride: 'gemini-2.5-flash',
     });
     if (!result.success || !result.textResponse) return null;
     let jsonStr = result.textResponse.trim();

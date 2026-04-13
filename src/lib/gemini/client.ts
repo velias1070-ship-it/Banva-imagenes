@@ -242,6 +242,7 @@ export interface GeminiAnalysisRequest {
   images: Array<{ base64: string; mimeType: string }>;
   promptText: string;
   temperature?: number;
+  modelOverride?: string;
 }
 
 export interface GeminiAnalysisResult {
@@ -254,7 +255,8 @@ export interface GeminiAnalysisResult {
 }
 
 export async function analyzeImages(request: GeminiAnalysisRequest): Promise<GeminiAnalysisResult> {
-  const url = `${GEMINI_ENDPOINT}/${GEMINI_ANALYSIS_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const modelName = request.modelOverride || GEMINI_ANALYSIS_MODEL;
+  const url = `${GEMINI_ENDPOINT}/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
   const start = Date.now();
 
   const parts: Array<Record<string, unknown>> = [];
@@ -307,7 +309,7 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
           errorCode: String(response.status),
           durationMs,
           meta: {
-            ...extractMeta(errorData, response.headers, GEMINI_ANALYSIS_MODEL),
+            ...extractMeta(errorData, response.headers, modelName),
             httpStatus: response.status,
             rawErrorBody: rawErrorBody.slice(0, 2000),
           },
@@ -316,7 +318,7 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
 
       const data = await response.json();
       const responseParts = data?.candidates?.[0]?.content?.parts || [];
-      const meta = extractMeta(data, response.headers, GEMINI_ANALYSIS_MODEL);
+      const meta = extractMeta(data, response.headers, modelName);
 
       let textResponse: string | undefined;
       for (const part of responseParts) {
