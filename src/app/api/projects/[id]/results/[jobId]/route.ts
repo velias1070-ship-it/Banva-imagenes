@@ -525,6 +525,7 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
 
     // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;
+    let patternsDiffer = false;
     if (forceMode) {
       mode = forceMode;
       console.log(`[regenerateJob] Mode forced via API: ${mode}`);
@@ -551,6 +552,7 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
             mode = 'edit';
             console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
           }
+          patternsDiffer = similar === false;
           logPipelineEvent(jobId, 'PATTERN_COMPARED', String(similar), { effective_mode: mode });
         } catch (err) {
           console.error('[regenerateJob] Pattern comparison failed:', err);
@@ -782,7 +784,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         effectiveShotType,
         darkSwatch,
         qaFeedback,
-        projectSettings.generation.resolution
+        projectSettings.generation.resolution,
+        null,
+        patternsDiffer,
       );
     }
 

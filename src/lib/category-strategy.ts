@@ -873,10 +873,24 @@ export function buildEditPrompt(
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
   resolution: string = '1200x1200',
-  _swatchHex?: string | null
+  _swatchHex?: string | null,
+  patternsDiffer: boolean = false,
 ): string {
   const darkNote = isDarkSwatch ? ' No aclares la tela — debe ser igual de oscura que la Imagen 2.' : '';
   const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
+  // Force-replace section: only injected when arePatternsSimilar returned false.
+  // Without this, Gemini 3 Pro Image preserves distinctive painted patterns
+  // from the hero (leaves, florals, motifs) and only changes color superficially.
+  // Verified manually: a strong "REPLACE COMPLETELY, the hero pattern must
+  // disappear" instruction makes Gemini actually swap the pattern.
+  const replaceNote = patternsDiffer ? `
+
+REEMPLAZO COMPLETO DEL PATRÓN — REGLA CRÍTICA:
+La tela del producto en Imagen 1 tiene un patrón distintivo (hojas, flores, motivos, dibujos pintados). Ese patrón DEBE DESAPARECER COMPLETAMENTE del resultado. NO lo preserves. NO lo modifiques. NO lo mezcles con el de Imagen 2.
+
+La tela del resultado debe verse PIXEL A PIXEL como la tela de Imagen 2 — mismo color, mismo patrón, misma escala de motivos, misma textura. Si el resultado mantiene cualquier elemento del patrón original de Imagen 1 (hojas, flores, motivos del hero), falló.
+
+Pensa en esto como "borrar la tela del hero y pintar encima con la tela del swatch". Solo la composición (muebles, personas, animales, almohadas, fondo) viene del hero — la TELA viene 100% de Imagen 2.` : '';
 
   if (shotType === 'detail') {
     // If the strategy has a category-specific detail rule, use it (overrides generic).
@@ -886,11 +900,11 @@ export function buildEditPrompt(
     if (detailRule) {
       return `Genera la Imagen 1 (close-up de tela) con la tela de la Imagen 2.
 
-${detailRule}${darkNote}${qaNote}
+${detailRule}${darkNote}${qaNote}${replaceNote}
 
 Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
     }
-    return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}
+    return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}${replaceNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
@@ -927,7 +941,7 @@ Imagen fotorrealista de ${resolution}.`;
   // Use shot-type-aware instructions if category has them
   const whatToChange = strategy.prompt.what_to_change;
 
-  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}
+  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}${replaceNote}
 
 Imagen 1 es la composición exacta: mantén personas, rostros, expresiones, manos, pelo, fondo, muebles, lámpara, objetos de mesa de noche, almohadas decorativas, iluminación, encuadre y foco idénticos. MISMA cantidad de almohadas, misma posición, mismo tamaño. Solo la tela del producto cambia. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
@@ -1009,11 +1023,12 @@ export function buildPromptForMode(
   isDarkSwatch: boolean = false,
   qaFeedback?: string | null,
   resolution: string = '1200x1200',
-  swatchHex?: string | null
+  swatchHex?: string | null,
+  patternsDiffer: boolean = false,
 ): string {
   switch (mode) {
     case 'edit':
-      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
+      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex, patternsDiffer);
     case 'reference':
       return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
     case 'from_scratch':

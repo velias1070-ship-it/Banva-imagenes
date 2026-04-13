@@ -765,7 +765,8 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         darkSwatch,
         qaFeedback,
         projectSettings.generation.resolution,
-        swatchHex
+        swatchHex,
+        patternSimilarity === false,
       );
     }
 
