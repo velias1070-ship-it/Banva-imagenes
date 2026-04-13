@@ -841,9 +841,16 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       }
     }
 
-    // Directional hint from pre-analyzed swatch pattern — fixes Gemini rotating
-    // stripes/diagonals to align with the hero's texture (dual-route sync rule).
-    if (!isBrandOnly) {
+    // Directional hint from pre-analyzed swatch pattern.
+    // SKIPPED for ROTATION_PRONE categories (quilts/cubrecamas/plumones/sabanas)
+    // because those go through the mechanical classifier+rotation path which
+    // is authoritative. Also, the analyzer mislabels swatches that are bed
+    // scenes (e.g. job b358c64f: analyzer called a horizontal-stripe swatch
+    // "vertical" because the side drape wraps vertically), and the hint then
+    // pushes Gemini in the wrong direction. For non-bed categories the hint
+    // stays as a fallback.
+    const ROT_CATS = new Set(['quilts', 'cubrecamas', 'plumones', 'sabanas']);
+    if (!isBrandOnly && !ROT_CATS.has(category)) {
       if (directionHintOverride) {
         prompt += `\n\n${directionHintOverride}`;
         logPipelineEvent(jobId, 'DIRECTION_HINT', 'override');
@@ -858,10 +865,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           directionHint = 'DIAGONAL (running at an angle, as shown in the swatch)';
         }
         if (directionHint) {
-          prompt += `\n\nORIENTATION HINT (pre-analyzed from swatch): The fabric pattern in Imagen 2 runs ${directionHint}. The result MUST reproduce the pattern in that exact direction. Do NOT rotate the stripes/lines to match the hero's texture — the hero's waffle/channel direction is irrelevant. The swatch dictates the pattern direction.`;
+          prompt += `\n\nORIENTATION HINT (pre-analyzed from swatch): The fabric pattern in Imagen 2 runs ${directionHint}. The result MUST reproduce the pattern in that exact direction.`;
           logPipelineEvent(jobId, 'DIRECTION_HINT', directionHint.split(' ')[0]);
         }
       }
+    } else if (!isBrandOnly && directionHintOverride) {
+      // Explicit override still honored even for rotation-prone categories.
+      prompt += `\n\n${directionHintOverride}`;
+      logPipelineEvent(jobId, 'DIRECTION_HINT', 'override');
     }
 
     // Add size-aware note for 1P/1.5P bed products (skip for BRAND_ONLY)
