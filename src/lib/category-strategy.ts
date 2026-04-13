@@ -877,7 +877,13 @@ export function buildEditPrompt(
   patternsDiffer: boolean = false,
 ): string {
   const darkNote = isDarkSwatch ? ' No aclares la tela — debe ser igual de oscura que la Imagen 2.' : '';
-  const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
+  // When patterns differ, DISCARD any verifier qaFeedback — it usually says
+  // "pattern doesn't match" which Gemini reads as "preserve the hero's pattern
+  // (the model the verifier expected)", directly contradicting the REEMPLAZO
+  // COMPLETO rule below. The REEMPLAZO rule is the authoritative instruction
+  // for this case; the verifier's free-text complaint is noise.
+  const effectiveQaFeedback = patternsDiffer ? null : qaFeedback;
+  const qaNote = effectiveQaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${effectiveQaFeedback}"` : '';
   // Force-replace section: only injected when arePatternsSimilar returned false.
   // Without this, Gemini 3 Pro Image preserves distinctive painted patterns
   // from the hero (leaves, florals, motifs) and only changes color superficially.
