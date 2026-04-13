@@ -1031,7 +1031,19 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             attempt: job.attempt,
           };
           if (!verification.pass && job.attempt < 4) {
-            // BLOCK: verification failed, auto-retry with specific feedback
+            // BLOCK: verification failed, auto-retry with specific feedback.
+            // Save a debug copy of the rejected image so we can inspect what
+            // Gemini actually produced (otherwise it's lost on retry).
+            const debugPath = `projects/${project.id}/generated/_debug/${job.id}_attempt${job.attempt}_rejected.png`;
+            try {
+              await supabase.storage.from('images').upload(debugPath, imageBuffer, {
+                contentType: result.imageMimeType || 'image/png',
+                upsert: true,
+              });
+              logPipelineEvent(job.id, 'DEBUG_SAVED_REJECTED', debugPath);
+            } catch (saveErr) {
+              console.error('[process-next] Debug save failed (non-blocking):', saveErr);
+            }
             const feedback = verification.feedback || verification.issues.join('. ');
             logPipelineEvent(job.id, 'VERIFICATION', 'FAIL', { score: verification.score, issues: verification.issues });
             logPipelineEvent(job.id, 'VERIFICATION_RETRY', feedback, { new_attempt: job.attempt + 1 });
