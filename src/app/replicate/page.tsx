@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square, ArrowLeftRight, Replace, X,
+  Search, Copy, Loader2, CheckCircle, XCircle, ExternalLink, ImageIcon, CheckSquare, Square, ArrowLeftRight, Replace, X, Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -49,7 +49,8 @@ export default function ReplicatePage() {
   const [targetIds, setTargetIds] = useState<Set<string>>(new Set());
 
   const [selectedPicIds, setSelectedPicIds] = useState<Set<string>>(new Set());
-  const [mode, setMode] = useState<'swap_positions' | 'replace_all'>('swap_positions');
+  const [mode, setMode] = useState<'swap_positions' | 'replace_all' | 'append'>('swap_positions');
+  const [deletedTargetPicIds, setDeletedTargetPicIds] = useState<Set<string>>(new Set());
 
   const [replicating, setReplicating] = useState(false);
   const [results, setResults] = useState<ReplicateResult[] | null>(null);
@@ -60,9 +61,9 @@ export default function ReplicatePage() {
   const [mappings, setMappings] = useState<Map<number, number>>(new Map()); // source_index → target_index
   const [selectedSourceForMapping, setSelectedSourceForMapping] = useState<number | null>(null);
 
-  // Auto-load target details when exactly 1 target + swap mode
+  // Auto-load target details when exactly 1 target + swap or append mode
   useEffect(() => {
-    if (targetIds.size === 1 && mode === 'swap_positions') {
+    if (targetIds.size === 1 && (mode === 'swap_positions' || mode === 'append')) {
       const targetId = Array.from(targetIds)[0];
       setLoadingTarget(true);
       fetch(`/api/replicate-pictures?item_id=${targetId}`)
@@ -82,6 +83,11 @@ export default function ReplicatePage() {
     setMappings(new Map());
     setSelectedSourceForMapping(null);
   }, [sourceId]);
+
+  // Clear destination deletions when source or target changes
+  useEffect(() => {
+    setDeletedTargetPicIds(new Set());
+  }, [sourceId, targetIds]);
 
   async function handleSearch() {
     const q = query.trim();
@@ -187,6 +193,9 @@ export default function ReplicatePage() {
           mode,
           position_mappings: mode === 'swap_positions' && mappings.size > 0
             ? [...mappings.entries()].map(([s, t]) => ({ source_index: s, target_index: t }))
+            : undefined,
+          deleted_target_picture_ids: deletedTargetPicIds.size > 0
+            ? Array.from(deletedTargetPicIds)
             : undefined,
         }),
       });
@@ -477,6 +486,171 @@ export default function ReplicatePage() {
               </Card>
             )}
 
+            {/* Append mode UI: source picker + destination with X delete (single target) */}
+            {sourceId && sourceDetail && (targetDetail || loadingTarget) && mode === 'append' && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Agregar Fotos a Destino</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 text-muted-foreground"
+                      onClick={() => { setSourceId(null); setSourceDetail(null); setSelectedPicIds(new Set()); setTargetIds(new Set()); setResults(null); }}
+                    >
+                      Cambiar
+                    </Button>
+                  </div>
+                  <p className="text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
+                    Marca fotos de origen para sumar al destino. Click en la X para borrar fotos del destino.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {loadingTarget ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : targetDetail ? (
+                    <div className="space-y-4">
+                      {/* Source picker */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            Origen — {selectedPicIds.size} de {sourceDetail.pictures.length} a agregar
+                          </p>
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-[10px] h-6 px-2"
+                              onClick={() => setSelectedPicIds(new Set(sourceDetail.pictures.map((p) => p.id)))}
+                            >
+                              Todas
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-[10px] h-6 px-2"
+                              onClick={() => setSelectedPicIds(new Set())}
+                            >
+                              Ninguna
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {sourceDetail.pictures.map((pic, i) => {
+                            const isSelected = selectedPicIds.has(pic.id);
+                            return (
+                              <div
+                                key={pic.id}
+                                className={`aspect-square rounded overflow-hidden bg-gray-100 relative cursor-pointer ring-2 transition-all ${
+                                  isSelected ? 'ring-blue-500 opacity-100' : 'ring-transparent opacity-40'
+                                }`}
+                                onClick={() => {
+                                  setSelectedPicIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(pic.id)) next.delete(pic.id);
+                                    else next.add(pic.id);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <img
+                                  src={pic.url}
+                                  alt={`Origen ${i + 1}`}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                                <span className={`absolute bottom-0 right-0 text-white text-[9px] px-1 rounded-tl ${
+                                  isSelected ? 'bg-blue-600' : 'bg-black/60'
+                                }`}>
+                                  {i + 1}
+                                </span>
+                                {isSelected && (
+                                  <div className="absolute top-0.5 right-0.5">
+                                    <CheckCircle className="h-3.5 w-3.5 text-blue-500 drop-shadow" />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Destination current photos with X to delete */}
+                      <div className="border-t pt-3">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            Destino actual — {targetDetail.pictures.length - deletedTargetPicIds.size} foto{(targetDetail.pictures.length - deletedTargetPicIds.size) !== 1 ? 's' : ''} quedan
+                            {deletedTargetPicIds.size > 0 && (
+                              <span className="text-red-600 ml-1">
+                                ({deletedTargetPicIds.size} a borrar)
+                              </span>
+                            )}
+                          </p>
+                          {deletedTargetPicIds.size > 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-[10px] h-6 px-2 text-muted-foreground"
+                              onClick={() => setDeletedTargetPicIds(new Set())}
+                            >
+                              Restaurar todas
+                            </Button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {targetDetail.pictures.map((pic, i) => {
+                            const isDeleted = deletedTargetPicIds.has(pic.id);
+                            return (
+                              <div
+                                key={pic.id}
+                                className={`aspect-square rounded overflow-hidden bg-gray-100 relative ring-2 transition-all ${
+                                  isDeleted ? 'ring-red-500' : 'ring-transparent'
+                                }`}
+                              >
+                                <img
+                                  src={pic.url}
+                                  alt={`Destino ${i + 1}`}
+                                  className={`h-full w-full object-cover ${isDeleted ? 'opacity-25 grayscale' : ''}`}
+                                  loading="lazy"
+                                />
+                                <span className={`absolute bottom-0 right-0 text-white text-[9px] px-1 rounded-tl ${
+                                  isDeleted ? 'bg-red-600' : 'bg-black/60'
+                                }`}>
+                                  {i + 1}
+                                </span>
+                                <button
+                                  type="button"
+                                  className={`absolute top-0.5 right-0.5 h-5 w-5 rounded-full flex items-center justify-center shadow-md text-white transition-colors ${
+                                    isDeleted
+                                      ? 'bg-gray-500 hover:bg-gray-600'
+                                      : 'bg-red-500 hover:bg-red-600'
+                                  }`}
+                                  title={isDeleted ? 'Restaurar' : 'Eliminar del destino'}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeletedTargetPicIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(pic.id)) next.delete(pic.id);
+                                      else next.add(pic.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Side-by-side mapping UI (swap mode + single target) */}
             {sourceId && sourceDetail && (targetDetail || loadingTarget) && mode === 'swap_positions' && (
               <Card>
@@ -671,7 +845,7 @@ export default function ReplicatePage() {
               <Card>
                 <CardContent className="pt-4 pb-3">
                   <p className="text-xs text-muted-foreground mb-2 font-medium">Modo de replicado</p>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-3 gap-1.5">
                     <button
                       onClick={() => setMode('swap_positions')}
                       className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-xs transition-colors ${
@@ -683,7 +857,21 @@ export default function ReplicatePage() {
                       <ArrowLeftRight className="h-4 w-4" />
                       <span className="font-medium">Swap posicion</span>
                       <span className="text-[10px] leading-tight text-center opacity-75">
-                        Reemplaza solo las seleccionadas
+                        Solo las seleccionadas
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setMode('append')}
+                      className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-xs transition-colors ${
+                        mode === 'append'
+                          ? 'border-blue-400 bg-blue-50 text-blue-700 ring-1 ring-blue-300'
+                          : 'border-gray-200 hover:bg-muted/50 text-muted-foreground'
+                      }`}
+                    >
+                      <Plus className="h-4 w-4" />
+                      <span className="font-medium">Agregar</span>
+                      <span className="text-[10px] leading-tight text-center opacity-75">
+                        Suma sin borrar
                       </span>
                     </button>
                     <button
@@ -695,9 +883,9 @@ export default function ReplicatePage() {
                       }`}
                     >
                       <Replace className="h-4 w-4" />
-                      <span className="font-medium">Reemplazar todas</span>
+                      <span className="font-medium">Reemplazar</span>
                       <span className="text-[10px] leading-tight text-center opacity-75">
-                        Borra fotos del destino
+                        Borra todo del destino
                       </span>
                     </button>
                   </div>
@@ -707,10 +895,11 @@ export default function ReplicatePage() {
 
             {/* Action */}
             {sourceDetail && targetIds.size > 0 && (
-              // For swap with mappings: need mappings. For swap without mapping UI: need selectedPicIds. For replace_all: need selectedPicIds.
+              // For swap with mappings: need mappings. For swap without mapping UI: need selectedPicIds. For replace_all: need selectedPicIds. For append: need selection or deletions.
               (mode === 'swap_positions' && targetDetail && mappings.size > 0) ||
               (mode === 'swap_positions' && !targetDetail && selectedPicIds.size > 0) ||
-              (mode === 'replace_all' && selectedPicIds.size > 0)
+              (mode === 'replace_all' && selectedPicIds.size > 0) ||
+              (mode === 'append' && (selectedPicIds.size > 0 || deletedTargetPicIds.size > 0))
             ) && (
               <Card>
                 <CardContent className="pt-6 space-y-3">
@@ -724,6 +913,25 @@ export default function ReplicatePage() {
                         <p className="text-lg font-medium mt-1">→ 1 destino</p>
                         <p className="text-[11px] text-blue-600 mt-1">
                           Posiciones mapeadas manualmente
+                        </p>
+                      </>
+                    ) : mode === 'append' ? (
+                      <>
+                        <p className="text-2xl font-bold">
+                          {selectedPicIds.size > 0 && `+${selectedPicIds.size}`}
+                          {selectedPicIds.size > 0 && deletedTargetPicIds.size > 0 && ' / '}
+                          {deletedTargetPicIds.size > 0 && (
+                            <span className="text-red-600">−{deletedTargetPicIds.size}</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {selectedPicIds.size > 0 && `${selectedPicIds.size} a agregar`}
+                          {selectedPicIds.size > 0 && deletedTargetPicIds.size > 0 && ' · '}
+                          {deletedTargetPicIds.size > 0 && `${deletedTargetPicIds.size} a borrar`}
+                        </p>
+                        <p className="text-lg font-medium mt-1">→ {targetIds.size} destino{targetIds.size !== 1 ? 's' : ''}</p>
+                        <p className="text-[11px] text-blue-600 mt-1">
+                          Suma al destino sin reemplazar el resto
                         </p>
                       </>
                     ) : (
@@ -751,7 +959,7 @@ export default function ReplicatePage() {
                     {replicating ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        {mode === 'swap_positions' ? 'Swapping...' : 'Replicando...'}
+                        {mode === 'swap_positions' ? 'Swapping...' : mode === 'append' ? 'Agregando...' : 'Replicando...'}
                       </>
                     ) : mode === 'swap_positions' ? (
                       <>
@@ -759,6 +967,15 @@ export default function ReplicatePage() {
                         {targetDetail && mappings.size > 0
                           ? `Swap ${mappings.size} foto${mappings.size !== 1 ? 's' : ''} mapeada${mappings.size !== 1 ? 's' : ''}`
                           : `Swap ${selectedPicIds.size} foto${selectedPicIds.size !== 1 ? 's' : ''} en posicion`}
+                      </>
+                    ) : mode === 'append' ? (
+                      <>
+                        <Plus className="h-4 w-4 mr-2" />
+                        {selectedPicIds.size > 0 && deletedTargetPicIds.size > 0
+                          ? `Agregar ${selectedPicIds.size} y borrar ${deletedTargetPicIds.size}`
+                          : selectedPicIds.size > 0
+                          ? `Agregar ${selectedPicIds.size} foto${selectedPicIds.size !== 1 ? 's' : ''} al destino`
+                          : `Borrar ${deletedTargetPicIds.size} foto${deletedTargetPicIds.size !== 1 ? 's' : ''} del destino`}
                       </>
                     ) : (
                       <>

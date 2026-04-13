@@ -161,8 +161,9 @@ export async function POST(request: NextRequest) {
   const targetSkus: string[] | undefined = body.target_skus;
   const targetItemIds: string[] | undefined = body.target_item_ids;
   const selectedPictureIds: string[] | undefined = body.selected_picture_ids;
-  const mode: 'replace_all' | 'swap_positions' = body.mode || 'replace_all';
+  const mode: 'replace_all' | 'swap_positions' | 'append' = body.mode || 'replace_all';
   const positionMappings: Array<{ source_index: number; target_index: number }> | undefined = body.position_mappings;
+  const deletedTargetPictureIds: string[] | undefined = body.deleted_target_picture_ids;
 
   if (!sourceSku && !sourceItemIdDirect) {
     return NextResponse.json({ error: 'source_sku or source_item_id is required' }, { status: 400 });
@@ -244,7 +245,54 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (mode === 'swap_positions') {
+      if (mode === 'append') {
+        // --- Append mode: add selected source photos to target without erasing existing ---
+        // Optionally delete specific target picture IDs first.
+        const targetItem = await mlGet<MlItemResponse>(
+          `/items/${targetItemId}?attributes=id,title,pictures`
+        );
+        if (!targetItem) {
+          results.push({ sku: target.label, item_id: targetItemId, title: null, status: 'error', pictures_set: 0, error: 'Failed to fetch target' });
+          continue;
+        }
+
+        const existingPictures = targetItem.pictures || [];
+        const remainingPictures: Array<{ id: string }> = existingPictures
+          .filter((p) => !deletedTargetPictureIds?.includes(p.id))
+          .map((p) => ({ id: p.id }));
+
+        // Source URLs to add: only when user explicitly selected pictures
+        const urlsToAdd: string[] = (selectedPictureIds && selectedPictureIds.length > 0)
+          ? sourceItem.pictures
+              .filter((p) => selectedPictureIds.includes(p.id))
+              .map((p) => p.secure_url.replace(/-O\.(\w+)$/, '-F.$1'))
+          : [];
+
+        const deletedCount = existingPictures.length - remainingPictures.length;
+        if (urlsToAdd.length === 0 && deletedCount === 0) {
+          results.push({ sku: target.label, item_id: targetItemId, title: targetItem.title, status: 'error', pictures_set: 0, error: 'Nada que agregar ni borrar' });
+          continue;
+        }
+
+        // Upload selected source photos to ML to obtain picture IDs
+        const uploadedPictures: Array<{ id: string }> = [];
+        for (const url of urlsToAdd) {
+          const uploaded = await mlUploadImageFromUrl(url);
+          uploadedPictures.push({ id: uploaded.id });
+        }
+
+        const mergedPictures = [...remainingPictures, ...uploadedPictures];
+
+        await mlPut(`/items/${targetItemId}`, { pictures: mergedPictures });
+
+        results.push({
+          sku: target.label,
+          item_id: targetItemId,
+          title: targetItem.title,
+          status: 'ok',
+          pictures_set: mergedPictures.length,
+        });
+      } else if (mode === 'swap_positions') {
         // --- Swap by position mode ---
         // Get the target's current pictures
         const targetItem = await mlGet<MlItemResponse>(
