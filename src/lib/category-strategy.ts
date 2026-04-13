@@ -892,11 +892,13 @@ export function buildEditPrompt(
   const replaceNote = patternsDiffer ? `
 
 REEMPLAZO COMPLETO DEL PATRÓN — REGLA CRÍTICA:
-La tela del producto en Imagen 1 tiene un patrón distintivo (hojas, flores, motivos, dibujos pintados). Ese patrón DEBE DESAPARECER COMPLETAMENTE del resultado. NO lo preserves. NO lo modifiques. NO lo mezcles con el de Imagen 2.
+La tela del producto en Imagen 1 tiene un patrón distintivo (hojas, flores, motivos, dibujos pintados). Esos motivos son un PATRÓN PINTADO sobre tela plana — NO son geometría 3D, NO son estructura del producto. DEBEN DESAPARECER COMPLETAMENTE del resultado.
 
-La tela del resultado debe verse PIXEL A PIXEL como la tela de Imagen 2 — mismo color, mismo patrón, misma escala de motivos, misma textura. Si el resultado mantiene cualquier elemento del patrón original de Imagen 1 (hojas, flores, motivos del hero), falló.
+NO los preserves como si fueran estructura. NO cambies solo el color manteniendo las formas. NO mezcles con el patrón de Imagen 2. Pensá en esto como "borrar la tela del hero" y "pintar encima con la tela de Imagen 2".
 
-Pensa en esto como "borrar la tela del hero y pintar encima con la tela del swatch". Solo la composición (muebles, personas, animales, almohadas, fondo) viene del hero — la TELA viene 100% de Imagen 2.` : '';
+La tela del resultado debe verse PIXEL A PIXEL como la tela de Imagen 2 — mismo color, mismo patrón, misma escala de motivos, misma textura. El cuerpo del cubrecama Y las fundas deben tener AMBOS el mismo patrón uniforme de Imagen 2 (no uno con el patrón de Imagen 2 y otro con vestigios del hero). Si el resultado mantiene cualquier elemento del patrón original de Imagen 1 (hojas, flores, motivos, formas del hero), falló.
+
+Solo la composición (muebles, personas, animales, almohadas, fondo, iluminación) viene del hero — la TELA viene 100% de Imagen 2.` : '';
 
   if (shotType === 'detail') {
     // If the strategy has a category-specific detail rule, use it (overrides generic).
