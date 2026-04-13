@@ -1,45 +1,50 @@
-// Detects the camera angle of a hero shot containing a bed.
-// Used to decide whether the swatch needs pre-rotation before sending to Gemini:
-// stripe/chevron patterns get rotated 90° on side-angle heros because Gemini
-// interprets pattern direction relative to the camera, not the bed's anatomy.
+// Detects how horizontal stripes WOULD APPEAR on a bed photo, used to decide
+// whether the swatch needs pre-rotation before sending to Gemini.
+//
+// Why this framing instead of "what camera angle":
+// The angle-based classifier (foot vs side) is unreliable because two bed
+// photos with similar 3/4 perspectives can require different swatch rotations.
+// Asking the model the *direct* downstream question — "would horizontal stripes
+// appear left-right or top-bottom in this view?" — gives consistent answers
+// (verified empirically: 5/5 across both Flash and Pro on the two test heros).
+//
+// Mapping to rotation:
+//   left_right → no rotation (horizontal-in-camera = correct for this view)
+//   top_bottom → rotate 90°  (horizontal-in-camera would be wrong; flip swatch)
 
 import { analyzeImages } from '@/lib/gemini/client';
 
-export type BedCameraAngle = 'foot' | 'side' | 'top' | 'other';
+export type StripeVisualAxis = 'left_right' | 'top_bottom';
+// Backwards-compat alias for any callers still importing the old name.
+export type BedCameraAngle = StripeVisualAxis;
 
-export async function detectBedCameraAngle(
+export async function detectStripeVisualAxis(
   heroBase64: string,
   heroMimeType: string = 'image/png'
-): Promise<BedCameraAngle | null> {
+): Promise<StripeVisualAxis | null> {
   try {
     const result = await analyzeImages({
       images: [{ base64: heroBase64, mimeType: heroMimeType }],
-      promptText: `Analyze the camera angle of this bed photo for a textile product listing.
+      promptText: `Look at this bed photo. The bedspread/quilt covers a bed.
 
-The image shows a bed with a bedspread/quilt. I need to know HOW the camera is positioned relative to the bed.
+Imagine you're going to put a horizontally-striped fabric on this bed (stripes parallel to the foot edge of the bed and parallel to the headboard, going ACROSS the WIDTH of the bed).
 
-Possible angles:
-- "foot": Camera is at the FOOT of the bed looking toward the headboard. The headboard is at the back of the frame, the foot of the bed is closest to the camera. The bed extends INTO the frame (depth = bed length).
-- "side": Camera is at a SIDE angle (typically 30-60 degrees off-axis). One side rail of the bed is closer to the camera, the other side is farther. The bed extends ACROSS the frame from one side to the other.
-- "top": Camera is directly above the bed (overhead/flat-lay).
-- "other": No bed visible, or some other angle (extreme close-up of fabric, etc).
+Question: In the resulting image, would those stripes APPEAR to run LEFT-TO-RIGHT in the camera frame, or TOP-TO-BOTTOM in the camera frame?
 
-KEY DECISION RULE — focus on which axis of the bed runs from one side of the frame to the other:
-- If the LONG axis of the bed runs into the depth of the frame (you see foot → headboard going away from you) → "foot"
-- If the LONG axis of the bed runs across the frame (left-to-right) → "side"
-- If looking straight down → "top"
+Think step by step:
+1. Where is the headboard? Where is the foot of the bed?
+2. The bed's WIDTH axis runs from one side rail to the other (parallel to head/foot edges).
+3. Which direction does the WIDTH axis appear to go in this camera view?
+   - WIDTH axis appears mostly LEFT-RIGHT in camera → stripes appear LEFT-TO-RIGHT
+   - WIDTH axis appears mostly TOP-BOTTOM in camera (or steeply diagonal) → stripes appear TOP-TO-BOTTOM
 
-Reply with ONLY a valid JSON object (no markdown, no backticks):
-{
-  "angle": "<foot|side|top|other>",
-  "confidence": <0.0 to 1.0>,
-  "reason": "<one short sentence explaining what you see>"
-}`,
+Reply ONLY a valid JSON object (no markdown, no backticks):
+{"stripes_appear": "left_right" or "top_bottom", "confidence": 0.0-1.0}`,
       temperature: 0.1,
     });
 
     if (!result.success || !result.textResponse) {
-      console.error('[bed-camera-angle] Analysis failed:', result.error);
+      console.error('[stripe-visual-axis] Analysis failed:', result.error);
       return null;
     }
 
@@ -49,14 +54,18 @@ Reply with ONLY a valid JSON object (no markdown, no backticks):
     }
 
     const parsed = JSON.parse(jsonStr);
-    const valid: BedCameraAngle[] = ['foot', 'side', 'top', 'other'];
-    if (!parsed.angle || !valid.includes(parsed.angle)) return null;
-    return parsed.angle as BedCameraAngle;
+    const v = parsed?.stripes_appear;
+    if (v !== 'left_right' && v !== 'top_bottom') return null;
+    return v;
   } catch (err) {
-    console.error('[bed-camera-angle] Error:', err instanceof Error ? err.message : err);
+    console.error('[stripe-visual-axis] Error:', err instanceof Error ? err.message : err);
     return null;
   }
 }
+
+// Backwards-compat: keep the old function name working but route it through
+// the new classifier.
+export const detectBedCameraAngle = detectStripeVisualAxis;
 
 // Returns true if the cached swatch description indicates a directional pattern
 // (stripes/chevron/diagonal). Used to gate the rotation logic — non-directional

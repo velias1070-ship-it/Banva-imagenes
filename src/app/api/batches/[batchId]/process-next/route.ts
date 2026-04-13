@@ -20,7 +20,7 @@ import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { verifySwatch } from '@/lib/swatch-verifier';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
-import { detectBedCameraAngle, hasDirectionalPattern, type BedCameraAngle } from '@/lib/bed-camera-angle';
+import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } from '@/lib/bed-camera-angle';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 
@@ -581,10 +581,9 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // Save original swatch before crop (flattener needs the full image, not cropped)
     const originalSwatchBase64 = swatchBase64;
 
-    // Auto-rotation for directional patterns on side-angle bed shots — see
-    // results/[jobId]/route.ts for the full rationale (dual-route sync rule).
-    // NOTE: pattern source is job.swatch_pattern_text (long Gemini analysis),
-    // NOT swatches.color_description (which is the short "Canela" label).
+    // Auto-rotation: ask Gemini directly "would horizontal stripes appear
+    // left-right or top-bottom on this bed?". top_bottom → rotate 90°.
+    // See results/[jobId]/route.ts and src/lib/bed-camera-angle.ts.
     let autoRotateSwatch = 0;
     const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
     const jobPatternText = (job.swatch_pattern_text as string | null) || job.swatch.color_description;
@@ -594,23 +593,24 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       hasDirectionalPattern(jobPatternText) &&
       job.hero_shot
     ) {
-      let cachedAngle = (job.hero_shot as Record<string, unknown>).bed_camera_angle as BedCameraAngle | null | undefined;
-      if (!cachedAngle) {
+      let cachedAxis = (job.hero_shot as Record<string, unknown>).bed_camera_angle as StripeVisualAxis | null | undefined;
+      if (cachedAxis !== 'left_right' && cachedAxis !== 'top_bottom') cachedAxis = null;
+      if (!cachedAxis) {
         try {
-          cachedAngle = await detectBedCameraAngle(heroBase64, job.hero_shot.mime_type || 'image/png');
-          if (cachedAngle && job.hero_shot.id) {
-            supabase.from('hero_shots').update({ bed_camera_angle: cachedAngle }).eq('id', job.hero_shot.id).then(() => {});
+          cachedAxis = await detectStripeVisualAxis(heroBase64, job.hero_shot.mime_type || 'image/png');
+          if (cachedAxis && job.hero_shot.id) {
+            supabase.from('hero_shots').update({ bed_camera_angle: cachedAxis }).eq('id', job.hero_shot.id).then(() => {});
           }
         } catch (err) {
-          console.error('[process-next] Bed camera angle detection failed:', err);
+          console.error('[process-next] Stripe axis detection failed:', err);
         }
       }
-      if (cachedAngle === 'side') {
+      if (cachedAxis === 'top_bottom') {
         autoRotateSwatch = 90;
-        logPipelineEvent(job.id, 'AUTO_ROTATE_SWATCH', '90deg', { reason: 'side_angle_directional_pattern' });
-        console.log(`[process-next] Auto-rotating swatch 90° (side-angle hero + directional pattern)`);
-      } else if (cachedAngle) {
-        logPipelineEvent(job.id, 'BED_ANGLE_CHECKED', cachedAngle, { rotated: false });
+        logPipelineEvent(job.id, 'AUTO_ROTATE_SWATCH', '90deg', { reason: 'stripes_top_bottom' });
+        console.log(`[process-next] Auto-rotating swatch 90° (stripes appear top-bottom in camera)`);
+      } else if (cachedAxis) {
+        logPipelineEvent(job.id, 'STRIPE_AXIS_CHECKED', cachedAxis, { rotated: false });
       }
     }
 
