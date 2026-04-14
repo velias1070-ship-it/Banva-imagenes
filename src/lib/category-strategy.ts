@@ -108,6 +108,13 @@ Si el swatch (Imagen 2) muestra un patrón con una DIRECCIÓN definida (rayas ho
   - Si el swatch muestra bandas simples (como un quilt de rayas), el resultado debe mostrar bandas simples — no un tejido con hilos cruzados.
   - La "textura de tela tejida" NO es una excusa para agregar líneas en direcciones que no están en el swatch.
 
+CONSISTENCIA DE PATRÓN ENTRE PIEZAS DEL SET — REGLA CRÍTICA:
+El cobertor (cubrecama), las fundas de almohada y el faldón lateral son TODAS PIEZAS DE LA MISMA ÚNICA TELA RAYADA. En un set real las rayas físicas atraviesan todas las piezas en la misma dirección anatómica (paralelas al borde del foot/headboard de la cama, perpendiculares a los rieles laterales).
+  - Si las rayas del cobertor van paralelas al headboard (across the bed width) → las rayas de las fundas de almohada DEBEN ir en la MISMA dirección física (paralelas al headboard también). NO rotes las rayas 90° entre el cobertor y las fundas.
+  - Las rayas del cobertor y las rayas de las fundas DEBEN ser visualmente continuas — si imaginariamente unieras una funda al borde del cobertor, las rayas seguirían en línea.
+  - PROHIBIDO: cobertor con rayas horizontales en cámara + fundas con rayas verticales en cámara (o viceversa). Eso parecería dos telas distintas, no un set coordinado.
+  - El faldón que cuelga sobre el borde lateral de la cama es la misma tela también — sus rayas deben envolver continuamente desde el plano superior del cobertor.
+
 TODO lo demás queda IDÉNTICO a Imagen 1: muebles, lámpara, objetos de mesa de noche, alfombra, pared, cuadros, decoración.`,
 
       what_to_change_detail: `Apply the EXACT surface of Image 2 to ALL visible fabric surfaces in Image 1.
