@@ -616,12 +616,46 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // Save original swatch before crop (flattener needs the full image, not cropped)
     const originalSwatchBase64 = swatchBase64;
 
+    // ── Swatch Pattern Analysis (Planner) — runs EARLY so the rotation gate below
+    // can see the real pattern description, not just the cached short color label
+    // ("Crema") which always fails hasDirectionalPattern() and silently disables
+    // the auto-rotation path.
+    let swatchPatternDescription: string | null = null;
+    if (!isBrandOnly) {
+      const cached = job.swatch.color_description;
+      if (cached && cached.length > 100) {
+        swatchPatternDescription = cached;
+        console.log(`[process-next] Using cached swatch pattern analysis for ${job.swatch.name}`);
+      } else {
+        swatchPatternDescription = await analyzeSwatchPattern(
+          swatchBase64,
+          'image/png',
+          job.swatch.name,
+        );
+        if (swatchPatternDescription) {
+          const existing = job.swatch.color_description;
+          if (!existing || existing.length > 100) {
+            supabase.from('swatches')
+              .update({ color_description: swatchPatternDescription })
+              .eq('id', job.swatch.id)
+              .then(() => {});
+          }
+        }
+      }
+    }
+    logPipelineEvent(job.id, 'PATTERN_ANALYSIS', swatchPatternDescription ? 'available' : 'none', {
+      cached: !!(job.swatch.color_description && job.swatch.color_description.length > 100),
+      length: swatchPatternDescription?.length || 0,
+    });
+
     // Auto-rotation: ask Gemini directly "would horizontal stripes appear
     // left-right or top-bottom on this bed?". top_bottom → rotate 90°.
     // See results/[jobId]/route.ts and src/lib/bed-camera-angle.ts.
     let autoRotateSwatch = 0;
     const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
-    const jobPatternText = (job.swatch_pattern_text as string | null) || job.swatch.color_description;
+    const jobPatternText = swatchPatternDescription
+      || (job.swatch_pattern_text as string | null)
+      || job.swatch.color_description;
     if (
       !isBrandOnly &&
       ROTATION_PRONE.includes(category) &&
@@ -741,39 +775,6 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     if (skipFlattenOnRetry && strategy.preprocessing.flatten_swatch_ai) {
       console.log(`[process-next] Skipping AI flatten on retry — using cropped swatch for ${job.swatch.name}`);
     }
-
-    // ── Swatch Pattern Analysis (Planner) — describes pattern for generation prompt ──
-    let swatchPatternDescription: string | null = null;
-    if (!isBrandOnly) {
-      // Use cached analysis from swatch.color_description if it's detailed enough (>100 chars)
-      const cached = job.swatch.color_description;
-      if (cached && cached.length > 100) {
-        swatchPatternDescription = cached;
-        console.log(`[process-next] Using cached swatch pattern analysis for ${job.swatch.name}`);
-      } else {
-        swatchPatternDescription = await analyzeSwatchPattern(
-          swatchBase64,
-          'image/png',
-          job.swatch.name,
-        );
-        if (swatchPatternDescription) {
-          // Cache pattern analysis — only if no short color desc exists yet
-          // (don't overwrite "Negro" with a paragraph)
-          const existing = job.swatch.color_description;
-          if (!existing || existing.length > 100) {
-            supabase.from('swatches')
-              .update({ color_description: swatchPatternDescription })
-              .eq('id', job.swatch.id)
-              .then(() => {});
-          }
-        }
-      }
-    }
-
-    logPipelineEvent(job.id, 'PATTERN_ANALYSIS', swatchPatternDescription ? 'available' : 'none', {
-      cached: !!(job.swatch.color_description && job.swatch.color_description.length > 100),
-      length: swatchPatternDescription?.length || 0,
-    });
 
     // ── Build prompt ──
     const swatchHex = job.swatch.dominant_color_hex || null;

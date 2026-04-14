@@ -635,15 +635,43 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       console.log(`[regenerateJob] Using QA feedback: "${qaFeedback}"`);
     }
 
+    // ── Swatch Pattern Analysis (Planner) — runs EARLY so the rotation gate below
+    // sees the real pattern description, not just the cached short color label
+    // ("Crema") which always fails hasDirectionalPattern() and silently disables
+    // the auto-rotation path.
+    let swatchPatternDescription: string | null = null;
+    if (!isBrandOnly) {
+      const cached = swatch.color_description;
+      if (cached && cached.length > 100) {
+        swatchPatternDescription = cached;
+        console.log(`[regenerateJob] Using cached swatch pattern analysis for ${swatch.name}`);
+      } else {
+        swatchPatternDescription = await analyzeSwatchPattern(
+          swatchBuffer.toString('base64'),
+          'image/png',
+          swatch.name,
+        );
+        if (swatchPatternDescription) {
+          const existing = swatch.color_description;
+          if (!existing || existing.length > 100) {
+            supabase.from('swatches')
+              .update({ color_description: swatchPatternDescription })
+              .eq('id', swatch.id)
+              .then(() => {});
+          }
+        }
+      }
+    }
+
     // Auto-rotation for directional patterns: ask Gemini directly "would
     // horizontal stripes appear left-right or top-bottom on this bed?".
     // If top-bottom, rotate the swatch 90° so Gemini's natural rendering
     // aligns horizontal-in-camera with parallel-to-foot. See
     // src/lib/bed-camera-angle.ts for the rationale and verified results.
-    // NOTE: pattern source is generation_jobs.swatch_pattern_text (long Gemini
-    // analysis), NOT swatches.color_description (the short "Canela" label).
     const ROTATION_PRONE = ['quilts', 'cubrecamas', 'plumones', 'sabanas'];
-    const jobPatternText = (job.swatch_pattern_text as string | null) || swatch.color_description;
+    const jobPatternText = swatchPatternDescription
+      || (job.swatch_pattern_text as string | null)
+      || swatch.color_description;
     if (
       !isBrandOnly &&
       rotateSwatch === 0 &&
@@ -757,33 +785,6 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
           console.log(`[regenerateJob] Flat swatch generated and cached for ${swatch.name}`);
         } else {
           console.log(`[regenerateJob] Flat swatch generation failed, using cropped swatch`);
-        }
-      }
-    }
-
-    // ── Swatch Pattern Analysis (Planner) — describes pattern for generation prompt ──
-    let swatchPatternDescription: string | null = null;
-    if (!isBrandOnly) {
-      // Use cached analysis from swatch.color_description if it's detailed enough (>100 chars)
-      const cached = swatch.color_description;
-      if (cached && cached.length > 100) {
-        swatchPatternDescription = cached;
-        console.log(`[regenerateJob] Using cached swatch pattern analysis for ${swatch.name}`);
-      } else {
-        swatchPatternDescription = await analyzeSwatchPattern(
-          swatchBase64,
-          'image/png',
-          swatch.name,
-        );
-        if (swatchPatternDescription) {
-          // Cache pattern analysis — only if no short color desc exists yet
-          const existing = swatch.color_description;
-          if (!existing || existing.length > 100) {
-            supabase.from('swatches')
-              .update({ color_description: swatchPatternDescription })
-              .eq('id', swatch.id)
-              .then(() => {});
-          }
         }
       }
     }
