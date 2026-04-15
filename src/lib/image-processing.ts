@@ -3,12 +3,19 @@ import sharp from 'sharp';
 const DARK_SWATCH_THRESHOLD = 115; // brightness 0-255 — swatch images include context (pillows, bg) that raise the average
 
 /**
- * Get the dominant color of an image as RGB values.
+ * Get the dominant SATURATED color of an image as RGB values.
  *
  * Uses a saturation-aware approach: filters out near-white, near-black,
  * and near-grey pixels, then averages the remaining "colorful" pixels.
- * This avoids the muddy mean that .stats() returns when an image has lots
- * of white background mixed with the actual color.
+ * This answers "what's the most vivid color in the image" — useful when
+ * you want the pattern/accent color of a fabric, NOT the base color.
+ *
+ * WARNING: do NOT use this for Delta-E fabric-color checks on swatches
+ * that have a pattern over a light base (e.g. white sheets with printed
+ * floral borders). It will return the pattern color and reject outputs
+ * that correctly reproduce the base. Use `getProductBaseColor` for that.
+ * See src/lib/image-processing.ts:computeSwatchOutputDeltaE for the
+ * chosen policy.
  *
  * Falls back to channel mean if no saturated pixels found.
  */
@@ -58,6 +65,70 @@ export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number
     r: Math.round(sumR / count),
     g: Math.round(sumG / count),
     b: Math.round(sumB / count),
+  };
+}
+
+/**
+ * Get the BASE color of a product as RGB values — the color of the largest
+ * contiguous cluster in the image, regardless of saturation.
+ *
+ * Quantizes every pixel to a 5-bit-per-channel bin (32 levels, 32768 bins),
+ * finds the bin with the most pixels, and returns the mean of the pixels that
+ * landed in it. For a flat red sheet it returns red. For a white sheet with
+ * printed purple borders it returns white (the base, which is what the model
+ * must reproduce to match the product).
+ *
+ * This function exists because `getDominantColor` filters by saturation and
+ * therefore returns the PATTERN color on swatches that have a white base with
+ * colored accents — causing false Delta-E rejects in the Sabanas Cannon line.
+ * Validated against real swatches of project 1967331d (Cannon 144h): the base
+ * color comes out ~RGB(210,210,215) for all four tested swatches, matching
+ * the actual white-with-accents product. See audit 2026-04-15 job 1017bdb7.
+ */
+export async function getProductBaseColor(imageBuffer: Buffer): Promise<{ r: number; g: number; b: number }> {
+  const { data, info } = await sharp(imageBuffer)
+    .resize(150, 150, { fit: 'inside' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const channels = info.channels;
+  const bins = new Map<string, { count: number; sumR: number; sumG: number; sumB: number }>();
+
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const key = `${r >> 3}|${g >> 3}|${b >> 3}`;
+    const bin = bins.get(key);
+    if (bin) {
+      bin.count++;
+      bin.sumR += r;
+      bin.sumG += g;
+      bin.sumB += b;
+    } else {
+      bins.set(key, { count: 1, sumR: r, sumG: g, sumB: b });
+    }
+  }
+
+  let top: { count: number; sumR: number; sumG: number; sumB: number } | null = null;
+  for (const bin of bins.values()) {
+    if (!top || bin.count > top.count) top = bin;
+  }
+
+  if (!top) {
+    const stats = await sharp(imageBuffer).stats();
+    return {
+      r: Math.round(stats.channels[0]?.mean ?? 200),
+      g: Math.round(stats.channels[1]?.mean ?? 200),
+      b: Math.round(stats.channels[2]?.mean ?? 200),
+    };
+  }
+
+  return {
+    r: Math.round(top.sumR / top.count),
+    g: Math.round(top.sumG / top.count),
+    b: Math.round(top.sumB / top.count),
   };
 }
 
@@ -153,12 +224,16 @@ export async function computeSwatchOutputDeltaE(
     .png()
     .toBuffer();
 
-  // Use getDominantColor (saturation-aware) on both sides. It filters out
-  // near-white / near-black / grey pixels and averages the "colorful" ones,
-  // which matches what a human eye would anchor on for color fidelity.
+  // Use getProductBaseColor (histogram largest-bin) on both sides. It returns
+  // the color of the largest cluster — for a flat sheet the sheet color, for
+  // a patterned sheet the base. The previous saturation-filter approach
+  // returned the pattern color for any white-base swatch and caused false
+  // Delta-E rejects across the entire Cannon 144h line (see audit
+  // 2026-04-15 job 1017bdb7). `getDominantColor` is kept for other callers
+  // that actually want the accent/pattern color.
   const [swatchRgb, outputRgb] = await Promise.all([
-    getDominantColor(swatchCroppedBuffer),
-    getDominantColor(outputCentered),
+    getProductBaseColor(swatchCroppedBuffer),
+    getProductBaseColor(outputCentered),
   ]);
 
   const lab1 = rgbToLab(swatchRgb.r, swatchRgb.g, swatchRgb.b);
