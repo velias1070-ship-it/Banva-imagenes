@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { mlGet, mlPut, mlReplaceItemPicturesFromUrls, mlUploadImageFromUrl } from '@/lib/ml';
+import { mlGet, mlPut, mlUploadImageFromUrl } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -364,19 +364,28 @@ export async function POST(request: NextRequest) {
           pictures_set: swappedCount,
         });
       } else {
-        // --- Replace all mode (existing behavior) ---
+        // --- Replace all mode ---
+        // Upload each source photo to ML first to get a permanent picture_id, then PUT.
+        // Sending {source: url} directly leaves pictures in "processing-image" placeholder
+        // state forever when ML fails to download them asynchronously (known issue).
         const targetItem = await mlGet<{ id: string; title: string }>(
           `/items/${targetItemId}?attributes=id,title`
         );
 
-        await mlReplaceItemPicturesFromUrls(targetItemId, sourceUrls);
+        const uploadedPictures: Array<{ id: string }> = [];
+        for (const url of sourceUrls) {
+          const uploaded = await mlUploadImageFromUrl(url);
+          uploadedPictures.push({ id: uploaded.id });
+        }
+
+        await mlPut(`/items/${targetItemId}`, { pictures: uploadedPictures });
 
         results.push({
           sku: target.label,
           item_id: targetItemId,
           title: targetItem?.title || null,
           status: 'ok',
-          pictures_set: sourceUrls.length,
+          pictures_set: uploadedPictures.length,
         });
       }
     } catch (err) {

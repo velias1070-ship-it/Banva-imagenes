@@ -220,22 +220,15 @@ export async function mlUploadImageBuffer(buffer: Buffer, filename: string): Pro
   return res.json();
 }
 
-// Update pictures on a listing
+// Update pictures on a listing using picture IDs (must be already-uploaded to ML).
+// Do NOT build a wrapper that takes source URLs: ML's async download from external URLs
+// is unreliable and can leave pictures in permanent "processing-image" placeholder state.
+// Always upload binaries via mlUploadImageFromUrl / mlUploadImageBuffer first.
 export async function mlUpdateItemPictures(
   itemId: string,
   pictureIds: string[]
 ): Promise<unknown> {
   return mlPut(`/items/${itemId}`, {
     pictures: pictureIds.map((id) => ({ id })),
-  });
-}
-
-// Replace pictures on a listing using source URLs
-export async function mlReplaceItemPicturesFromUrls(
-  itemId: string,
-  sourceUrls: string[]
-): Promise<unknown> {
-  return mlPut(`/items/${itemId}`, {
-    pictures: sourceUrls.map((url) => ({ source: url })),
   });
 }
