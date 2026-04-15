@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet, mlPut } from '@/lib/ml';
+import { mlGet, mlPut, mlUploadImageFromUrl } from '@/lib/ml';
 
 // Inventory Supabase (ml_items_map, ml_config, productos)
 function getInventorySupabase() {
@@ -299,18 +299,53 @@ export async function POST(request: NextRequest) {
       );
       const existingPics = itemData.pictures || [];
 
-      // Build the merged pictures array
-      const newEntries = newImageUrls.map((url) => ({ source: url }));
+      // Build the merged pictures array.
+      // For new images: upload the binary to ML first to get permanent picture_ids.
+      // Sending {source: url} directly lets ML download asynchronously — and when that
+      // fetch fails the slot is stuck on the "processing-image" placeholder forever.
+      // (Same failure mode as /api/replicate-pictures before it was fixed.)
       const existingEntries = existingPics.map((p) => ({ id: p.id }));
 
-      let mergedPictures: ({ source: string } | { id: string })[];
+      let mergedPictures: { id: string }[];
       let keptCount: number;
+
+      if (dry_run) {
+        // Don't upload during dry-run — just estimate counts.
+        let plannedNewCount: number;
+        if (mode === 'replace') {
+          plannedNewCount = Math.min(newImageUrls.length, max_pictures);
+          keptCount = 0;
+        } else if (mode === 'append') {
+          const available = max_pictures - existingEntries.length;
+          plannedNewCount = Math.max(0, Math.min(newImageUrls.length, available));
+          keptCount = Math.min(existingEntries.length, max_pictures);
+        } else {
+          const newCount = Math.min(newImageUrls.length, max_pictures);
+          const available = max_pictures - newCount;
+          plannedNewCount = newCount;
+          keptCount = Math.max(0, Math.min(existingEntries.length, available));
+        }
+        results.push({
+          sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
+          pictures_new: plannedNewCount,
+          pictures_kept: keptCount,
+          pictures_total: plannedNewCount + keptCount,
+          status: 'success',
+        });
+        continue;
+      }
+
+      // Real run: upload new images first.
+      const newEntries: { id: string }[] = [];
+      for (const url of newImageUrls) {
+        const uploaded = await mlUploadImageFromUrl(url);
+        newEntries.push({ id: uploaded.id });
+      }
 
       if (mode === 'replace') {
         mergedPictures = newEntries;
         keptCount = 0;
       } else if (mode === 'append') {
-        // Existing first, new at the end
         const available = max_pictures - existingEntries.length;
         const newToAdd = newEntries.slice(0, Math.max(0, available));
         mergedPictures = [...existingEntries, ...newToAdd];
@@ -325,17 +360,6 @@ export async function POST(request: NextRequest) {
 
       // Enforce max
       mergedPictures = mergedPictures.slice(0, max_pictures);
-
-      if (dry_run) {
-        results.push({
-          sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
-          pictures_new: newImageUrls.length,
-          pictures_kept: keptCount,
-          pictures_total: mergedPictures.length,
-          status: 'success',
-        });
-        continue;
-      }
 
       // PUT to ML
       await mlPut(`/items/${mlItem.item_id}`, { pictures: mergedPictures });
