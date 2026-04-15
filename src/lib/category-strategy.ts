@@ -29,6 +29,12 @@ export interface CategoryStrategy {
   };
   prompt: {
     product_context: string;
+    /** One-line physical description of the material: weight, drape, rigidity, fold behavior.
+     *  Injected into edit/reference/from_scratch prompts so Gemini preserves the product's
+     *  physical geometry instead of recoloring a mismatched silhouette.
+     *  Audit reference: audits/2026-04-14-audit-v2.md H3 — research claim that prompts should
+     *  "describe explicitly peso, caida y rigidez del material" to reduce drapeado irreal. */
+    physical_description?: string;
     what_to_change: string;
     /** Shot-type-aware instruction for detail/infografia shots where fabric form must be preserved */
     what_to_change_detail?: string;
@@ -77,6 +83,8 @@ const CATEGORY_STRATEGIES: Record<string, CategoryStrategy> = {
       product_context: `A quilt is a lightweight bed COVER (cobertor), NOT a sheet.
 The quilt product set includes: the quilt itself (bed cover) + matching pillowcases.
 There are NO sheets and NO fitted sheets in this product.`,
+
+      physical_description: `El quilt es un cobertor liviano con relleno fino (~2-4cm de espesor). Drape suave que sigue el contorno de la cama, pliegues anchos y redondeados en los costados, caída fluida sobre el borde. No tiene volumen rígido como un plumón ni fluidez de sábana — es acolchado de peso medio.`,
 
       what_to_change: `Cambia SOLO la tela del cobertor y fundas de almohada visibles al diseño de Imagen 2. Ignora el relieve o acolchado de Imagen 1.
 
@@ -188,6 +196,8 @@ Image 1 is ONLY a composition guide — the product (color, pattern, texture) co
       product_context: `This is a bed sheet set (juego de sabanas).
 The set includes: pillowcases + flat/top sheet + fitted sheet (sabana bajera).`,
 
+      physical_description: `Las sabanas son tela fina (algodon/poliester, peso ligero) con alta flexibilidad. Caida muy fluida, pliegues delgados y blandos que se pegan al contorno del colchon. Sin volumen propio — la tela se amolda exactamente a la superficie. No tiene relleno ni acolchado, no drapea con estructura rigida.`,
+
       what_to_change: `IMPORTANT — Image 2 may show DIFFERENT patterns for different pieces:
 * The PILLOWCASES in Image 2 have one pattern (could be floral, striped, etc.)
 * The FITTED SHEET (sabana bajera) in Image 2 may have a DIFFERENT pattern (often stripes or solid color)
@@ -242,6 +252,8 @@ Do NOT lighten the fabric to make the pattern visible — dark fabric stays dark
       product_context: `This is a bedspread (cubrecama) — a decorative bed cover.
 The product typically includes the bedspread itself, sometimes with matching pillow shams.`,
 
+      physical_description: `El cubrecama es un cobertor de peso medio con acolchado ligero (~2-4cm de espesor visible). Caida firme con drape en los bordes de la cama, pliegues anchos que envuelven el colchon desde arriba hacia los costados. Silueta uniforme, menos volumen que un plumon pero mas estructura que una sabana. Los pliegues son marcados pero no angulosos.`,
+
       what_to_change: `Change ALL textile surfaces of the bedspread product visible in Image 1:
 * The BEDSPREAD itself -> apply the color and pattern from Image 2
 * PILLOW SHAMS (if part of the product set) -> apply the matching pattern from Image 2
@@ -286,6 +298,8 @@ Do NOT lighten the fabric. Texture should be subtle on dark surfaces.`,
       product_context: `This is a duvet/comforter (plumon) — a thick, puffy bed covering filled with down or synthetic fill.
 The plumon typically has a quilted/channel stitch pattern to keep the fill distributed evenly.`,
 
+      physical_description: `El plumon tiene volumen prominente (~8-15cm de espesor) por el relleno de pluma o fibra sintetica. Drape firme pesado por el peso del relleno, con pliegues ANCHOS y REDONDEADOS — nunca angulosos ni puntiagudos. Se ve "inflado" sobre la cama; no se amolda al colchon, lo cubre con cuerpo propio. El stitch pattern (channel/diamond) divide la superficie en celdas visibles que mantienen el relleno distribuido.`,
+
       what_to_change: `Change the duvet/comforter textile surfaces visible in Image 1:
 * The PLUMON/COMFORTER -> apply the color and pattern from Image 2
 * Matching PILLOW SHAMS or PILLOWCASES -> apply the matching color from Image 2 if they are part of the product
@@ -328,6 +342,8 @@ Only change the color/pattern — the physical form of the fabric must be identi
     prompt: {
       product_context: `This is a blanket (frazada) — a warm, typically fleece or polar fabric bed covering.`,
 
+      physical_description: `La frazada es tela gruesa tipo polar/fleece con peso tangible (~1-2cm de espesor aparente). Caida pesada con pliegues marcados y gruesos, textura aterciopelada visible. No tiene volumen de relleno como un plumon, pero tiene mas cuerpo que una sabana — los pliegues se sostienen en su lugar por el peso propio de la tela, no colapsan.`,
+
       what_to_change: `Change ALL textile surfaces of the blanket visible in Image 1:
 * The BLANKET -> apply the color and pattern from Image 2
 
@@ -360,6 +376,8 @@ DO NOT change:
     preprocessing: { crop_swatch: false, flatten_hero: false },
     prompt: {
       product_context: `This is a pillow product (almohada) — could be a bed pillow, decorative cushion, or body pillow.`,
+
+      physical_description: `La almohada tiene forma rectangular/cuadrada firme con volumen constante (~8-12cm de espesor). El relleno interno mantiene la silueta geometrica — la tela externa se ajusta sobre el relleno pero NO drapea: no hay caida, no hay pliegues largos. Los unicos pliegues son arrugas sutiles en las esquinas o donde la tela se ajusta al costurado.`,
 
       what_to_change: `Change ALL pillow/cushion textile surfaces visible in Image 1:
 * PILLOWCASES / CUSHION COVERS -> apply the color and pattern from Image 2
@@ -396,6 +414,8 @@ DO NOT change:
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a towel product (toalla) — could be bath towel, hand towel, or towel set.`,
+
+      physical_description: `La toalla es tela de rizo (terry) de peso medio a pesado con textura esponjosa visible en los bordes. Rigidez baja-media: pliegues firmes cuando esta doblada o enrollada, pero menos fluida que una sabana. No drapea como tela fina — mantiene el pliegue en el que la pusieron. Grosor ~0.5-1cm aparente.`,
 
       what_to_change: `Esta es una operacion de CAMBIO DE COLOR UNICAMENTE. La imagen de salida debe ser IDENTICA a la Imagen 1 en todo excepto el color de las toallas.
 
@@ -446,6 +466,8 @@ Only change the color/pattern — the physical form of the fabric must be identi
     prompt: {
       product_context: `This is a tablecloth product (mantel) — could include a tablecloth, table runner, or napkins.`,
 
+      physical_description: `El mantel es tela plana de peso medio a ligero (algodon, lino o poliester). Superficie central plana sobre la mesa, caida vertical por los bordes con pliegues verticales largos y paralelos por gravedad. La parte superior se ve casi sin pliegues (estirada por el peso del borde caido); la parte colgante del borde tiene drape fluido con pliegues vertical hasta cerca del piso.`,
+
       what_to_change: `Change ALL tablecloth/textile surfaces visible in Image 1:
 * The TABLECLOTH -> apply the color and pattern from Image 2
 * NAPKINS (if part of the set) -> apply the matching pattern from Image 2
@@ -480,6 +502,8 @@ DO NOT change:
     preprocessing: { crop_swatch: false, flatten_hero: false },
     prompt: {
       product_context: `This is a mattress topper — a padded mattress cover that adds comfort and protection.`,
+
+      physical_description: `El topper es una capa acolchada gruesa con relleno (~4-8cm de espesor), que se apoya sobre el colchon. Espesor uniforme, caida minima por el borde del colchon, pliegues solo en la transicion entre la superficie superior y el borde vertical. Silueta rectangular bien definida, sin drapeado libre — el relleno mantiene la forma plana.`,
 
       what_to_change: `Change the topper textile surfaces visible in Image 1:
 * The TOPPER COVER -> apply the color and pattern from Image 2
@@ -517,6 +541,8 @@ DO NOT change:
     prompt: {
       product_context: `This is a rug/carpet product (alfombra) — could be area rug, runner, or mat.
 Rugs have their OWN pattern/design that defines the product. The swatch IS the product design.`,
+
+      physical_description: `La alfombra es tela gruesa con pelo/trama visible, rigidez alta. Sin drapeado — se extiende plana sobre el piso. Los pliegues solo aparecen en los bordes si hay una esquina levantada o un pliegue causado por un objeto sobre la alfombra. El espesor es minimo (~1-3cm) pero la silueta es siempre plana y geometrica.`,
 
       what_to_change: `Change the rug/carpet visible in Image 1:
 * The ENTIRE RUG -> apply the exact design, color, and pattern from Image 2
@@ -562,6 +588,8 @@ Image 1 is ONLY a layout guide — the rug product comes entirely from Image 2.`
     prompt: {
       product_context: `This is a doormat/bathmat product (limpiapies/choapino) — a small mat placed at entrances or bathrooms.`,
 
+      physical_description: `El limpiapies es tela densa con fibras verticales (yute, coco, microfibra) y alta rigidez. Forma rectangular plana sobre el piso, sin drapeado. Espesor ~1-3cm uniforme. No tiene pliegues — su silueta es siempre rigida y geometrica, como una placa.`,
+
       what_to_change: `Change the doormat/bathmat visible in Image 1:
 * The MAT -> apply the color and pattern from Image 2
 
@@ -593,6 +621,8 @@ DO NOT change:
     preprocessing: { crop_swatch: true, flatten_hero: false },
     prompt: {
       product_context: `This is a curtain product (cortina) — window curtains or drapes.`,
+
+      physical_description: `La cortina es tela de peso medio colgada verticalmente desde el riel. Drape largo y pendular por gravedad, con pliegues verticales paralelos de arriba hacia abajo (cada ~15-25cm). Nunca pliegues horizontales ni angulosos. La caida es fluida, la tela se ve "estirada" verticalmente por el peso propio. Si esta recogida con tieback, se ven pliegues radiales desde el punto de atado.`,
 
       what_to_change: `Change ALL curtain textile surfaces visible in Image 1:
 * The CURTAINS/DRAPES -> apply the color and pattern from Image 2
@@ -633,6 +663,8 @@ DO NOT change:
       product_context: `This is a waterproof mattress protector (cubre colchon impermeable).
 It's a fitted cover that goes over the mattress for protection.`,
 
+      physical_description: `El cubre colchon es una funda ajustada por elasticos en los bordes, que se estira sobre el colchon. Silueta rectangular tensa, sin drapeado libre. La tela se adapta exactamente al volumen del colchon. Puede tener arrugas sutiles en la superficie superior si el elastico no la tensa completamente, pero nunca pliegues colgantes.`,
+
       what_to_change: `Change the mattress protector surface visible in Image 1:
 * The PROTECTOR COVER -> apply the color from Image 2
 
@@ -667,6 +699,8 @@ DO NOT change:
     prompt: {
       product_context: `This is a leather bag product (bolso de cuero).
 The product has leather surfaces with specific color and texture.`,
+
+      physical_description: `El bolso de cuero tiene rigidez estructural alta — mantiene su forma 3D por si mismo. Las panelas de cuero son planas a semi-curvas, sin drapeado. Los unicos pliegues visibles son en zonas flexibles: asas que cuelgan, solapas, pestañas. El grano del cuero es visible en primer plano. Las costuras estructurales marcan las aristas del bolso.`,
 
       what_to_change: `Change the leather surfaces visible in Image 1:
 * The BAG'S LEATHER -> apply the color and texture from Image 2
@@ -710,6 +744,8 @@ DO NOT change:
       product_context: `This is a mate bag (bolso matero) — a specialized bag for carrying a mate set (thermos, mate gourd, etc.).
 Made from leather or fabric with compartments for mate accessories.`,
 
+      physical_description: `El bolso matero tiene estructura rigida con compartimentos definidos para termo y mate. Forma tubular o rectangular, sostenida por el material (cuero o tela gruesa). Sin drapeado libre, sin pliegues suaves — los pliegues que aparecen son en asas, solapas y donde se abren los compartimentos.`,
+
       what_to_change: `Change the bag surfaces visible in Image 1:
 * The BAG'S MATERIAL (leather or fabric) -> apply the color and texture from Image 2
 
@@ -745,6 +781,8 @@ DO NOT change:
     preprocessing: { crop_swatch: false, flatten_hero: false },
     prompt: {
       product_context: `This is a textile product.`,
+
+      physical_description: `Preserva EXACTAMENTE la geometria 3D del producto como aparece en Imagen 1 — silueta, contorno, drapeado, pliegues, volumen, proporciones. Solo cambia la tela (color, patron, textura). No deformes, alargues, infles, aplastes ni reesculpas el producto.`,
 
       what_to_change: `Change ALL fabric/textile surfaces visible in Image 1, matching them to Image 2.
 
@@ -884,6 +922,12 @@ export function buildEditPrompt(
   patternsDiffer: boolean = false,
 ): string {
   const darkNote = isDarkSwatch ? ' No aclares la tela — debe ser igual de oscura que la Imagen 2.' : '';
+  // Physical anchor: describe the material's weight/drape/rigidity to keep
+  // Gemini from reshaping the silhouette while swapping the fabric. See
+  // audits/2026-04-14-audit-v2.md H3 and research 2026-04-14:223.
+  const physNote = strategy.prompt.physical_description
+    ? `\n\nGEOMETRÍA DEL PRODUCTO (preservar exactamente):\n${strategy.prompt.physical_description}`
+    : '';
   // When patterns differ, DISCARD any verifier qaFeedback — it usually says
   // "pattern doesn't match" which Gemini reads as "preserve the hero's pattern
   // (the model the verifier expected)", directly contradicting the REEMPLAZO
@@ -915,11 +959,11 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
     if (detailRule) {
       return `Genera la Imagen 1 (close-up de tela) con la tela de la Imagen 2.
 
-${detailRule}${darkNote}${qaNote}${replaceNote}
+${detailRule}${darkNote}${qaNote}${replaceNote}${physNote}
 
 Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
     }
-    return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}${replaceNote}
+    return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}${replaceNote}${physNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
@@ -956,7 +1000,7 @@ Imagen fotorrealista de ${resolution}.`;
   // Use shot-type-aware instructions if category has them
   const whatToChange = strategy.prompt.what_to_change;
 
-  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}${replaceNote}
+  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}${replaceNote}${physNote}
 
 Imagen 1 es la composición exacta: mantén personas, rostros, expresiones, manos, pelo, fondo, muebles, lámpara, objetos de mesa de noche, almohadas decorativas, iluminación, encuadre y foco idénticos. MISMA cantidad de almohadas, misma posición, mismo tamaño. Solo la tela del producto cambia. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
@@ -979,15 +1023,18 @@ export function buildReferencePrompt(
 ): string {
   const darkNote = isDarkSwatch ? ' La tela debe ser igual de oscura que la Imagen 2.' : '';
   const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
+  const physNote = strategy.prompt.physical_description
+    ? `\n\nGEOMETRÍA DEL PRODUCTO (preservar exactamente):\n${strategy.prompt.physical_description}`
+    : '';
 
   if (shotType === 'detail') {
-    return `Genera un close-up de textura IDÉNTICO a la Imagen 1 (misma composición, ángulo, pliegues) pero con el color y textura de la Imagen 2.${darkNote}${qaNote}
+    return `Genera un close-up de textura IDÉNTICO a la Imagen 1 (misma composición, ángulo, pliegues) pero con el color y textura de la Imagen 2.${darkNote}${qaNote}${physNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
 
   if (shotType === 'infografia') {
-    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil. Si hay texto en inglés, TRADÚCELO al español (ej: "No stitching" → "Sin costuras").${darkNote}${qaNote}
+    return `Genera la Imagen 1 con la tela de la Imagen 2. Mantén íconos, logos y layout exactamente igual. Solo cambia el color/patrón del textil. Si hay texto en inglés, TRADÚCELO al español (ej: "No stitching" → "Sin costuras").${darkNote}${qaNote}${physNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
@@ -995,7 +1042,7 @@ Imagen fotorrealista de ${resolution}.`;
   // Standard reference mode: composition from Image 1, fabric from Image 2
   return `Imagen 1 = composición (ángulo, escena, disposición). Imagen 2 = tela (color, patrón, textura).
 
-Genera la misma escena de la Imagen 1 pero con la tela de la Imagen 2 en el ${strategy.label} y fundas. NO conserves la textura original de la Imagen 1. Copia el color EXACTO de la Imagen 2.${darkNote}${qaNote}
+Genera la misma escena de la Imagen 1 pero con la tela de la Imagen 2 en el ${strategy.label} y fundas. NO conserves la textura original de la Imagen 1. Copia el color EXACTO de la Imagen 2.${darkNote}${qaNote}${physNote}
 
 Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
 }
@@ -1017,10 +1064,13 @@ export function buildFromScratchPrompt(
   const composition = getShotComposition(strategy, shotType);
   const darkNote = isDarkSwatch ? ' Tela oscura — no aclares.' : '';
   const qaNote = qaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${qaFeedback}"` : '';
+  const physNote = strategy.prompt.physical_description
+    ? `\n\nGEOMETRÍA DEL PRODUCTO (generar con esta fisicalidad exacta):\n${strategy.prompt.physical_description}`
+    : '';
 
   return `La imagen es una muestra de tela. Genera una foto e-commerce de ${strategy.label}: ${composition}
 
-El producto debe tener el mismo color, patrón y textura que la muestra.${darkNote}${qaNote}
+El producto debe tener el mismo color, patrón y textura que la muestra.${darkNote}${qaNote}${physNote}
 
 Texto en español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
 }

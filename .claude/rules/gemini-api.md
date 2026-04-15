@@ -4,12 +4,27 @@
 
 | Parametro | Valor | Env Var |
 |-----------|-------|---------|
-| Modelo | `gemini-3-pro-image-preview` | `GEMINI_MODEL` |
+| Modelo default (attempt 0) | `gemini-3.1-flash-image-preview` | `GEMINI_MODEL` |
+| Modelo escalada (retry + brand) | `gemini-3.1-pro-preview` | `GEMINI_MODEL_PRO` |
+| Modelo analisis (shot/stripe/pattern) | `gemini-2.0-flash` default, override a `gemini-2.5-flash` por caller | `GEMINI_ANALYSIS_MODEL` |
+| Modelo verifier (swatch fidelity) | `gemini-2.5-pro` | `GEMINI_VERIFY_MODEL` |
 | Endpoint | `https://generativelanguage.googleapis.com/v1beta/models` | `GEMINI_ENDPOINT` |
 | API Key | (secret) | `GEMINI_API_KEY` |
-| Temperatura | 0.2 | Hardcoded en client.ts |
-| Response Modalities | `['IMAGE', 'TEXT']` | Hardcoded |
-| Output Resolution | 1200x1200 | Especificado en prompt + post-process |
+| Temperatura | 0.2 (edit), 0.4 (reference) — ajustada por `getEffectiveTemperature()` | Hardcoded en `category-strategy.ts` |
+| Response Modalities | `['IMAGE', 'TEXT']` | Hardcoded en `gemini/client.ts` |
+| Output Resolution | 1200x1200 | Especificado en prompt + post-process con Sharp |
+
+### Por que Flash es el default y no Pro
+
+- **Costo**: Flash ~$0.045/img vs Pro ~$0.134/img (3x diferencia).
+- **Calidad**: Flash da textura de tela 4/5 vs Pro 5/5 (ranking Arena.ai, ver `research/2026-04-14-ai-image-pipelines-ecommerce-textile.md`). Para la mayoria de las categorias la diferencia no justifica el 3x.
+- **Escalada automatica**: el pipeline escala a Pro en estos casos:
+  1. Retry despues de fallar verifier 2.5 Pro (`process-next/route.ts` — `useProModel: true` en retries).
+  2. Flujo BRAND_ONLY (`results/[jobId]/route.ts` — el brand overlay con re-rendering usa Pro por mejor preservacion de texto y logos).
+  3. Cualquier job con `attempt >= proThreshold` (umbral por categoria en `category-strategy.ts`).
+- **Degradacion conocida de Flash**: "Nano Banana 2" tiene drift documentado despues de 3-4 ediciones iterativas. Por eso el retry escala a Pro en vez de reintentar con Flash.
+
+Regla: si tocas el default, actualiza ESTE archivo Y `CLAUDE.md` simultaneamente — los dos tienen que decir lo mismo.
 
 ## Request Format
 
@@ -49,8 +64,14 @@ data.candidates[0].content.parts[] ->
 
 ## Costos
 
-- **Estimado**: $0.045 USD por imagen generada
-- Formula: Gemini input tokens (~$0.015) + output image (~$0.025) + Claude orchestration (~$0.005)
+- **Flash (attempt 0 default)**: ~$0.045 USD/imagen. Formula: input tokens (~$0.015) + output image (~$0.025) + Claude orchestration (~$0.005).
+- **Pro (retry + brand)**: ~$0.134 USD/imagen. 3x mas caro por el re-rendering de mayor calidad.
+- **Verifier 2.5 Pro**: ~$0.08-0.10/verificacion (3 imagenes de input, respuesta JSON).
+- **Analisis (shot type, stripe axis, pattern compare)**: ~$0.002-0.005 cada uno, gemini-2.0-flash o 2.5-flash segun caller.
+- **Job tipico "happy path" (Flash + verifier pass + QA)**: ~$0.15.
+- **Job tipico con retries (Flash + verifier fail + Pro + verifier pass + QA)**: ~$0.40-0.50.
+- **Job con max retries (hasta 4 intentos Pro + verificaciones)**: hasta ~$1.00-1.20.
+- **Click de brand button**: ~$0.24 adicional (2 Pro attempts + bbox detection).
 
 ## Storage (Supabase)
 

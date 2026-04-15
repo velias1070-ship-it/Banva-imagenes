@@ -110,3 +110,15 @@ Para imagen principal:
 - Color space: RGB (NO CMYK)
 - Formato: JPG o PNG, max 2MB
 - Si la imagen tiene texto visible: DEBE estar en espanol (mercado Chile). Texto en ingles → FLAGGED
+
+## Politica hero real vs hero AI segun shot type
+
+MercadoLibre no prohibe imagenes AI-generadas pero requiere "representacion precisa del producto". Hay evidencia de mercado (ASOS 2024: 18% mas devoluciones en productos con modelos AI) de que el riesgo de desalineacion expectativa/realidad es mayor en la imagen principal que en secundarias.
+
+Regla practica para este pipeline:
+
+- **`main` shot (packshot fondo blanco)**: preferir hero basado en foto real del producto. El swatch ya entra como ancla de fidelidad, pero el hero deberia ser una foto real cuando sea posible, no arte AI conceptual. Si el hero es AI, el job va igual pero sube el riesgo de devolucion.
+- **`lifestyle` / `detail` / `doblada` / `flatlay`**: hero AI es aceptable. Estas son imagenes secundarias con rol evocativo, y el comprador tipicamente las interpreta como "ambientacion" no como "asi se ve el producto que me llega".
+- **`infografia`**: hero AI es aceptable cuando el layout comparativo es el mismo del original. La precision esta en las comparaciones, no en el producto base.
+
+No hay enforcement automatico de esta regla — es un criterio para cuando se decide que hero subir por proyecto. El pipeline procesa lo que reciba.

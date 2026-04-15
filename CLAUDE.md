@@ -7,8 +7,15 @@ Cada producto tiene 5-15 variantes de color. Este sistema genera fotos de las va
 ## Stack
 - **Framework**: Next.js 16.1.6 (App Router, TypeScript)
 - **Database + Storage**: Supabase (PostgreSQL + bucket "images")
-- **Image Generation**: Google Gemini API (`gemini-3-pro-image-preview`)
-- **Image Processing**: Sharp 0.34.5 (dark swatch detection)
+- **Image Generation**:
+  - Flash (default attempt 0): `gemini-3.1-flash-image-preview` — cheap, 4/5 textura, ~$0.045/img
+  - Pro (retry + BRAND_ONLY): `gemini-3.1-pro-preview` — 3x mas caro, 5/5 textura, ~$0.134/img
+  - Escalado automatico via `useProModel: true` en retries cuando el verifier rechaza
+- **Analysis models**:
+  - Default `gemini-2.0-flash` (swatch planner, pattern comparator, text bbox detection)
+  - Override a `gemini-2.5-flash` para tareas con razonamiento espacial (shot type detector + bed stripe axis classifier) — 2.0-flash falla consistentemente en esos casos
+  - Verifier: `gemini-2.5-pro` (3 imagenes, JSON structured response)
+- **Image Processing**: Sharp 0.34.5 (crop, tile, flatten, resize, composite, color analysis)
 - **Deployment**: Vercel (serverless, 60s timeout free tier)
 - **UI**: shadcn/ui + Tailwind CSS + Radix UI
 
