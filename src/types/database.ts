@@ -16,6 +16,27 @@ export interface Project {
   updated_at: string;
 }
 
+export type SkuStatus = 'active' | 'archived';
+
+export interface Sku {
+  id: string;
+  code: string;
+  name: string;
+  product_family: string | null;
+  category: string | null;
+  ml_listing_id: string | null;
+  status: SkuStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectSkuLink {
+  project_id: string;
+  sku_id: string;
+  created_at: string;
+}
+
 export interface HeroShot {
   id: string;
   project_id: string;

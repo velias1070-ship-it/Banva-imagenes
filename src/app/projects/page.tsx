@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { FolderPlus, ImageIcon } from 'lucide-react';
+import { FolderPlus, ImageIcon, Package } from 'lucide-react';
 import { createServerSupabase } from '@/lib/supabase/server';
 import type { Project } from '@/types/database';
 
@@ -23,14 +23,22 @@ export default async function ProjectsPage() {
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Proyectos</h1>
-          <p className="text-muted-foreground">Todos tus productos ({projectList.length})</p>
+          <p className="text-muted-foreground">Tandas de generación ({projectList.length})</p>
         </div>
-        <Link href="/projects/new">
-          <Button>
-            <FolderPlus className="mr-2 h-4 w-4" />
-            Nuevo Proyecto
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/skus">
+            <Button variant="outline">
+              <Package className="mr-2 h-4 w-4" />
+              Catálogo de SKUs
+            </Button>
+          </Link>
+          <Link href="/projects/new">
+            <Button>
+              <FolderPlus className="mr-2 h-4 w-4" />
+              Nuevo Proyecto
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {projectList.length === 0 ? (
