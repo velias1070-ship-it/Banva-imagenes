@@ -1087,6 +1087,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           heroBuffer.toString('base64'),
           swatch.name,
           swatchPatternDescription,
+          category,
         );
         if (verification) {
           promptMetadata.verification_score = verification.score;

@@ -1101,6 +1101,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           heroBase64,
           job.swatch.name,
           swatchPatternDescription,
+          category,
         );
         if (verification) {
           promptMetadata.verification_score = verification.score;

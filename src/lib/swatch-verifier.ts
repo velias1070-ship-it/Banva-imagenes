@@ -19,6 +19,15 @@ export interface VerificationResult {
   rawResponse?: string; // The full Gemini text response for audit
 }
 
+// H7 audit: categories where pattern scale is critical (tile_swatch=true in
+// strategy). For these, scale_correct = 0 becomes a hard blocker even if the
+// overall score is high — a miniaturized or oversized pattern on a pillowcase
+// or quilt body is a product defect even if colors and motifs match.
+// Research context: `research/2026-04-14-...:225` lists "problemas de escala de
+// patrones" as one of the 6 textile failure modes, and the density rule in
+// `category-strategy.ts` for quilts explicitly forbids scale mismatch.
+const SCALE_CRITICAL_CATEGORIES = new Set(['quilts', 'cubrecamas', 'plumones']);
+
 /**
  * Uses Gemini 2.5 Pro to verify that the generated image faithfully
  * reproduces the swatch pattern. Runs AFTER generation, BEFORE QA.
@@ -32,6 +41,7 @@ export async function verifySwatch(
   heroBase64: string,
   swatchName: string,
   patternDescription?: string | null,
+  category?: string | null,
 ): Promise<VerificationResult | null> {
   const prompt = `You are a quality inspector for textile product photography. Compare these 3 images:
 
@@ -88,8 +98,7 @@ Respond ONLY with valid JSON (no markdown, no backticks):
 
     const score = typeof parsed.overall_score === 'number' ? parsed.overall_score : 0.5;
     const issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-    const feedback = parsed.feedback || 'Unknown';
-    const pass = score >= 0.7 && parsed.pattern_match === 1 && parsed.no_invention === 1 && (parsed.orientation_correct === 1 || parsed.orientation_correct === undefined);
+    let feedback = parsed.feedback || 'Unknown';
 
     const checks = {
       pattern_match: Number(parsed.pattern_match ?? 0),
@@ -101,7 +110,31 @@ Respond ONLY with valid JSON (no markdown, no backticks):
       orientation_correct: Number(parsed.orientation_correct ?? 0),
     };
 
-    console.log(`[swatch-verifier] "${swatchName}": score=${score}, pass=${pass}, issues=${issues.length} | pattern=${checks.pattern_match} color=${checks.color_match} texture=${checks.texture_match} composition=${checks.composition_preserved} noInvention=${checks.no_invention} scale=${checks.scale_correct} orientation=${checks.orientation_correct}`);
+    // Base blockers: pattern + invention + orientation (orientation is critical
+    // for directional patterns; undefined means the verifier didn't opine).
+    const baseBlockersPass =
+      score >= 0.7 &&
+      parsed.pattern_match === 1 &&
+      parsed.no_invention === 1 &&
+      (parsed.orientation_correct === 1 || parsed.orientation_correct === undefined);
+
+    // H7: scale_correct is a hard blocker for tile-prone categories (quilts,
+    // cubrecamas, plumones) where pattern scale mismatch is a product defect.
+    // For other categories (towels, sheets, curtains), scale stays non-blocking
+    // since the strategy already scopes tile_swatch to bed-covers only.
+    const categoryKey = (category || '').toLowerCase();
+    const scaleBlocker = SCALE_CRITICAL_CATEGORIES.has(categoryKey) && checks.scale_correct === 0;
+    const pass = baseBlockersPass && !scaleBlocker;
+
+    if (scaleBlocker) {
+      const scaleIssue = `Pattern scale mismatch on ${categoryKey} — motifs are wrong size vs swatch`;
+      if (!issues.includes(scaleIssue)) issues.push(scaleIssue);
+      if (feedback === 'Faithful reproduction' || feedback === 'Faithful reproduction.') {
+        feedback = scaleIssue;
+      }
+    }
+
+    console.log(`[swatch-verifier] "${swatchName}" (${categoryKey || 'no-cat'}): score=${score}, pass=${pass}, scale_blocker=${scaleBlocker}, issues=${issues.length} | pattern=${checks.pattern_match} color=${checks.color_match} texture=${checks.texture_match} composition=${checks.composition_preserved} noInvention=${checks.no_invention} scale=${checks.scale_correct} orientation=${checks.orientation_correct}`);
 
     return { pass, score, issues, feedback, checks, rawResponse: result.textResponse };
   } catch (err) {
