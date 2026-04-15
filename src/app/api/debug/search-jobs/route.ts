@@ -8,6 +8,11 @@ export const maxDuration = 30;
  * fields. Used from the Claude Code chat to locate jobs without remembering
  * UUIDs when multiple projects exist.
  *
+ * Important: filters on joined tables (project name, swatch name, category)
+ * are pushed to SQL via Postgrest `!inner` + nested filter syntax. We do NOT
+ * post-filter in JS because the pre-fetch window (even generous) can skip the
+ * target rows entirely when the most-recent jobs belong to another project.
+ *
  * GET /api/debug/search-jobs
  *
  * Query params (all optional):
@@ -16,25 +21,25 @@ export const maxDuration = 30;
  *   category      — exact category string (quilts, sabanas, toallas, ...)
  *   status        — exact (pending, generating, qa_pending, approved, flagged, error)
  *   swatch_name   — ilike match on swatches.name (e.g. "canela")
- *   shot_type     — exact detected_shot_type (main, lifestyle, detail, doblada, infografia, flatlay)
+ *   shot_type     — exact detected_shot_type (main, lifestyle, detail, ...)
  *   brand_only    — boolean: only jobs in prompt_adjustment=BRAND_ONLY
  *   model         — ilike match on gemini_model_used (e.g. "pro", "flash")
- *   min_attempt   — integer, jobs with attempt >= N
- *   max_attempt   — integer, jobs with attempt <= N
+ *   min_attempt   — integer, attempt >= N
+ *   max_attempt   — integer, attempt <= N
  *   min_score     — float 0..1, qa_score >= N
  *   max_score     — float 0..1, qa_score <= N
  *   since         — ISO date, updated_at >= since
  *   until         — ISO date, updated_at <= until
- *   text          — free text: matches swatch name OR project name OR job id prefix
  *   limit         — max rows (default 25, max 200)
- *   order         — "updated_desc" (default) | "updated_asc" | "score_desc" | "score_asc" | "attempt_desc"
+ *   order         — updated_desc (default) | updated_asc | score_desc | score_asc |
+ *                    attempt_desc | created_desc
  *
- * Response:
- *   {
- *     total: number,          // rows returned (<= limit)
- *     filters: {...},          // the filters that were applied (for debugging)
- *     jobs: [ { ...slim job... } ]
- *   }
+ * Response: {
+ *   total, filters, order, limit,
+ *   jobs: [ { id, status, attempt, qa_score, gemini_model, prompt_adjustment,
+ *             shot_type, swatch, swatch_sku, category, project, project_id,
+ *             output_storage_path, qa_feedback, error, updated_at, debug_url } ]
+ * }
  */
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -43,45 +48,57 @@ export async function GET(request: NextRequest) {
 
   const limit = Math.min(Math.max(parseInt(qp.get('limit') || '25', 10), 1), 200);
   const order = qp.get('order') || 'updated_desc';
-
-  // Start from generation_jobs with joined metadata
-  let query = supabase
-    .from('generation_jobs')
-    .select(`
-      id,
-      batch_id,
-      status,
-      attempt,
-      qa_score,
-      gemini_model_used,
-      output_storage_path,
-      prompt_adjustment,
-      qa_feedback,
-      error_message,
-      updated_at,
-      created_at,
-      hero_shot:hero_shots(id, detected_shot_type, shot_type),
-      swatch:swatches(id, name, sku_suffix),
-      batch:generation_batches(project_id, project:projects(id, name, category))
-    `);
-
   const filters: Record<string, unknown> = {};
 
-  // Status
+  // Decide whether to use !inner on joined tables. We use !inner when a filter
+  // touches that table, so that Postgrest pushes the filter to the JOIN
+  // instead of post-filtering. Without !inner, nested .eq/.ilike become no-ops.
+  const hasProjectFilter =
+    qp.has('project_id') || qp.has('project_name') || qp.has('category');
+  const hasSwatchFilter = qp.has('swatch_name');
+  const hasHeroFilter = qp.has('shot_type');
+
+  const batchSelect = hasProjectFilter
+    ? 'batch:generation_batches!inner(project_id, project:projects!inner(id, name, category))'
+    : 'batch:generation_batches(project_id, project:projects(id, name, category))';
+  const swatchSelect = hasSwatchFilter
+    ? 'swatch:swatches!inner(id, name, sku_suffix)'
+    : 'swatch:swatches(id, name, sku_suffix)';
+  const heroSelect = hasHeroFilter
+    ? 'hero_shot:hero_shots!inner(id, detected_shot_type, shot_type)'
+    : 'hero_shot:hero_shots(id, detected_shot_type, shot_type)';
+
+  let query = supabase.from('generation_jobs').select(`
+    id,
+    batch_id,
+    status,
+    attempt,
+    qa_score,
+    gemini_model_used,
+    output_storage_path,
+    prompt_adjustment,
+    qa_feedback,
+    error_message,
+    updated_at,
+    created_at,
+    ${heroSelect},
+    ${swatchSelect},
+    ${batchSelect}
+  `);
+
+  // ── Filters on generation_jobs columns ──
   const status = qp.get('status');
   if (status) {
     query = query.eq('status', status);
     filters.status = status;
   }
 
-  // Model
   const model = qp.get('model');
   if (model) {
     query = query.ilike('gemini_model_used', `%${model}%`);
     filters.model = model;
   }
 
-  // Attempt range
   const minAttempt = qp.get('min_attempt');
   if (minAttempt) {
     query = query.gte('attempt', parseInt(minAttempt, 10));
@@ -93,7 +110,6 @@ export async function GET(request: NextRequest) {
     filters.max_attempt = parseInt(maxAttempt, 10);
   }
 
-  // Score range
   const minScore = qp.get('min_score');
   if (minScore) {
     query = query.gte('qa_score', parseFloat(minScore));
@@ -105,7 +121,6 @@ export async function GET(request: NextRequest) {
     filters.max_score = parseFloat(maxScore);
   }
 
-  // Date range
   const since = qp.get('since');
   if (since) {
     query = query.gte('updated_at', since);
@@ -117,14 +132,46 @@ export async function GET(request: NextRequest) {
     filters.until = until;
   }
 
-  // BRAND_ONLY filter
   const brandOnly = qp.get('brand_only');
   if (brandOnly === 'true' || brandOnly === '1') {
     query = query.eq('prompt_adjustment', 'BRAND_ONLY');
     filters.brand_only = true;
   }
 
-  // Order
+  // ── Filters on joined tables (require !inner above) ──
+  // Postgrest lets us filter on nested tables via dotted column names when
+  // the join is !inner. See https://postgrest.org/en/stable/references/api/resource_embedding.html#embedded-filters
+  const projectId = qp.get('project_id');
+  if (projectId) {
+    query = query.eq('batch.project_id', projectId);
+    filters.project_id = projectId;
+  }
+  const projectName = qp.get('project_name');
+  if (projectName) {
+    query = query.ilike('batch.project.name', `%${projectName}%`);
+    filters.project_name = projectName;
+  }
+  const category = qp.get('category');
+  if (category) {
+    query = query.eq('batch.project.category', category);
+    filters.category = category;
+  }
+  const swatchName = qp.get('swatch_name');
+  if (swatchName) {
+    query = query.ilike('swatch.name', `%${swatchName}%`);
+    filters.swatch_name = swatchName;
+  }
+  const shotType = qp.get('shot_type');
+  if (shotType) {
+    // Match either the stored shot_type or the auto-detected one
+    query = query.or(
+      `detected_shot_type.eq.${shotType},shot_type.eq.${shotType}`,
+      { foreignTable: 'hero_shot' },
+    );
+    filters.shot_type = shotType;
+  }
+
+  // ── Order ──
   const orderMap: Record<string, [string, boolean]> = {
     updated_desc: ['updated_at', false],
     updated_asc: ['updated_at', true],
@@ -136,8 +183,7 @@ export async function GET(request: NextRequest) {
   const [orderCol, ascending] = orderMap[order] || orderMap.updated_desc;
   query = query.order(orderCol, { ascending });
 
-  // Limit (we over-fetch because some filters apply post-join)
-  query = query.limit(limit * 2);
+  query = query.limit(limit);
 
   const { data, error } = await query;
   if (error) {
@@ -162,53 +208,26 @@ export async function GET(request: NextRequest) {
     batch: { project_id?: string; project?: { id?: string; name?: string; category?: string } } | null;
   };
 
-  // Post-join filters (things we couldn't express in a single .eq because of the nested joins)
-  const projectId = qp.get('project_id');
-  const projectName = qp.get('project_name');
-  const category = qp.get('category');
-  const swatchName = qp.get('swatch_name');
-  const shotType = qp.get('shot_type');
+  const jobs = (data || []) as unknown as JoinedJob[];
+
+  // ── Free-text "text" param: applied client-side over the already-filtered
+  // result. Matches swatch name, project name, or job id prefix (8 chars).
+  // This is intentional since text is fuzzy and the server-side filters above
+  // already scoped the result set.
   const text = qp.get('text');
-
-  let jobs = (data || []) as unknown as JoinedJob[];
-
-  if (projectId) {
-    jobs = jobs.filter(j => j.batch?.project_id === projectId);
-    filters.project_id = projectId;
-  }
-  if (projectName) {
-    const needle = projectName.toLowerCase();
-    jobs = jobs.filter(j => (j.batch?.project?.name || '').toLowerCase().includes(needle));
-    filters.project_name = projectName;
-  }
-  if (category) {
-    jobs = jobs.filter(j => j.batch?.project?.category === category);
-    filters.category = category;
-  }
-  if (swatchName) {
-    const needle = swatchName.toLowerCase();
-    jobs = jobs.filter(j => (j.swatch?.name || '').toLowerCase().includes(needle));
-    filters.swatch_name = swatchName;
-  }
-  if (shotType) {
-    jobs = jobs.filter(j => (j.hero_shot?.detected_shot_type || j.hero_shot?.shot_type) === shotType);
-    filters.shot_type = shotType;
-  }
+  let filtered = jobs;
   if (text) {
     const needle = text.toLowerCase();
-    jobs = jobs.filter(j => {
-      const swatch = (j.swatch?.name || '').toLowerCase();
+    filtered = jobs.filter(j => {
+      const swatchName = (j.swatch?.name || '').toLowerCase();
       const proj = (j.batch?.project?.name || '').toLowerCase();
       const id = j.id.toLowerCase();
-      return swatch.includes(needle) || proj.includes(needle) || id.startsWith(needle);
+      return swatchName.includes(needle) || proj.includes(needle) || id.startsWith(needle);
     });
     filters.text = text;
   }
 
-  // Trim to actual limit and flatten
-  jobs = jobs.slice(0, limit);
-
-  const flat = jobs.map(j => ({
+  const flat = filtered.map(j => ({
     id: j.id,
     status: j.status,
     attempt: j.attempt,
