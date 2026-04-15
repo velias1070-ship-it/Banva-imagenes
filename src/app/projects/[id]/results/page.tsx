@@ -993,6 +993,15 @@ export default function ResultsPage() {
     }
   }
 
+  function mlStatusDot(status: string): string {
+    switch (status) {
+      case 'active': return 'bg-green-500';
+      case 'paused': return 'bg-yellow-500';
+      case 'closed': return 'bg-red-500';
+      default: return 'bg-gray-400';
+    }
+  }
+
   // ── JobCard ──
   function JobCard({ job, swatchId }: { job: JobWithRelations; swatchId: string }) {
     const isPanelOpen = mlPanelOpen.has(swatchId);
@@ -1402,61 +1411,76 @@ export default function ResultsPage() {
         Volver al Proyecto
       </Link>
 
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-8 flex items-start justify-between gap-6">
         <div>
           <h1 className="text-2xl font-bold">Resultados</h1>
           <p className="text-muted-foreground">
             {allJobs.length} imagenes generadas &middot; {approvedCount} aprobadas
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            variant="outline"
-            onClick={handleImportCannon}
-            disabled={importingCannon}
-          >
-            {importingCannon ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-            {importingCannon ? 'Importando...' : 'Importar de Cannon'}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setReplicateOpen(true)}
-          >
-            <Copy className="mr-2 h-4 w-4" />
-            Replicar Publicacion
-          </Button>
-        {approvedCount > 0 && (
-          <>
-            <Button variant="outline" onClick={handleDownloadAll}>
-              <Download className="mr-2 h-4 w-4" />
-              ZIP ({approvedCount})
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          {/* Source actions */}
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleImportCannon}
+              disabled={importingCannon}
+            >
+              {importingCannon ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+              {importingCannon ? 'Importando...' : 'Importar de Cannon'}
             </Button>
             <Button
               variant="outline"
-              onClick={() => handlePublishToML(true, 'prepend')}
-              disabled={publishing}
+              size="sm"
+              onClick={() => setReplicateOpen(true)}
             >
-              {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-              Preview ML
+              <Copy className="mr-1.5 h-3.5 w-3.5" />
+              Replicar Publicacion
             </Button>
-            <Button
-              onClick={() => handlePublishToML(false, 'prepend')}
-              disabled={publishing}
-              title="Agrega las nuevas al inicio, mantiene las existentes despues"
-            >
-              {publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-              Publicar (nuevas primero)
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => handlePublishToML(false, 'append')}
-              disabled={publishing}
-              title="Mantiene las existentes, agrega las nuevas al final"
-            >
-              Agregar al final
-            </Button>
-          </>
-        )}
+            {approvedCount > 0 && (
+              <Button variant="outline" size="sm" onClick={handleDownloadAll}>
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                ZIP ({approvedCount})
+              </Button>
+            )}
+          </div>
+
+          {/* Publish actions */}
+          {approvedCount > 0 && (
+            <>
+              <div className="h-6 w-px bg-border" aria-hidden="true" />
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePublishToML(true, 'prepend')}
+                  disabled={publishing}
+                >
+                  {publishing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
+                  Preview ML
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => handlePublishToML(false, 'prepend')}
+                  disabled={publishing}
+                  title="Agrega las nuevas al inicio, mantiene las existentes despues"
+                >
+                  {publishing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
+                  Publicar (nuevas primero)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePublishToML(false, 'append')}
+                  disabled={publishing}
+                  title="Mantiene las existentes, agrega las nuevas al final"
+                >
+                  Agregar al final
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -1507,8 +1531,8 @@ export default function ResultsPage() {
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="all">Todas ({allJobs.length})</TabsTrigger>
-            <TabsTrigger value="ml_active" className="text-xs">ML Activas ({mlActiveCount})</TabsTrigger>
-            <TabsTrigger value="ml_paused" className="text-xs">ML Pausadas ({mlPausedCount})</TabsTrigger>
+            <TabsTrigger value="ml_active">ML Activas ({mlActiveCount})</TabsTrigger>
+            <TabsTrigger value="ml_paused">ML Pausadas ({mlPausedCount})</TabsTrigger>
             <TabsTrigger value="approved">Aprobadas ({approvedCount})</TabsTrigger>
             <TabsTrigger value="retry">Retry ({retryCount})</TabsTrigger>
             <TabsTrigger value="flagged">Flagged ({flaggedCount})</TabsTrigger>
@@ -1516,24 +1540,22 @@ export default function ResultsPage() {
             <TabsTrigger value="error">Errores ({errorCount})</TabsTrigger>
           </TabsList>
 
-          <div className="flex items-center gap-2">
-            {filteredGroups.length > 1 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs text-muted-foreground"
-                onClick={() => {
-                  if (collapsed.size === filteredGroups.length) {
-                    setCollapsedSwatches(new Set());
-                  } else {
-                    setCollapsedSwatches(new Set(filteredGroups.map((g) => g.swatch.id)));
-                  }
-                }}
-              >
-                {collapsed.size === filteredGroups.length ? 'Expandir todo' : 'Colapsar todo'}
-              </Button>
-            )}
-          </div>
+          {filteredGroups.length > 1 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => {
+                if (collapsed.size === filteredGroups.length) {
+                  setCollapsedSwatches(new Set());
+                } else {
+                  setCollapsedSwatches(new Set(filteredGroups.map((g) => g.swatch.id)));
+                }
+              }}
+            >
+              {collapsed.size === filteredGroups.length ? 'Expandir todo' : 'Colapsar todo'}
+            </Button>
+          )}
         </div>
 
         <TabsContent value={activeTab}>
@@ -1563,11 +1585,11 @@ export default function ResultsPage() {
                 return (
                   <div key={swatchId} className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''}`}>
                     {/* Section header */}
-                    <div className="flex items-center gap-4 px-4 py-3">
+                    <div className="flex items-center gap-3 px-4 py-3">
                       {/* Clickable area for collapse */}
                       <button
                         onClick={() => toggleSwatchCollapse(swatchId)}
-                        className="flex items-center gap-4 flex-1 min-w-0 hover:bg-muted/50 -mx-1 px-1 py-0.5 rounded transition-colors text-left"
+                        className="flex items-center gap-4 flex-1 min-w-0 hover:bg-muted/50 -mx-1 px-1 py-1 rounded-md transition-colors text-left"
                       >
                         {/* Swatch thumbnail */}
                         {group.swatch.storage_path ? (
@@ -1587,7 +1609,7 @@ export default function ResultsPage() {
                         {/* Swatch info */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-semibold text-sm leading-tight truncate">{group.swatch.name}</p>
+                            <p className="font-semibold text-base leading-tight truncate">{group.swatch.name}</p>
                             {group.swatch.sku_suffix && (
                               <Badge variant="outline" className="text-[10px] font-mono h-5 px-1.5">
                                 {group.swatch.sku_suffix}
@@ -1597,7 +1619,7 @@ export default function ResultsPage() {
                           {group.swatch.color_description && (
                             <p className="text-xs text-muted-foreground mt-0.5 truncate">{group.swatch.color_description}</p>
                           )}
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
                             <p className="text-xs text-muted-foreground">
                               {group.jobs.length} imagen{group.jobs.length !== 1 ? 'es' : ''}
                               {approvedInGroup > 0 && (
@@ -1605,14 +1627,11 @@ export default function ResultsPage() {
                               )}
                             </p>
                             {group.ml_listing && (
-                              <>
-                                <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
-                                  {group.ml_listing.item_id}
-                                </Badge>
-                                <Badge variant="secondary" className={`text-[10px] h-5 px-1.5 ${mlStatusColor(group.ml_listing.status)}`}>
-                                  {group.ml_listing.status}
-                                </Badge>
-                              </>
+                              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                                {group.ml_listing.item_id}
+                                <span className={`inline-block h-1.5 w-1.5 rounded-full ${mlStatusDot(group.ml_listing.status)}`} aria-hidden="true" />
+                                <span className="font-sans">{group.ml_listing.status}</span>
+                              </span>
                             )}
                           </div>
                         </div>
@@ -1639,45 +1658,43 @@ export default function ResultsPage() {
                         </div>
                       </button>
 
-                      {/* ML buttons (outside the collapse click area) */}
+                      {/* ML actions (icon-only with tooltip) */}
                       {group.ml_listing && (
-                        <div className="flex items-center gap-1 flex-shrink-0">
+                        <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
                           <Button
                             variant="ghost"
-                            size="sm"
-                            className="h-8 gap-1.5 text-xs text-muted-foreground"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground"
                             disabled={mlImporting.has(swatchId)}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleImportMlPictures(swatchId);
                             }}
-                            title="Importar fotos actuales de la publicación en ML"
+                            title="Traer de ML"
                           >
                             {mlImporting.has(swatchId) ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <Download className="h-3.5 w-3.5" />
+                              <Download className="h-4 w-4" />
                             )}
-                            <span className="hidden sm:inline">Traer de ML</span>
                           </Button>
                           {showPerSwatchCannon && (
                             <Button
                               variant="ghost"
-                              size="sm"
-                              className="h-8 gap-1.5 text-xs text-muted-foreground"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground"
                               disabled={importingCannonSwatch.has(swatchId)}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleImportCannonForSwatch(swatchId);
                               }}
-                              title="Importar fotos de Cannon para este SKU"
+                              title="Importar de Cannon"
                             >
                               {importingCannonSwatch.has(swatchId) ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
-                                <Download className="h-3.5 w-3.5" />
+                                <Palette className="h-4 w-4" />
                               )}
-                              <span className="hidden sm:inline">Cannon</span>
                             </Button>
                           )}
                           {group.ml_listing.permalink && (
@@ -1686,27 +1703,28 @@ export default function ResultsPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              title="Ver publicación en MercadoLibre"
+                              title="Abrir publicación en ML"
                             >
-                              <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-muted-foreground">
-                                <ExternalLink className="h-3.5 w-3.5" />
-                                <span className="hidden sm:inline">Publicación</span>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+                                <ExternalLink className="h-4 w-4" />
                               </Button>
                             </a>
                           )}
                           <Button
                             variant={isPanelOpen ? 'default' : 'ghost'}
-                            size="sm"
-                            className={`h-8 gap-1.5 text-xs ${isPanelOpen ? '' : 'text-muted-foreground'}`}
+                            size="icon"
+                            className={`h-8 w-8 relative ${isPanelOpen ? '' : 'text-muted-foreground'}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleMlPanel(swatchId);
                             }}
                             title={isPanelOpen ? 'Cerrar panel ML' : 'Abrir panel ML'}
                           >
-                            <Globe className="h-3.5 w-3.5" />
+                            <Globe className="h-4 w-4" />
                             {!isPanelOpen && mlPicCount > 0 && (
-                              <span>{mlPicCount}</span>
+                              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 text-center font-medium">
+                                {mlPicCount}
+                              </span>
                             )}
                           </Button>
                         </div>
