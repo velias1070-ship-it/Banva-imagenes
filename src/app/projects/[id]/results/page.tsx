@@ -24,6 +24,9 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
@@ -1661,42 +1664,53 @@ export default function ResultsPage() {
                       {/* ML actions (icon-only with tooltip) */}
                       {group.ml_listing && (
                         <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground"
-                            disabled={mlImporting.has(swatchId)}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleImportMlPictures(swatchId);
-                            }}
-                            title="Traer de ML"
-                          >
-                            {mlImporting.has(swatchId) ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Download className="h-4 w-4" />
-                            )}
-                          </Button>
-                          {showPerSwatchCannon && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground"
-                              disabled={importingCannonSwatch.has(swatchId)}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleImportCannonForSwatch(swatchId);
-                              }}
-                              title="Importar de Cannon"
-                            >
-                              {importingCannonSwatch.has(swatchId) ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Palette className="h-4 w-4" />
-                              )}
-                            </Button>
-                          )}
+                          {(() => {
+                            const isImportingMl = mlImporting.has(swatchId);
+                            const isImportingCannon = importingCannonSwatch.has(swatchId);
+                            const isImporting = isImportingMl || isImportingCannon;
+                            return (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground"
+                                    disabled={isImporting}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Importar fotos"
+                                  >
+                                    {isImporting ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Download className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align="end"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-xs"
+                                >
+                                  <DropdownMenuItem
+                                    onSelect={() => handleImportMlPictures(swatchId)}
+                                    disabled={isImportingMl}
+                                  >
+                                    <Globe className="h-3.5 w-3.5 mr-2" />
+                                    Desde MercadoLibre
+                                  </DropdownMenuItem>
+                                  {showPerSwatchCannon && (
+                                    <DropdownMenuItem
+                                      onSelect={() => handleImportCannonForSwatch(swatchId)}
+                                      disabled={isImportingCannon}
+                                    >
+                                      <Palette className="h-3.5 w-3.5 mr-2" />
+                                      Desde Cannon (por SKU)
+                                    </DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            );
+                          })()}
                           {group.ml_listing.permalink && (
                             <a
                               href={group.ml_listing.permalink}
