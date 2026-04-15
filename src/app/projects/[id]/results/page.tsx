@@ -101,6 +101,7 @@ export default function ResultsPage() {
     'f047dcc1-1c96-440c-99af-e7c0af622f89',
     '5252726f-7f69-48be-88eb-de895e138737',
     '4af255ae-39ba-4c7a-b425-f794ec65e4a7',
+    '1967331d-7d07-49af-92c6-7f77e5292b72', // sabanas 1.5 y 2.0 144h
   ]);
   const showPerSwatchCannon = PER_SWATCH_CANNON_PROJECTS.has(id);
   const [publishing, setPublishing] = useState(false);
