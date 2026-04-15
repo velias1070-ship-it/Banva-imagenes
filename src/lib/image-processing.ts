@@ -62,6 +62,113 @@ export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number
 }
 
 /**
+ * Convert RGB [0-255] to CIE LAB color space via XYZ (D65 illuminant).
+ * Used for perceptually meaningful color distance (Delta-E).
+ */
+function rgbToLab(r: number, g: number, b: number): { L: number; a: number; b: number } {
+  // sRGB to linear RGB (inverse gamma)
+  const toLinear = (v: number) => {
+    const vn = v / 255;
+    return vn > 0.04045 ? Math.pow((vn + 0.055) / 1.055, 2.4) : vn / 12.92;
+  };
+  const rn = toLinear(r);
+  const gn = toLinear(g);
+  const bn = toLinear(b);
+
+  // Linear RGB to XYZ (D65)
+  const X = (rn * 0.4124 + gn * 0.3576 + bn * 0.1805) * 100;
+  const Y = (rn * 0.2126 + gn * 0.7152 + bn * 0.0722) * 100;
+  const Z = (rn * 0.0193 + gn * 0.1192 + bn * 0.9505) * 100;
+
+  // Normalize to D65 white point
+  const xn = X / 95.047;
+  const yn = Y / 100.0;
+  const zn = Z / 108.883;
+
+  // XYZ to LAB
+  const f = (t: number) => (t > 0.008856 ? Math.pow(t, 1 / 3) : 7.787 * t + 16 / 116);
+  const fx = f(xn);
+  const fy = f(yn);
+  const fz = f(zn);
+
+  return {
+    L: 116 * fy - 16,
+    a: 500 * (fx - fy),
+    b: 200 * (fy - fz),
+  };
+}
+
+/**
+ * Delta-E CIE76 — perceptual color distance between two LAB colors.
+ * Interpretation scale:
+ *   ΔE < 1     — imperceptible
+ *   1 to 2     — just perceptible (expert eye)
+ *   2 to 10    — perceptible at a glance
+ *   10 to 25   — clear difference
+ *   25 to 50   — obvious shift
+ *   > 50       — colors more different than similar
+ *
+ * Textile threshold for BANVA: > 25 blocks the output and triggers retry,
+ * since the research (`research/2026-04-14-...:163`) marks Delta-E as
+ * "crítico para textiles" and at >25 the color is visibly wrong even to
+ * non-expert eyes on a retail listing.
+ */
+function deltaECIE76(
+  lab1: { L: number; a: number; b: number },
+  lab2: { L: number; a: number; b: number },
+): number {
+  const dL = lab1.L - lab2.L;
+  const da = lab1.a - lab2.a;
+  const db = lab1.b - lab2.b;
+  return Math.sqrt(dL * dL + da * da + db * db);
+}
+
+/**
+ * Compute perceptual color distance (Delta-E LAB) between the swatch and
+ * the generated output, using each image's dominant color. This catches
+ * color drift BEFORE the expensive VLM verifier call.
+ *
+ * For the output image, samples only a center region (where the product
+ * typically lives) to reduce the influence of hero background pixels that
+ * would pollute the mean. The swatch buffer is assumed to already be
+ * cropped to fabric (i.e., the output of `cropSwatchToFabric` or similar).
+ *
+ * Returns a Promise<{ deltaE: number; swatchRgb, outputRgb }> for logging.
+ */
+export async function computeSwatchOutputDeltaE(
+  swatchCroppedBuffer: Buffer,
+  outputBuffer: Buffer,
+): Promise<{ deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number } }> {
+  // Center crop the output (60% of width, 50% of height, offset downward
+  // to skip sky/ceiling). This isolates the product region from the scene.
+  const outMeta = await sharp(outputBuffer).metadata();
+  const ow = outMeta.width || 1200;
+  const oh = outMeta.height || 1200;
+  const insetX = Math.round(ow * 0.2);
+  const insetY = Math.round(oh * 0.3);
+  const insetW = Math.max(100, Math.round(ow * 0.6));
+  const insetH = Math.max(100, Math.round(oh * 0.5));
+  const outputCentered = await sharp(outputBuffer)
+    .extract({ left: insetX, top: insetY, width: insetW, height: insetH })
+    .png()
+    .toBuffer();
+
+  // Use getDominantColor (saturation-aware) on both sides. It filters out
+  // near-white / near-black / grey pixels and averages the "colorful" ones,
+  // which matches what a human eye would anchor on for color fidelity.
+  const [swatchRgb, outputRgb] = await Promise.all([
+    getDominantColor(swatchCroppedBuffer),
+    getDominantColor(outputCentered),
+  ]);
+
+  const lab1 = rgbToLab(swatchRgb.r, swatchRgb.g, swatchRgb.b);
+  const lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
+  const deltaE = deltaECIE76(lab1, lab2);
+
+  return { deltaE, swatchRgb, outputRgb };
+}
+
+/**
  * Parse a hex color string (#RRGGBB) to RGB.
  */
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage, type GeminiGenerateResult } from '@/lib/gemini/client';
-import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -1043,6 +1043,51 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       logPipelineEvent(job.id, 'VERIFICATION', 'skipped (infografia color-only edit)');
     }
     let verificationRaw: Record<string, unknown> | null = null;
+    // Delta-E short-circuit: before hitting the expensive VLM verifier
+    // (~$0.10/call), compute a numeric perceptual color distance between
+    // the cropped swatch and the generated output's product region. If the
+    // distance is > DELTA_E_REJECT_THRESHOLD, the color is visibly wrong
+    // and we skip the VLM entirely, saving the call + triggering retry with
+    // targeted feedback. Research: research/2026-04-14-...:163 — Delta-E is
+    // "crítico para textiles" in e-commerce QA pipelines.
+    const DELTA_E_LOG_ONLY = false; // set true during calibration period
+    const DELTA_E_REJECT_THRESHOLD = 25; // LAB CIE76; calibrated conservatively
+    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number } } | null = null;
+    if (!isBrandOnly && !isMultiPass && !isInfografia) {
+      try {
+        const swatchBufForDrift = Buffer.from(swatchBase64ForVerification, 'base64');
+        deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer);
+        logPipelineEvent(job.id, 'COLOR_DELTA_E', deltaEResult.deltaE.toFixed(1), {
+          swatch_rgb: deltaEResult.swatchRgb,
+          output_rgb: deltaEResult.outputRgb,
+        });
+      } catch (driftErr) {
+        console.error('[process-next] Delta-E computation failed (non-blocking):', driftErr);
+      }
+    }
+    // Early-reject on color drift (before paying for VLM verifier)
+    if (!DELTA_E_LOG_ONLY && deltaEResult && deltaEResult.deltaE > DELTA_E_REJECT_THRESHOLD && job.attempt < 4) {
+      const dE = deltaEResult.deltaE.toFixed(1);
+      const debugPath = `projects/${project.id}/generated/_debug/${job.id}_attempt${job.attempt}_color_drift.png`;
+      try {
+        await supabase.storage.from('images').upload(debugPath, imageBuffer, {
+          contentType: result.imageMimeType || 'image/png',
+          upsert: true,
+        });
+      } catch {}
+      const feedback = `Color drift detected: Delta-E=${dE} vs swatch (threshold ${DELTA_E_REJECT_THRESHOLD}). The fabric color in the output does not match the swatch. Apply the EXACT color of Image 2 — same hue, same saturation, same lightness.`;
+      logPipelineEvent(job.id, 'VERIFICATION', 'COLOR_DRIFT_REJECT', { delta_e: deltaEResult.deltaE });
+      logPipelineEvent(job.id, 'VERIFICATION_RETRY', feedback, { new_attempt: job.attempt + 1 });
+      console.log(`[process-next] ⚠ Color drift REJECT ${job.swatch.name} (ΔE=${dE})`);
+      await supabase.from('generation_jobs').update({
+        status: 'pending',
+        attempt: job.attempt + 1,
+        qa_feedback: `[Delta-E ${dE}] ${feedback}`,
+        prompt_metadata: { ...promptMetadata, color_delta_e: deltaEResult.deltaE },
+        updated_at: new Date().toISOString(),
+      }).eq('id', job.id);
+      return { chain: true, triggerQA: false };
+    }
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const verifyStart = Date.now();
@@ -1061,6 +1106,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptMetadata.verification_score = verification.score;
           promptMetadata.verification_pass = verification.pass;
           promptMetadata.verification_issues = verification.issues;
+          if (deltaEResult) promptMetadata.color_delta_e = deltaEResult.deltaE;
           verificationRaw = {
             score: verification.score,
             pass: verification.pass,
@@ -1071,6 +1117,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             pattern_description: swatchPatternDescription,
             duration_ms: Date.now() - verifyStart,
             attempt: job.attempt,
+            delta_e: deltaEResult?.deltaE ?? null,
+            delta_e_swatch_rgb: deltaEResult?.swatchRgb ?? null,
+            delta_e_output_rgb: deltaEResult?.outputRgb ?? null,
           };
           if (!verification.pass && job.attempt < 4) {
             // BLOCK: verification failed, auto-retry with specific feedback.
