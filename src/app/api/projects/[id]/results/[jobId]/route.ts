@@ -1154,6 +1154,21 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     logPipelineEvent(jobId, 'UPLOAD', outputPath);
 
+    // If this regen is not brand-only, the new output invalidates the
+    // existing pre-brand backup. Leaving that backup on disk causes the
+    // next Brand click to load the stale version and overwrite the new
+    // swatch result with an old fabric (repro: job 64c4c9d1).
+    if (!isBrandOnly) {
+      const preBrandPath = `projects/${projectId}/generated/${jobId}_pre_brand.png`;
+      try {
+        await supabase.storage.from('images').remove([preBrandPath]);
+        logPipelineEvent(jobId, 'PRE_BRAND_INVALIDATED', 'nuevo output reemplaza backup');
+      } catch {
+        // No-op: remove on a non-existent file is not an error for Supabase,
+        // but swallow just in case the storage driver surfaces one.
+      }
+    }
+
     // BRAND_ONLY: auto-approve (skip QA). Regular: send to QA.
     const finalStatus = isBrandOnly ? 'approved' : 'qa_pending';
 
