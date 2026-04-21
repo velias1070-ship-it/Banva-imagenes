@@ -269,27 +269,41 @@ export async function computeSwatchOutputDeltaE(
   let lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
   let deltaE = deltaECIE76(lab1, lab2);
 
-  // VLM verify: if pixel-sampled output yields a rejection-level deltaE, the
-  // centered crop may have sampled text overlays, dimensions arrows, packaging
-  // labels, windows or other scene elements that don't represent the fabric.
-  // Call VLM on the full output to extract the real fabric color, re-compute.
-  // See jobs d6e7bd6f/e8995cfa/13fb9aff et al. from 2026-04-21: correctly
-  // generated outputs rejected because crop picked dimension arrows or
-  // packaging white. Cost: ~$0.002 only when pixel says reject.
+  // VLM verify on BOTH sides when pixel sampling yields rejection-level deltaE.
+  // Contamination can happen in both directions:
+  //   - Output: text overlays, dimensions arrows, packaging labels, windows,
+  //     plants, furniture sampled instead of fabric.
+  //   - Swatch: lifestyle shots with wood headboards, patterned bedding,
+  //     rugs-on-floors — pixel samples a non-fabric element.
+  // The near-white heuristic above only catches white-background contamination;
+  // for dark/colored contamination (Lady sabana: pixel=(100,92,83) from wood
+  // headboard while real fabric is pink), we fall back to VLM here.
+  // Cost: ~$0.002-0.004 only on jobs that pixel says should be rejected.
   const rejectThreshold = opts?.rejectThreshold ?? 25;
   if (deltaE > rejectThreshold) {
+    const mod = await import('@/lib/swatch-color-agent');
+    // Output VLM (almost always helps — generated scenes are cluttered)
     try {
-      const mod = await import('@/lib/swatch-color-agent');
-      const vlm = await mod.extractSwatchBaseColorVLM(outputBuffer, 'image/png');
-      if (vlm) {
-        outputRgb = { r: vlm.r, g: vlm.g, b: vlm.b };
+      const vlmOut = await mod.extractSwatchBaseColorVLM(outputBuffer, 'image/png');
+      if (vlmOut) {
+        outputRgb = { r: vlmOut.r, g: vlmOut.g, b: vlmOut.b };
         outputSource = 'vlm';
-        lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
-        deltaE = deltaECIE76(lab1, lab2);
       }
-    } catch {
-      // VLM failed — keep pixel result (original reject stands)
+    } catch { /* ignore */ }
+    // Swatch VLM if still not from cache/vlm (pixel was used and may be wrong)
+    if (swatchSource === 'pixel' && opts?.swatchOriginalBuffer) {
+      try {
+        const vlmSw = await mod.extractSwatchBaseColorVLM(opts.swatchOriginalBuffer, opts.swatchOriginalMime || 'image/jpeg');
+        if (vlmSw) {
+          swatchRgb = { r: vlmSw.r, g: vlmSw.g, b: vlmSw.b };
+          swatchSource = 'vlm';
+        }
+      } catch { /* ignore */ }
     }
+    // Recompute with whichever improved values we got
+    lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
+    const lab1b = rgbToLab(swatchRgb.r, swatchRgb.g, swatchRgb.b);
+    deltaE = deltaECIE76(lab1b, lab2);
   }
 
   return { deltaE, swatchRgb, outputRgb, swatchSource, outputSource };
