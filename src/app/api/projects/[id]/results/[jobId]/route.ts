@@ -187,6 +187,7 @@ async function regenerateJob(
 
     const heroBuffer = Buffer.from(await heroRes.data.arrayBuffer());
     const swatchBuffer = Buffer.from(await swatchRes.data.arrayBuffer());
+    const originalSwatchBuffer = Buffer.from(swatchBuffer); // copy for Delta-E VLM fallback
 
     // Pre-check: does the HERO source already have the brand baked in?
     // We check the hero (not the result) because:
@@ -1043,15 +1044,25 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // See src/lib/image-processing.ts computeSwatchOutputDeltaE for math
     // and the process-next route for the full rationale.
     const DELTA_E_REJECT_THRESHOLD = 25;
-    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number } } | null = null;
+    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache' } | null = null;
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const swatchBufForDrift = Buffer.from(swatchBase64ForVerification, 'base64');
-        deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer);
+        deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer, {
+          swatchOriginalBuffer: originalSwatchBuffer,
+          swatchOriginalMime: (swatch.mime_type as string) || 'image/jpeg',
+          cachedSwatchHex: (swatch.dominant_color_hex as string) || null,
+        });
         logPipelineEvent(jobId, 'COLOR_DELTA_E', deltaEResult.deltaE.toFixed(1), {
           swatch_rgb: deltaEResult.swatchRgb,
           output_rgb: deltaEResult.outputRgb,
+          swatch_source: deltaEResult.swatchSource,
         });
+        if (deltaEResult.swatchSource === 'vlm' && swatch.id) {
+          const hex = `#${deltaEResult.swatchRgb.r.toString(16).padStart(2, '0')}${deltaEResult.swatchRgb.g.toString(16).padStart(2, '0')}${deltaEResult.swatchRgb.b.toString(16).padStart(2, '0')}`.toUpperCase();
+          Promise.resolve(supabase.from('swatches').update({ dominant_color_hex: hex }).eq('id', swatch.id))
+            .catch((err: unknown) => console.error('[regenerateJob] Failed to cache VLM swatch hex:', err));
+        }
       } catch (driftErr) {
         console.error('[regenerateJob] Delta-E computation failed (non-blocking):', driftErr);
       }

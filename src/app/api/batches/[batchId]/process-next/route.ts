@@ -1052,15 +1052,26 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // "crítico para textiles" in e-commerce QA pipelines.
     const DELTA_E_LOG_ONLY = false; // set true during calibration period
     const DELTA_E_REJECT_THRESHOLD = 25; // LAB CIE76; calibrated conservatively
-    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number } } | null = null;
+    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache' } | null = null;
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const swatchBufForDrift = Buffer.from(swatchBase64ForVerification, 'base64');
-        deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer);
+        deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer, {
+          swatchOriginalBuffer: originalSwatchBuffer,
+          swatchOriginalMime: job.swatch.mime_type || 'image/jpeg',
+          cachedSwatchHex: job.swatch.dominant_color_hex || null,
+        });
         logPipelineEvent(job.id, 'COLOR_DELTA_E', deltaEResult.deltaE.toFixed(1), {
           swatch_rgb: deltaEResult.swatchRgb,
           output_rgb: deltaEResult.outputRgb,
+          swatch_source: deltaEResult.swatchSource,
         });
+        // Cache VLM result for future jobs with this swatch
+        if (deltaEResult.swatchSource === 'vlm' && job.swatch.id) {
+          const hex = `#${deltaEResult.swatchRgb.r.toString(16).padStart(2, '0')}${deltaEResult.swatchRgb.g.toString(16).padStart(2, '0')}${deltaEResult.swatchRgb.b.toString(16).padStart(2, '0')}`.toUpperCase();
+          Promise.resolve(supabase.from('swatches').update({ dominant_color_hex: hex }).eq('id', job.swatch.id))
+            .catch((err: unknown) => console.error('[process-next] Failed to cache VLM swatch hex:', err));
+        }
       } catch (driftErr) {
         console.error('[process-next] Delta-E computation failed (non-blocking):', driftErr);
       }

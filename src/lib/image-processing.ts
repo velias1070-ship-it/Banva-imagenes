@@ -209,7 +209,8 @@ function deltaECIE76(
 export async function computeSwatchOutputDeltaE(
   swatchCroppedBuffer: Buffer,
   outputBuffer: Buffer,
-): Promise<{ deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number } }> {
+  opts?: { swatchOriginalBuffer?: Buffer; swatchOriginalMime?: string; cachedSwatchHex?: string | null },
+): Promise<{ deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache' }> {
   // Center crop the output (60% of width, 50% of height, offset downward
   // to skip sky/ceiling). This isolates the product region from the scene.
   const outMeta = await sharp(outputBuffer).metadata();
@@ -224,23 +225,50 @@ export async function computeSwatchOutputDeltaE(
     .png()
     .toBuffer();
 
-  // Use getProductBaseColor (histogram largest-bin) on both sides. It returns
-  // the color of the largest cluster — for a flat sheet the sheet color, for
-  // a patterned sheet the base. The previous saturation-filter approach
-  // returned the pattern color for any white-base swatch and caused false
-  // Delta-E rejects across the entire Cannon 144h line (see audit
-  // 2026-04-15 job 1017bdb7). `getDominantColor` is kept for other callers
-  // that actually want the accent/pattern color.
-  const [swatchRgb, outputRgb] = await Promise.all([
-    getProductBaseColor(swatchCroppedBuffer),
-    getProductBaseColor(outputCentered),
-  ]);
+  // Swatch color: prefer cached VLM hex → pixel algo → VLM fallback if pixel
+  // returns near-white (indicates lifestyle shot where crop sampled background
+  // walls/window instead of fabric). See jobs e377b96a/77ef02f8/0ec11ee3/13fb9aff
+  // from 2026-04-21: Moka curtains swatch samples #F1F2EC (studio wall white)
+  // causing false Delta-E rejects of correctly-generated taupe outputs.
+  let swatchRgb: { r: number; g: number; b: number };
+  let swatchSource: 'pixel' | 'vlm' | 'cache' = 'pixel';
+
+  if (opts?.cachedSwatchHex) {
+    const cached = hexToRgb(opts.cachedSwatchHex);
+    if (cached) {
+      swatchRgb = cached;
+      swatchSource = 'cache';
+    } else {
+      swatchRgb = await getProductBaseColor(swatchCroppedBuffer);
+    }
+  } else {
+    swatchRgb = await getProductBaseColor(swatchCroppedBuffer);
+  }
+
+  // Near-white fallback: if pixel algo yields pure-white (all channels > 235),
+  // it likely sampled a studio wall, not fabric. Real white textiles register
+  // ~210-225 due to texture/folds. Retry with VLM on the ORIGINAL (uncropped)
+  // swatch so it can read the full scene and isolate the product.
+  if (swatchSource !== 'cache' && swatchRgb.r > 235 && swatchRgb.g > 235 && swatchRgb.b > 235 && opts?.swatchOriginalBuffer) {
+    try {
+      const mod = await import('@/lib/swatch-color-agent');
+      const vlm = await mod.extractSwatchBaseColorVLM(opts.swatchOriginalBuffer, opts.swatchOriginalMime || 'image/jpeg');
+      if (vlm) {
+        swatchRgb = { r: vlm.r, g: vlm.g, b: vlm.b };
+        swatchSource = 'vlm';
+      }
+    } catch {
+      // VLM failed (rate limit, parse error, etc.) — keep pixel result
+    }
+  }
+
+  const outputRgb = await getProductBaseColor(outputCentered);
 
   const lab1 = rgbToLab(swatchRgb.r, swatchRgb.g, swatchRgb.b);
   const lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
   const deltaE = deltaECIE76(lab1, lab2);
 
-  return { deltaE, swatchRgb, outputRgb };
+  return { deltaE, swatchRgb, outputRgb, swatchSource };
 }
 
 /**
