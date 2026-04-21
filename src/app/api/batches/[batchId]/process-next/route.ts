@@ -961,7 +961,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // just 1 failed attempt because Flash consistently produces coarser
     // weave than the reference, triggering verifier rejects. Other categories
     // retry with Flash once before escalating.
-    const proThreshold = (category === 'quilts' || category === 'cortinas') ? 1 : 2;
+    const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras') ? 1 : 2;
     const useProModel = job.attempt >= proThreshold;
 
     logPipelineEvent(job.id, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {

@@ -936,7 +936,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // Generate — escalate to Pro model. Quilts + cortinas escalate earlier
     // (Flash can't reproduce fine/smooth weave — verifier rejects coarse output).
-    const proThreshold = (category === 'quilts' || category === 'cortinas') ? 1 : 2;
+    const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras') ? 1 : 2;
     const useProModel = attempt >= proThreshold;
 
     logPipelineEvent(jobId, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {
