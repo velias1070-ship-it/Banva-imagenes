@@ -956,9 +956,12 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       .eq('id', job.id);
 
     // ── Generate image based on mode ──
-    // Escalate to Pro model for retries. Quilts escalate after just 1 failed attempt
-    // because Flash consistently fails with fine textures (waffle weave, pique, etc.)
-    const proThreshold = category === 'quilts' ? 1 : 2;
+    // Escalate to Pro model for retries. Categories with fine/smooth weave
+    // (quilts with waffle/pique; cortinas with lino/sarga) escalate after
+    // just 1 failed attempt because Flash consistently produces coarser
+    // weave than the reference, triggering verifier rejects. Other categories
+    // retry with Flash once before escalating.
+    const proThreshold = (category === 'quilts' || category === 'cortinas') ? 1 : 2;
     const useProModel = job.attempt >= proThreshold;
 
     logPipelineEvent(job.id, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {

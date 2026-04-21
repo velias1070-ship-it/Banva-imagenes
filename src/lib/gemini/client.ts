@@ -243,6 +243,10 @@ export interface GeminiAnalysisRequest {
   promptText: string;
   temperature?: number;
   modelOverride?: string;
+  /** Override default MAX_RETRIES (3) for this call. Use for optional
+   * enrichment analyses (swatch-planner, etc.) that should fail fast
+   * instead of burning the handler's 60s Vercel budget on backoff waits. */
+  maxRetries?: number;
 }
 
 export interface GeminiAnalysisResult {
@@ -256,6 +260,7 @@ export interface GeminiAnalysisResult {
 
 export async function analyzeImages(request: GeminiAnalysisRequest): Promise<GeminiAnalysisResult> {
   const modelName = request.modelOverride || GEMINI_ANALYSIS_MODEL;
+  const maxRetries = request.maxRetries ?? MAX_RETRIES;
   const url = `${GEMINI_ENDPOINT}/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
   const start = Date.now();
 
@@ -280,7 +285,7 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
     },
   };
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -296,9 +301,9 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
         try { errorData = JSON.parse(rawErrorBody); } catch {}
         const errorMsg = (errorData as { error?: { message?: string } })?.error?.message || `HTTP ${response.status}`;
 
-        if (isRateLimitError(errorMsg) && attempt < MAX_RETRIES) {
+        if (isRateLimitError(errorMsg) && attempt < maxRetries) {
           const delay = getRetryDelay(errorMsg, attempt);
-          console.log(`[gemini-analysis] Rate limited (attempt ${attempt + 1}/${MAX_RETRIES}), waiting ${delay}ms...`);
+          console.log(`[gemini-analysis] Rate limited (attempt ${attempt + 1}/${maxRetries}), waiting ${delay}ms...`);
           await sleep(delay);
           continue;
         }
@@ -345,9 +350,9 @@ export async function analyzeImages(request: GeminiAnalysisRequest): Promise<Gem
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
 
-      if (attempt < MAX_RETRIES) {
+      if (attempt < maxRetries) {
         const delay = getRetryDelay(errorMsg, attempt);
-        console.log(`[gemini-analysis] Error (attempt ${attempt + 1}/${MAX_RETRIES}): ${errorMsg}, retrying in ${delay}ms...`);
+        console.log(`[gemini-analysis] Error (attempt ${attempt + 1}/${maxRetries}): ${errorMsg}, retrying in ${delay}ms...`);
         await sleep(delay);
         continue;
       }

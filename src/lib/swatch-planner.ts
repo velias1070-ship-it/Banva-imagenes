@@ -28,9 +28,15 @@ Be EXTREMELY specific — this description will be used to reproduce the pattern
 Respond in a single paragraph, no bullet points. Start with the most important visual characteristic.`;
 
   try {
+    // Use gemini-2.5-flash (separate quota from 2.0-flash, which was saturating
+    // and causing 3×backoff retries that killed the Vercel 60s budget — see
+    // jobs e377b96a et al. from 2026-04-21). Swatch pattern analysis is
+    // optional enrichment; the pipeline runs fine without it.
     const result = await analyzeImages({
       images: [{ base64: swatchBase64, mimeType: swatchMimeType }],
       promptText: prompt,
+      modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1, // fail fast — swatch-planner is optional enrichment
     });
 
     if (result.success && result.textResponse) {
