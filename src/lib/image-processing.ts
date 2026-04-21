@@ -209,8 +209,8 @@ function deltaECIE76(
 export async function computeSwatchOutputDeltaE(
   swatchCroppedBuffer: Buffer,
   outputBuffer: Buffer,
-  opts?: { swatchOriginalBuffer?: Buffer; swatchOriginalMime?: string; cachedSwatchHex?: string | null },
-): Promise<{ deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache' }> {
+  opts?: { swatchOriginalBuffer?: Buffer; swatchOriginalMime?: string; cachedSwatchHex?: string | null; rejectThreshold?: number },
+): Promise<{ deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache'; outputSource: 'pixel' | 'vlm' }> {
   // Center crop the output (60% of width, 50% of height, offset downward
   // to skip sky/ceiling). This isolates the product region from the scene.
   const outMeta = await sharp(outputBuffer).metadata();
@@ -262,13 +262,37 @@ export async function computeSwatchOutputDeltaE(
     }
   }
 
-  const outputRgb = await getProductBaseColor(outputCentered);
+  let outputRgb = await getProductBaseColor(outputCentered);
+  let outputSource: 'pixel' | 'vlm' = 'pixel';
 
   const lab1 = rgbToLab(swatchRgb.r, swatchRgb.g, swatchRgb.b);
-  const lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
-  const deltaE = deltaECIE76(lab1, lab2);
+  let lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
+  let deltaE = deltaECIE76(lab1, lab2);
 
-  return { deltaE, swatchRgb, outputRgb, swatchSource };
+  // VLM verify: if pixel-sampled output yields a rejection-level deltaE, the
+  // centered crop may have sampled text overlays, dimensions arrows, packaging
+  // labels, windows or other scene elements that don't represent the fabric.
+  // Call VLM on the full output to extract the real fabric color, re-compute.
+  // See jobs d6e7bd6f/e8995cfa/13fb9aff et al. from 2026-04-21: correctly
+  // generated outputs rejected because crop picked dimension arrows or
+  // packaging white. Cost: ~$0.002 only when pixel says reject.
+  const rejectThreshold = opts?.rejectThreshold ?? 25;
+  if (deltaE > rejectThreshold) {
+    try {
+      const mod = await import('@/lib/swatch-color-agent');
+      const vlm = await mod.extractSwatchBaseColorVLM(outputBuffer, 'image/png');
+      if (vlm) {
+        outputRgb = { r: vlm.r, g: vlm.g, b: vlm.b };
+        outputSource = 'vlm';
+        lab2 = rgbToLab(outputRgb.r, outputRgb.g, outputRgb.b);
+        deltaE = deltaECIE76(lab1, lab2);
+      }
+    } catch {
+      // VLM failed — keep pixel result (original reject stands)
+    }
+  }
+
+  return { deltaE, swatchRgb, outputRgb, swatchSource, outputSource };
 }
 
 /**

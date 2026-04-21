@@ -1055,7 +1055,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // "crítico para textiles" in e-commerce QA pipelines.
     const DELTA_E_LOG_ONLY = false; // set true during calibration period
     const DELTA_E_REJECT_THRESHOLD = 25; // LAB CIE76; calibrated conservatively
-    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache' } | null = null;
+    let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache'; outputSource: 'pixel' | 'vlm' } | null = null;
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
       try {
         const swatchBufForDrift = Buffer.from(swatchBase64ForVerification, 'base64');
@@ -1063,11 +1063,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           swatchOriginalBuffer: originalSwatchBuffer,
           swatchOriginalMime: job.swatch.mime_type || 'image/jpeg',
           cachedSwatchHex: job.swatch.dominant_color_hex || null,
+          rejectThreshold: DELTA_E_REJECT_THRESHOLD,
         });
         logPipelineEvent(job.id, 'COLOR_DELTA_E', deltaEResult.deltaE.toFixed(1), {
           swatch_rgb: deltaEResult.swatchRgb,
           output_rgb: deltaEResult.outputRgb,
           swatch_source: deltaEResult.swatchSource,
+          output_source: deltaEResult.outputSource,
         });
         // Cache VLM result for future jobs with this swatch
         if (deltaEResult.swatchSource === 'vlm' && job.swatch.id) {
