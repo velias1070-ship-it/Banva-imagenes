@@ -49,6 +49,7 @@ async function classifyOnce(
       promptText: PROMPT,
       temperature: 0.1,
       modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1,
     });
     if (!result.success || !result.textResponse) return null;
     let jsonStr = result.textResponse.trim();

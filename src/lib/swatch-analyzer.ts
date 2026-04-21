@@ -54,6 +54,8 @@ Respond with ONLY a valid JSON object (no markdown, no backticks, no extra text)
   "has_pattern": <true if visible pattern beyond texture/quilting, false if solid>
 }`,
       temperature: 0.1,
+      modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1,
     });
 
     if (!result.success || !result.textResponse) {

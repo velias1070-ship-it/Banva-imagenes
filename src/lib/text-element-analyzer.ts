@@ -65,6 +65,8 @@ Respond with ONLY a valid JSON object, no markdown:
   ]
 }`,
       temperature: 0,
+      modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1,
     });
 
     if (!result.success || !result.textResponse) return null;
@@ -169,6 +171,8 @@ Respond with ONLY a valid JSON object (no markdown, no backticks, no extra text)
   ]
 }`,
       temperature: 0.1,
+      modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1,
     });
 
     if (!result.success || !result.textResponse) {

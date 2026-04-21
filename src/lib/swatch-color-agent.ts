@@ -34,6 +34,7 @@ export async function extractSwatchBaseColorVLM(
       promptText: PROMPT,
       temperature: 0.1,
       modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1,
     });
     if (!result.success || !result.textResponse) return null;
     const cleaned = result.textResponse.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();

@@ -64,6 +64,7 @@ async function detectOnce(heroBase64: string, heroMimeType: string): Promise<Sho
       promptText: SHOT_TYPE_PROMPT,
       temperature: 0.1,
       modelOverride: 'gemini-2.5-flash',
+      maxRetries: 1,
     });
     if (!result.success || !result.textResponse) return null;
     let jsonStr = result.textResponse.trim();

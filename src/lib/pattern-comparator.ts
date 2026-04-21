@@ -29,6 +29,8 @@ Respond ONLY with JSON: {"same_pattern": true or false}`;
       ],
       promptText: prompt,
       temperature: 0.1,
+      modelOverride: 'gemini-2.5-flash', // 2.0-flash está saturado, mata chain
+      maxRetries: 1, // fail fast — pattern comparison es enriquecimiento
     });
 
     if (!result.success || !result.textResponse) return false;
