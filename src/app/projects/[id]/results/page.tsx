@@ -146,6 +146,11 @@ export default function ResultsPage() {
   // ML import state
   const [mlImporting, setMlImporting] = useState<Set<string>>(new Set());
 
+  // Manual upload state (swatchId → uploading)
+  const [uploadingSwatch, setUploadingSwatch] = useState<Set<string>>(new Set());
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetSwatchId = useRef<string | null>(null);
+
   // ML photo selector dialog state
   const [mlSelectorOpen, setMlSelectorOpen] = useState(false);
   const [mlSelectorSwatchId, setMlSelectorSwatchId] = useState<string | null>(null);
@@ -544,6 +549,52 @@ export default function ResultsPage() {
     setMlSelectorPictures(pics);
     setMlSelectorSelected(new Set(pics.map((p) => p.id)));
     setMlSelectorOpen(true);
+  }
+
+  function handleTriggerUpload(swatchId: string) {
+    uploadTargetSwatchId.current = swatchId;
+    if (uploadInputRef.current) {
+      uploadInputRef.current.value = '';
+      uploadInputRef.current.click();
+    }
+  }
+
+  async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const swatchId = uploadTargetSwatchId.current;
+    e.target.value = '';
+    if (!file || !swatchId) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      toast.error(`Formato no soportado: ${file.type || 'desconocido'}`);
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Archivo excede 15MB');
+      return;
+    }
+    setUploadingSwatch((prev) => new Set(prev).add(swatchId));
+    try {
+      const form = new FormData();
+      form.append('swatch_id', swatchId);
+      form.append('file', file);
+      const res = await fetch(`/api/projects/${id}/upload-result`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Imagen subida para ${data.swatch}`);
+        fetchResults();
+      } else {
+        toast.error(data.error || 'Error subiendo');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setUploadingSwatch((prev) => {
+        const next = new Set(prev);
+        next.delete(swatchId);
+        return next;
+      });
+      uploadTargetSwatchId.current = null;
+    }
   }
 
   async function handleConfirmMlImport() {
@@ -1721,13 +1772,14 @@ export default function ResultsPage() {
                         </div>
                       </button>
 
-                      {/* ML actions (icon-only with tooltip) */}
-                      {group.ml_listing && (
-                        <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
+                      {/* Import/upload actions (icon-only with tooltip) */}
+                      <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
                           {(() => {
                             const isImportingMl = mlImporting.has(swatchId);
                             const isImportingCannon = importingCannonSwatch.has(swatchId);
-                            const isImporting = isImportingMl || isImportingCannon;
+                            const isUploading = uploadingSwatch.has(swatchId);
+                            const isImporting = isImportingMl || isImportingCannon || isUploading;
+                            const hasMlListing = !!group.ml_listing;
                             return (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -1751,14 +1803,16 @@ export default function ResultsPage() {
                                   onClick={(e) => e.stopPropagation()}
                                   className="text-xs"
                                 >
-                                  <DropdownMenuItem
-                                    onSelect={() => handleImportMlPictures(swatchId)}
-                                    disabled={isImportingMl}
-                                  >
-                                    <Globe className="h-3.5 w-3.5 mr-2" />
-                                    Desde MercadoLibre
-                                  </DropdownMenuItem>
-                                  {showPerSwatchCannon && (
+                                  {hasMlListing && (
+                                    <DropdownMenuItem
+                                      onSelect={() => handleImportMlPictures(swatchId)}
+                                      disabled={isImportingMl}
+                                    >
+                                      <Globe className="h-3.5 w-3.5 mr-2" />
+                                      Desde MercadoLibre
+                                    </DropdownMenuItem>
+                                  )}
+                                  {showPerSwatchCannon && hasMlListing && (
                                     <DropdownMenuItem
                                       onSelect={() => handleImportCannonForSwatch(swatchId)}
                                       disabled={isImportingCannon}
@@ -1767,11 +1821,18 @@ export default function ResultsPage() {
                                       Desde Cannon (por SKU)
                                     </DropdownMenuItem>
                                   )}
+                                  <DropdownMenuItem
+                                    onSelect={() => handleTriggerUpload(swatchId)}
+                                    disabled={isUploading}
+                                  >
+                                    <Upload className="h-3.5 w-3.5 mr-2" />
+                                    Subir desde computador
+                                  </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             );
                           })()}
-                          {group.ml_listing.permalink && (
+                          {group.ml_listing?.permalink && (
                             <a
                               href={group.ml_listing.permalink}
                               target="_blank"
@@ -1784,25 +1845,26 @@ export default function ResultsPage() {
                               </Button>
                             </a>
                           )}
-                          <Button
-                            variant={isPanelOpen ? 'default' : 'ghost'}
-                            size="icon"
-                            className={`h-8 w-8 relative ${isPanelOpen ? '' : 'text-muted-foreground'}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleMlPanel(swatchId);
-                            }}
-                            title={isPanelOpen ? 'Cerrar panel ML' : 'Abrir panel ML'}
-                          >
-                            <Globe className="h-4 w-4" />
-                            {!isPanelOpen && mlPicCount > 0 && (
-                              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 text-center font-medium">
-                                {mlPicCount}
-                              </span>
-                            )}
-                          </Button>
+                          {group.ml_listing && (
+                            <Button
+                              variant={isPanelOpen ? 'default' : 'ghost'}
+                              size="icon"
+                              className={`h-8 w-8 relative ${isPanelOpen ? '' : 'text-muted-foreground'}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleMlPanel(swatchId);
+                              }}
+                              title={isPanelOpen ? 'Cerrar panel ML' : 'Abrir panel ML'}
+                            >
+                              <Globe className="h-4 w-4" />
+                              {!isPanelOpen && mlPicCount > 0 && (
+                                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-4 text-center font-medium">
+                                  {mlPicCount}
+                                </span>
+                              )}
+                            </Button>
+                          )}
                         </div>
-                      )}
                     </div>
 
                     {/* Section body */}
@@ -2119,6 +2181,14 @@ export default function ResultsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={handleUploadFile}
+      />
     </div>
   );
 }
