@@ -117,6 +117,50 @@ export async function generateImageSmart(
     ...req,
     useProModel: provider === 'gemini-pro',
   });
+
+  // Auto-fallback to GPT Image 2 when Gemini fails with recoverable errors:
+  // - "spending cap exceeded" (project billing limit)
+  // - "RESOURCE_EXHAUSTED" (rate limit)
+  // - "Internal error" (transient 500)
+  // Saves the job from hard-erroring when Gemini is temporarily unavailable.
+  // Only kicks in when GPT-2 is enabled via ENABLE_GPT_IMAGE_2=1.
+  if (!geminiResult.success && process.env.ENABLE_GPT_IMAGE_2 === '1') {
+    const errMsg = (geminiResult.error || '').toLowerCase();
+    const isRecoverable =
+      errMsg.includes('spending cap') ||
+      errMsg.includes('billing') ||
+      errMsg.includes('resource_exhausted') ||
+      errMsg.includes('resource exhausted') ||
+      errMsg.includes('rate limit') ||
+      errMsg.includes('internal error') ||
+      errMsg.includes('quota exceeded');
+    if (isRecoverable && req.heroImageBase64) {
+      const gptResult = await generateImageGPT2({
+        heroImageBase64: req.heroImageBase64,
+        heroMimeType: req.heroMimeType || 'image/png',
+        swatchImageBase64: req.swatchImageBase64,
+        swatchMimeType: req.swatchMimeType,
+        promptText: req.promptText,
+        category: ctx.category,
+        quality: 'high',
+      });
+      if (gptResult.success) {
+        return {
+          success: true,
+          imageBase64: gptResult.imageBase64,
+          imageMimeType: gptResult.imageMimeType,
+          textResponse: undefined,
+          error: undefined,
+          errorCode: undefined,
+          durationMs: (geminiResult.durationMs || 0) + gptResult.durationMs,
+          meta: { modelName: `${gptResult.modelUsed}-fallback` } as unknown as GeminiGenerateResult['meta'],
+          providerUsed: 'gpt-image-2',
+          costEstimateUsd: gptResult.costEstimateUsd,
+        };
+      }
+    }
+  }
+
   return {
     ...geminiResult,
     providerUsed: provider,
