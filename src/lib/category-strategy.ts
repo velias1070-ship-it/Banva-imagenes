@@ -41,6 +41,19 @@ export interface CategoryStrategy {
   qa_focus_areas?: string[];
   /** Accumulated learnings from past failures — injected into BOTH generation prompts AND QA scoring */
   learnings?: string[];
+  /**
+   * Surfaces the swatch design MUST apply to. Phrased in Spanish for Gemini.
+   * Used by buildReferencePrompt to constrain pattern bleed to only these surfaces.
+   * e.g. alfombras: ['alfombras y tapetes visibles'].
+   * e.g. quilts: ['cobertor principal', 'fundas de almohada del set'].
+   */
+  target_surfaces?: string[];
+  /**
+   * Surfaces that MUST stay identical to Image 1 (no color/pattern change).
+   * Explicit negative list to prevent Gemini from repainting non-product textiles.
+   * e.g. alfombras: ['sofá/tapicería', 'sábanas/fundas de cama', 'cortinas', 'cojines', 'otros textiles de la escena'].
+   */
+  preserve_surfaces?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,6 +407,11 @@ DO NOT change:
     generation_mode: 'edit',
     retry_escalation: 'edit',
     preprocessing: { crop_swatch: true, flatten_hero: false },
+    target_surfaces: ['las toallas visibles (de baño, mano o rostro) del set mostrado'],
+    preserve_surfaces: [
+      'batas, alfombras de baño, cortinas de ducha',
+      'cualquier otro textil, pared, mueble o elemento no-toalla',
+    ],
     prompt: {
       product_context: `This is a towel product (toalla) — could be bath towel, hand towel, or towel set.`,
 
@@ -443,6 +461,11 @@ Only change the color/pattern — the physical form of the fabric must be identi
     generation_mode: 'edit',
     retry_escalation: 'edit',
     preprocessing: { crop_swatch: false, flatten_hero: false },
+    target_surfaces: ['el mantel y las servilletas (si están visibles) del set'],
+    preserve_surfaces: [
+      'mesa, sillas, vajilla, cubertería, cristalería y decoración',
+      'cualquier otro textil no-mantel (cortinas, paños, alfombras)',
+    ],
     prompt: {
       product_context: `This is a tablecloth product (mantel) — could include a tablecloth, table runner, or napkins.`,
 
@@ -514,6 +537,14 @@ DO NOT change:
     generation_mode: 'reference',
     retry_escalation: 'reference',
     preprocessing: { crop_swatch: false, flatten_hero: false },
+    target_surfaces: ['la alfombra / tapete visible en la escena'],
+    preserve_surfaces: [
+      'sofás, sillones y tapicería',
+      'sábanas, fundas de cama, cubrecamas y cojines',
+      'cortinas',
+      'paredes, pisos no-alfombrados y muebles',
+      'cualquier otro textil de la escena que no sea la alfombra',
+    ],
     prompt: {
       product_context: `This is a rug/carpet product (alfombra) — could be area rug, runner, or mat.
 Rugs have their OWN pattern/design that defines the product. The swatch IS the product design.`,
@@ -559,6 +590,11 @@ Image 1 is ONLY a layout guide — the rug product comes entirely from Image 2.`
     generation_mode: 'edit',
     retry_escalation: 'edit',
     preprocessing: { crop_swatch: false, flatten_hero: false },
+    target_surfaces: ['el limpiapies / choapino visible en la escena'],
+    preserve_surfaces: [
+      'piso, paredes, puertas y muebles',
+      'cualquier otro textil (alfombras, toallas, cortinas, etc.)',
+    ],
     prompt: {
       product_context: `This is a doormat/bathmat product (limpiapies/choapino) — a small mat placed at entrances or bathrooms.`,
 
@@ -591,6 +627,11 @@ DO NOT change:
     generation_mode: 'edit',
     retry_escalation: 'edit',
     preprocessing: { crop_swatch: true, flatten_hero: false },
+    target_surfaces: ['las cortinas / drapeados visibles'],
+    preserve_surfaces: [
+      'ventana, pared, persianas y marcos',
+      'cualquier otro textil de la escena (cama, sofá, cojines, alfombras)',
+    ],
     prompt: {
       product_context: `This is a curtain product (cortina) — window curtains or drapes.`,
 
@@ -992,7 +1033,35 @@ Imagen fotorrealista de ${resolution}.`;
 Imagen fotorrealista de ${resolution}.`;
   }
 
-  // Standard reference mode: composition from Image 1, fabric from Image 2
+  // Standard reference mode: composition from Image 1, fabric from Image 2.
+  // When the category declares target_surfaces / preserve_surfaces, render an
+  // explicit scope so Gemini doesn't bleed the design to other textiles in the
+  // scene (e.g. applying a rug pattern to the sofa and bed in a lifestyle shot).
+  const hasSurfaces = (strategy.target_surfaces?.length ?? 0) > 0
+    || (strategy.preserve_surfaces?.length ?? 0) > 0;
+
+  if (hasSurfaces) {
+    const targetList = (strategy.target_surfaces ?? [`el/la ${strategy.label.toLowerCase()}`])
+      .map((s) => `- ${s}`)
+      .join('\n');
+    const preserveList = (strategy.preserve_surfaces ?? [])
+      .map((s) => `- ${s}`)
+      .join('\n');
+    const preserveBlock = preserveList
+      ? `\n\nPRESERVAR SIN CAMBIOS (NO repintar, NO recolorear, NO aplicar el patrón de Imagen 2):\n${preserveList}\n- Cualquier otro textil de la escena no listado arriba como target`
+      : '';
+
+    return `Imagen 1 = composición (ángulo, escena, disposición). Imagen 2 = diseño del producto (color, patrón, textura).
+
+APLICAR el diseño EXACTO de Imagen 2 SOLO en:
+${targetList}${preserveBlock}
+
+El patrón de Imagen 2 NO debe "sangrar" a otras superficies. Copia el color EXACTO de Imagen 2 únicamente en las superficies target listadas.${darkNote}${qaNote}
+
+Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
+  }
+
+  // Legacy fallback for categories that haven't declared surfaces yet.
   return `Imagen 1 = composición (ángulo, escena, disposición). Imagen 2 = tela (color, patrón, textura).
 
 Genera la misma escena de la Imagen 1 pero con la tela de la Imagen 2 en el ${strategy.label} y fundas. NO conserves la textura original de la Imagen 1. Copia el color EXACTO de la Imagen 2.${darkNote}${qaNote}
