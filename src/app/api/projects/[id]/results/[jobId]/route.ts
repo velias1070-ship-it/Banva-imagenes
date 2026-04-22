@@ -1097,8 +1097,12 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // See src/lib/image-processing.ts computeSwatchOutputDeltaE for math
     // and the process-next route for the full rationale.
     const DELTA_E_REJECT_THRESHOLD = 25;
+    // Skip whole-image Delta-E when the category declares preserve_surfaces —
+    // the product is only part of the scene, center-crop sampling gives false
+    // positives. Rely on the VLM verifier's color_match check.
+    const skipDeltaE = (strategy.preserve_surfaces?.length ?? 0) > 0;
     let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache'; outputSource: 'pixel' | 'vlm' } | null = null;
-    if (!isBrandOnly && !isMultiPass && !isInfografia) {
+    if (!isBrandOnly && !isMultiPass && !isInfografia && !skipDeltaE) {
       try {
         const swatchBufForDrift = Buffer.from(swatchBase64ForVerification, 'base64');
         deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer, {
@@ -1124,6 +1128,20 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
     if (deltaEResult && deltaEResult.deltaE > DELTA_E_REJECT_THRESHOLD && attempt < 4) {
       const dE = deltaEResult.deltaE.toFixed(1);
+      // Save the rejected image to _debug and point output_storage_path at it so the UI
+      // always has the last attempt visible (dual-route sync with process-next).
+      const debugPath = `projects/${projectId}/generated/_debug/${jobId}_attempt${attempt}_color_drift.png`;
+      let debugSaved = false;
+      try {
+        await supabase.storage.from('images').upload(debugPath, imageBuffer, {
+          contentType: 'image/png',
+          upsert: true,
+        });
+        logPipelineEvent(jobId, 'DEBUG_SAVED_COLOR_DRIFT', debugPath);
+        debugSaved = true;
+      } catch (saveErr) {
+        console.error('[regenerateJob] Color-drift debug save failed (non-blocking):', saveErr);
+      }
       const feedback = `Color drift detected: Delta-E=${dE} vs swatch (threshold ${DELTA_E_REJECT_THRESHOLD}). The fabric color in the output does not match the swatch. Apply the EXACT color of Image 2 — same hue, same saturation, same lightness.`;
       logPipelineEvent(jobId, 'VERIFICATION', 'COLOR_DRIFT_REJECT', { delta_e: deltaEResult.deltaE });
       logPipelineEvent(jobId, 'VERIFICATION_RETRY', feedback, { new_attempt: attempt + 1 });
@@ -1133,6 +1151,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         qa_feedback: `[Delta-E ${dE}] ${feedback}`,
         attempt: attempt + 1,
         prompt_metadata: { ...promptMetadata, color_delta_e: deltaEResult.deltaE },
+        ...(debugSaved ? { output_storage_path: debugPath } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', jobId);
       const batchId = job.batch_id as string;

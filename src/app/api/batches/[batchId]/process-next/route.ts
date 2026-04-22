@@ -1084,8 +1084,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // "crítico para textiles" in e-commerce QA pipelines.
     const DELTA_E_LOG_ONLY = false; // set true during calibration period
     const DELTA_E_REJECT_THRESHOLD = 25; // LAB CIE76; calibrated conservatively
+    // Skip whole-image Delta-E when the category declares preserve_surfaces —
+    // those are scenes where the product occupies only part of the frame
+    // (alfombras in a living-room, cortinas, etc). The center-crop color
+    // sample will mix target + preserved surfaces and produce false positives.
+    // Rely on the VLM verifier's color_match check (it can segment).
+    const skipDeltaE = (strategy.preserve_surfaces?.length ?? 0) > 0;
     let deltaEResult: { deltaE: number; swatchRgb: { r: number; g: number; b: number }; outputRgb: { r: number; g: number; b: number }; swatchSource: 'pixel' | 'vlm' | 'cache'; outputSource: 'pixel' | 'vlm' } | null = null;
-    if (!isBrandOnly && !isMultiPass && !isInfografia) {
+    if (!isBrandOnly && !isMultiPass && !isInfografia && !skipDeltaE) {
       try {
         const swatchBufForDrift = Buffer.from(swatchBase64ForVerification, 'base64');
         deltaEResult = await computeSwatchOutputDeltaE(swatchBufForDrift, imageBuffer, {
@@ -1114,11 +1120,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (!DELTA_E_LOG_ONLY && deltaEResult && deltaEResult.deltaE > DELTA_E_REJECT_THRESHOLD && job.attempt < 4) {
       const dE = deltaEResult.deltaE.toFixed(1);
       const debugPath = `projects/${project.id}/generated/_debug/${job.id}_attempt${job.attempt}_color_drift.png`;
+      let debugSaved = false;
       try {
         await supabase.storage.from('images').upload(debugPath, imageBuffer, {
           contentType: result.imageMimeType || 'image/png',
           upsert: true,
         });
+        debugSaved = true;
       } catch {}
       const feedback = `Color drift detected: Delta-E=${dE} vs swatch (threshold ${DELTA_E_REJECT_THRESHOLD}). The fabric color in the output does not match the swatch. Apply the EXACT color of Image 2 — same hue, same saturation, same lightness.`;
       logPipelineEvent(job.id, 'VERIFICATION', 'COLOR_DRIFT_REJECT', { delta_e: deltaEResult.deltaE });
@@ -1129,6 +1137,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         attempt: job.attempt + 1,
         qa_feedback: `[Delta-E ${dE}] ${feedback}`,
         prompt_metadata: { ...promptMetadata, color_delta_e: deltaEResult.deltaE },
+        ...(debugSaved ? { output_storage_path: debugPath } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', job.id);
       return { chain: true, triggerQA: false };
