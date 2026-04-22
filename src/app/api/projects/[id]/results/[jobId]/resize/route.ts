@@ -140,7 +140,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   });
 }
 
-async function generateResizedVariant(
+export async function generateResizedVariant(
   newJobId: string,
   originalJob: Record<string, unknown>,
   projectId: string,
@@ -149,7 +149,7 @@ async function generateResizedVariant(
 ) {
   const supabase = createAdminClient();
   const swatch = originalJob.swatch as Record<string, string>;
-  const heroShot = originalJob.hero_shot as Record<string, string>;
+  const heroShot = originalJob.hero_shot as Record<string, string> | null;
   const projectSettings = getProjectSettings(projectMetadata);
 
   try {
@@ -244,7 +244,7 @@ Imagen fotorrealista de ${projectSettings.generation.resolution}px, cuadrada 1:1
           target_size: '1.5_plaza',
           original_sku: swatch.sku_suffix || null,
           target_sku: targetSku,
-          shot_type: heroShot.shot_type,
+          shot_type: heroShot?.shot_type ?? null,
         },
         updated_at: new Date().toISOString(),
       })

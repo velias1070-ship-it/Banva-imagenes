@@ -21,6 +21,7 @@ import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
 import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } from '@/lib/bed-camera-angle';
 import { logPipelineEvent } from '@/lib/pipeline-log';
+import { generateResizedVariant } from './resize/route';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -129,6 +130,44 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     .update({ status: 'generating', updated_at: new Date().toISOString() })
     .eq('id', jobId);
 
+  // resize_bed jobs: re-run the resize pipeline against the source job
+  // instead of the normal Gemini hero-based regen (which needs hero_shot_id).
+  const promptMeta = job.prompt_metadata as Record<string, unknown> | null;
+  if (mode !== 'brand_only' && promptMeta?.strategy === 'resize_bed' && typeof promptMeta.source_job_id === 'string') {
+    const sourceJobId = promptMeta.source_job_id;
+    const { data: sourceJob, error: sourceErr } = await supabase
+      .from('generation_jobs')
+      .select(`*, hero_shot:hero_shots(*), swatch:swatches(*)`)
+      .eq('id', sourceJobId)
+      .single();
+
+    if (sourceErr || !sourceJob || !sourceJob.output_storage_path) {
+      await supabase.from('generation_jobs').update({
+        status: 'error',
+        error_message: `resize_bed regen: source job ${sourceJobId} missing or has no output`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', jobId);
+      logPipelineEvent(jobId, 'ERROR', 'resize_bed source unavailable', { source_job_id: sourceJobId });
+      return NextResponse.json({ error: 'Source job unavailable' }, { status: 409 });
+    }
+
+    after(async () => {
+      try {
+        await generateResizedVariant(
+          jobId,
+          sourceJob,
+          id,
+          project?.metadata as Record<string, unknown> | null,
+          (promptMeta.target_sku as string) ?? null,
+        );
+      } catch (err) {
+        console.error('[regen] resize_bed error:', err);
+      }
+    });
+
+    return NextResponse.json({ status: 'generating', strategy: 'resize_bed' });
+  }
+
   // Use after() to keep serverless function alive for background regeneration
   after(async () => {
     try {
@@ -174,6 +213,19 @@ async function regenerateJob(
       ? existingOutput  // Brand: use generated result (has correct pattern)
       : (heroShot?.storage_path || existingOutput);
     const swatchPath = isBrandOnly ? heroPath : swatch.storage_path;
+
+    if (!heroPath) {
+      const reason = isMLImport
+        ? 'ML import job without output_storage_path — cannot regenerate'
+        : 'Job has no hero_shot and no output_storage_path — cannot regenerate';
+      logPipelineEvent(jobId, 'ERROR', reason);
+      await supabase.from('generation_jobs').update({
+        status: 'error',
+        error_message: reason,
+        updated_at: new Date().toISOString(),
+      }).eq('id', jobId);
+      return;
+    }
 
     // Download hero and swatch FIRST (needed for shot type detection)
     const [heroRes, swatchRes] = await Promise.all([
