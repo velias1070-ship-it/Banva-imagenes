@@ -84,6 +84,29 @@ function getStorageUrl(path: string, attempt?: number): string {
   return `${SUPABASE_URL}/storage/v1/object/public/images/${path}${cacheBuster}`;
 }
 
+// Replace BANVA size code (P20/P25/P30 or standalone 15/20/25/30 between letters)
+// with "*" so siblings that only differ in size collapse to the same normalized string.
+function normalizeSkuForSizeMatch(sku: string | null): string | null {
+  if (!sku) return null;
+  const pMatch = sku.match(/P(15|20|25|30)/);
+  if (pMatch) return sku.replace(pMatch[0], 'P*');
+  for (const code of ['15', '20', '25', '30']) {
+    const idx = sku.indexOf(code);
+    if (idx < 0) continue;
+    const before = idx > 0 ? sku[idx - 1] : '';
+    const after = idx + 2 < sku.length ? sku[idx + 2] : '';
+    if ((/[A-Za-z]/.test(before) || idx === 0) && (/[A-Za-z]/.test(after) || after === '')) {
+      return sku.substring(0, idx) + '*' + sku.substring(idx + 2);
+    }
+  }
+  return sku;
+}
+
+function areSiblingSkus(skuA: string | null, skuB: string | null): boolean {
+  if (!skuA || !skuB || skuA === skuB) return false;
+  return normalizeSkuForSizeMatch(skuA) === normalizeSkuForSizeMatch(skuB);
+}
+
 type FilterTab = 'all' | 'approved' | 'retry' | 'flagged' | 'error' | 'qa_pending' | 'ml_active' | 'ml_paused';
 
 export default function ResultsPage() {
@@ -359,11 +382,17 @@ export default function ResultsPage() {
   }
 
   function swapWithMlPosition(swatchId: string, posIdx: number) {
-    if (!swapSource || swapSource.swatchId !== swatchId) return;
+    if (!swapSource) return;
+    const sourceGroup = groups.find((g) => g.swatch.id === swapSource.swatchId);
+    const targetGroup = groups.find((g) => g.swatch.id === swatchId);
+    const crossVariant = swapSource.swatchId !== swatchId;
+    const siblings = crossVariant && areSiblingSkus(
+      sourceGroup?.swatch.sku_suffix ?? null,
+      targetGroup?.swatch.sku_suffix ?? null,
+    );
     setMlPictures((prev) => {
       const next = new Map(prev);
       const current = [...(next.get(swatchId) || [])];
-      // Replace the picture at posIdx with the generated image
       current[posIdx] = {
         type: 'generated',
         url: swapSource.url,
@@ -375,7 +404,15 @@ export default function ResultsPage() {
     });
     setMlDirty((prev) => new Map(prev).set(swatchId, true));
     setSwapSource(null);
-    toast.success(`Posición ${posIdx + 1} reemplazada`);
+    if (!crossVariant) {
+      toast.success(`Posición ${posIdx + 1} reemplazada`);
+    } else if (siblings) {
+      toast.success(`Posición ${posIdx + 1} reemplazada desde ${sourceGroup?.swatch.name} (sibling)`);
+    } else {
+      toast.warning(
+        `Posición ${posIdx + 1} reemplazada desde ${sourceGroup?.swatch.name} — ojo: color distinto a ${targetGroup?.swatch.name}`,
+      );
+    }
   }
 
   // ── ML Panel drag & drop ──
@@ -1244,6 +1281,19 @@ export default function ResultsPage() {
     const isDirty = mlDirty.get(swatchId) || false;
     const isSaving = mlSaving.get(swatchId) || false;
 
+    // Swap targeting: source swatch is the "home" target, sibling swatches (same color,
+    // different size) are safe secondary targets, other swatches accept with a warning.
+    const sourceGroup = swapSource
+      ? groups.find((g) => g.swatch.id === swapSource.swatchId)
+      : null;
+    const isSwapSource = swapSource?.swatchId === swatchId;
+    const isSwapSibling = !!swapSource && !isSwapSource && areSiblingSkus(
+      sourceGroup?.swatch.sku_suffix ?? null,
+      group.swatch.sku_suffix,
+    );
+    const isSwapForeign = !!swapSource && !isSwapSource && !isSwapSibling;
+    const isSwapTarget = !!swapSource;
+
     if (!listing) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-center p-4">
@@ -1301,9 +1351,19 @@ export default function ResultsPage() {
         </div>
 
         {/* Swap hint */}
-        {swapSource?.swatchId === swatchId && (
+        {isSwapSource && (
           <div className="mb-2 rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-[11px] text-amber-700">
-            Click en la posición que quieres reemplazar
+            Click en la posición que quieres reemplazar (aquí o en otra variante)
+          </div>
+        )}
+        {isSwapSibling && (
+          <div className="mb-2 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1.5 text-[11px] text-emerald-700">
+            Sibling del origen — mismo color, distinta talla. Click para reemplazar.
+          </div>
+        )}
+        {isSwapForeign && (
+          <div className="mb-2 rounded-md bg-rose-50 border border-rose-200 px-2 py-1.5 text-[11px] text-rose-700">
+            Color distinto al origen. Click para reemplazar (con warning).
           </div>
         )}
 
@@ -1311,7 +1371,7 @@ export default function ResultsPage() {
         <div
           className={`flex-1 min-h-[60px] rounded-lg p-1 transition-colors overflow-y-auto ${
             dragging && dragRef.current?.swatchId === swatchId ? 'bg-blue-50/50' : ''
-          } ${swapSource?.swatchId === swatchId ? 'ring-2 ring-amber-300' : ''}`}
+          } ${isSwapSource ? 'ring-2 ring-amber-300' : ''} ${isSwapSibling ? 'ring-2 ring-emerald-300' : ''} ${isSwapForeign ? 'ring-2 ring-rose-200 ring-dashed' : ''}`}
           onDragOver={(e) => handleMlContainerDragOver(e, swatchId)}
           onDragLeave={() => { setDropSwatchId(null); setDropPosition(null); }}
           onDrop={(e) => handleMlContainerDrop(e, swatchId)}
@@ -1327,11 +1387,11 @@ export default function ResultsPage() {
                 <div
                   className={`flex items-center gap-1.5 rounded-md border p-1 group transition-all mb-1 ${
                     isDragSource ? 'opacity-30 scale-95' : 'opacity-100'
-                  } ${swapSource?.swatchId === swatchId ? 'cursor-pointer hover:border-amber-400 hover:bg-amber-50' : ''}`}
+                  } ${isSwapSource ? 'cursor-pointer hover:border-amber-400 hover:bg-amber-50' : ''} ${isSwapSibling ? 'cursor-pointer hover:border-emerald-400 hover:bg-emerald-50' : ''} ${isSwapForeign ? 'cursor-pointer hover:border-rose-400 hover:bg-rose-50' : ''}`}
                   draggable={!swapSource}
                   onDragStart={(e) => !swapSource && handleMlDragStart(e, { kind: 'reorder', swatchId, picIdx })}
                   onDragEnd={handleMlDragEnd}
-                  onClick={() => swapSource?.swatchId === swatchId && swapWithMlPosition(swatchId, picIdx)}
+                  onClick={() => isSwapTarget && swapWithMlPosition(swatchId, picIdx)}
                 >
                   <GripVertical className="h-3 w-3 text-muted-foreground/40 flex-shrink-0 cursor-grab active:cursor-grabbing" />
                   <div className="w-4 text-center text-[10px] font-bold text-muted-foreground flex-shrink-0">{picIdx + 1}</div>
