@@ -187,6 +187,8 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   }
 
   // ── SELF-HEALING: Reset stale "generating" jobs (stuck > 90s) ──
+  // If batch is halted (e.g. user-cancel), push stale jobs to `error` instead of `pending`
+  // so they don't get reclaimed and re-unhalt the batch on the next invocation.
   const staleThreshold = new Date(Date.now() - 90_000).toISOString();
   const { data: staleJobs } = await supabase
     .from('generation_jobs')
@@ -196,17 +198,22 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     .lt('updated_at', staleThreshold);
 
   if (staleJobs?.length) {
+    const batchIsHalted = batch.status === 'halted';
+    const resetStatus = batchIsHalted ? 'error' : 'pending';
+    const resetMsg = batchIsHalted
+      ? 'Cancelado por usuario (stale generating)'
+      : 'Auto-recovered: stale generating job reset by process-next';
     for (const stale of staleJobs) {
       await supabase
         .from('generation_jobs')
         .update({
-          status: 'pending',
-          error_message: 'Auto-recovered: stale generating job reset by process-next',
+          status: resetStatus,
+          error_message: resetMsg,
           updated_at: new Date().toISOString(),
         })
         .eq('id', stale.id);
     }
-    console.log(`[process-next] Self-healed: reset ${staleJobs.length} stale generating jobs`);
+    console.log(`[process-next] Self-healed: reset ${staleJobs.length} stale generating jobs → ${resetStatus}`);
   }
 
   // ── SELF-HEALING: Trigger QA for stale qa_pending jobs (stuck > 90s) ──

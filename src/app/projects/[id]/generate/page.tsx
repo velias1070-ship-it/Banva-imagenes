@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ArrowLeft, Play, Loader2, CheckCircle, AlertTriangle, XCircle, ImageIcon } from 'lucide-react';
+import { ArrowLeft, Play, Loader2, CheckCircle, AlertTriangle, XCircle, ImageIcon, StopCircle } from 'lucide-react';
 import type { Swatch, GenerationBatch } from '@/types/database';
 import { COST_PER_IMAGE_USD } from '@/lib/constants';
 import { toast } from 'sonner';
@@ -39,6 +39,7 @@ export default function GeneratePage() {
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState<GenerationBatch | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [brandHeroIds, setBrandHeroIds] = useState<Set<string>>(new Set()); // heroes that will use brand
   const [hasBrand, setHasBrand] = useState(false);
   const [swatchStatus, setSwatchStatus] = useState<Record<string, { status: string; available_quantity: number; item_id: string }>>({});
@@ -110,7 +111,13 @@ export default function GeneratePage() {
           toast.success('Generacion completada!');
           setGenerating(false);
           fetchData(); // Refresh hero status
-        } else if (updated.status === 'failed' || updated.status === 'halted') {
+        } else if (updated.status === 'halted') {
+          // Halt may come from user-stop (no active generating jobs) or auto-halt (>20% flagged)
+          const stillRunning = (updated.total_combinations ?? 0) > (updated.completed_count ?? 0) + (updated.error_count ?? 0);
+          if (!stillRunning) {
+            setGenerating(false);
+          }
+        } else if (updated.status === 'failed') {
           toast.error('La generacion tuvo errores');
           setGenerating(false);
         }
@@ -208,6 +215,33 @@ export default function GeneratePage() {
 
   function selectNoSwatches() {
     setSelectedSwatchIds(new Set());
+  }
+
+  async function handleStopGeneration() {
+    if (!batch || stopping) return;
+    const confirmed = window.confirm(
+      '¿Detener esta generación?\n\n' +
+      'Se cancelan los jobs pendientes inmediatamente. Los que ya estén ejecutando Gemini ' +
+      '(≈25s) terminan solos y suben su resultado normalmente.',
+    );
+    if (!confirmed) return;
+    setStopping(true);
+    try {
+      const res = await fetch(`/api/batches/${batch.id}/stop`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        const parts = [`${data.cancelled_pending} canceladas`];
+        if (data.in_flight > 0) parts.push(`${data.in_flight} en vuelo (~25s)`);
+        if (data.qa_draining > 0) parts.push(`${data.qa_draining} en QA`);
+        toast.success(`Detenido — ${parts.join(', ')}`);
+      } else {
+        toast.error(data.error || 'No se pudo detener');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setStopping(false);
+    }
   }
 
   async function handleGenerate() {
@@ -534,17 +568,37 @@ export default function GeneratePage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Progreso</CardTitle>
-              <Badge
-                variant={
-                  batch.status === 'completed'
-                    ? 'default'
-                    : batch.status === 'failed'
-                    ? 'destructive'
-                    : 'secondary'
-                }
-              >
-                {batch.status}
-              </Badge>
+              <div className="flex items-center gap-2">
+                {['pending', 'generating', 'qa', 'retrying'].includes(batch.status) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleStopGeneration}
+                    disabled={stopping}
+                    className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                  >
+                    {stopping ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <StopCircle className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    {stopping ? 'Deteniendo...' : 'Detener'}
+                  </Button>
+                )}
+                <Badge
+                  variant={
+                    batch.status === 'completed'
+                      ? 'default'
+                      : batch.status === 'failed'
+                      ? 'destructive'
+                      : batch.status === 'halted'
+                      ? 'destructive'
+                      : 'secondary'
+                  }
+                >
+                  {batch.status}
+                </Badge>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
