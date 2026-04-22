@@ -202,9 +202,17 @@ async function regenerateJob(
   const qaDetail = job.qa_detail as Record<string, number> | null;
   const attempt = (job.attempt as number) || 0;
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
+  const promptMetaLocal = (job.prompt_metadata as Record<string, unknown> | null) || {};
+  const jobStrategy = (promptMetaLocal.strategy as string | null) || null;
+  // user_upload has no hero_shot but CAN be regenerated — the uploaded image
+  // becomes the hero for the regen.
+  const isUserUpload = job.prompt_adjustment === 'USER_UPLOAD' || jobStrategy === 'user_upload';
 
   try {
-    const isMLImport = !heroShot;
+    // True ML import = no hero AND not a user upload. User uploads share the
+    // "no hero" shape but should flow through the normal regen with their
+    // uploaded image acting as the hero.
+    const isMLImport = !heroShot && !isUserUpload;
     const existingOutput = job.output_storage_path as string;
     // Brand Gemini: use existing output (has correct pattern). Both hero+swatch = same image.
     // Normal regen: use hero original.

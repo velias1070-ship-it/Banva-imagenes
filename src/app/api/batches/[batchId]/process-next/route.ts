@@ -365,6 +365,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   }
 
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
+  // User uploads and true ML imports both lack a hero_shot. Neither is regen-able
+  // through the batch chain (the /results/[jobId] regen route is responsible
+  // for user uploads and uses the uploaded image as hero). Treat both the same
+  // here — defensive auto-approve so process-next never crashes trying to
+  // download a missing hero_shot.storage_path.
   const isMLImport = !job.hero_shot || job.prompt_adjustment === 'ML_IMPORT';
 
   // BRAND_ONLY jobs are owned by the regen route (/api/projects/[id]/results/[jobId]),
