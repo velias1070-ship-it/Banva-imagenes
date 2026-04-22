@@ -166,20 +166,36 @@ export async function generateResizedVariant(
     const sourceBuffer = Buffer.from(await outputData.arrayBuffer());
     const sourceBase64 = sourceBuffer.toString('base64');
 
-    // Download swatch for color reference
-    const { data: swatchData, error: swatchDlError } = await supabase.storage
-      .from('images')
-      .download(swatch.storage_path);
-
-    if (swatchDlError || !swatchData) {
-      throw new Error('Failed to download swatch');
+    // Try to download swatch for color reference. If the swatch has no physical file
+    // (common for ML-imported variants), fall back to single-image mode: the source
+    // image already shows the correct color, so we skip the swatch entirely.
+    let swatchBase64: string | null = null;
+    let swatchMimeType = 'image/png';
+    if (swatch?.storage_path) {
+      const { data: swatchData, error: swatchDlError } = await supabase.storage
+        .from('images')
+        .download(swatch.storage_path);
+      if (!swatchDlError && swatchData) {
+        const swatchBuffer = Buffer.from(await swatchData.arrayBuffer());
+        swatchBase64 = swatchBuffer.toString('base64');
+        swatchMimeType = swatch.mime_type || 'image/png';
+      } else {
+        console.log(`[resize] Swatch download failed (${swatchDlError?.message}), using source-only fallback`);
+      }
+    } else {
+      console.log('[resize] Swatch has no storage_path, using source-only fallback');
     }
 
-    const swatchBuffer = Buffer.from(await swatchData.arrayBuffer());
-    const swatchBase64 = swatchBuffer.toString('base64');
+    const hasSwatch = swatchBase64 !== null;
+    const colorAnchor = hasSwatch
+      ? 'Imagen 2 muestra el color/patron exacto.'
+      : 'El color y patron exactos ya estan en Imagen 1 — preservarlos sin desviacion.';
+    const fidelityLine = hasSwatch
+      ? '- Mismo color, patron y textura — fiel a Imagen 2'
+      : '- Mismo color, patron y textura — identicos a los de Imagen 1';
 
     // Build prompt for 1.5 plaza adaptation
-    const prompt = `Imagen 1 muestra un producto textil (set de 2 plazas). Imagen 2 muestra el color/patron exacto.
+    const prompt = `Imagen 1 muestra un producto textil (set de 2 plazas). ${colorAnchor}
 
 TAREA: Recrea la Imagen 1 adaptada a un set de 1.5 plaza.
 
@@ -195,7 +211,7 @@ CAMBIOS OBLIGATORIOS:
 
 QUE NO CAMBIAR:
 - Mismo tipo de escena (si es packaging queda packaging, si es cama queda cama)
-- Mismo color, patron y textura — fiel a Imagen 2
+${fidelityLine}
 - Mismo estilo de foto, iluminacion, fondo, props y decoracion
 - Mismos iconos, sellos (OEKO-TEX) y elementos graficos
 - Misma calidad fotografica
@@ -203,12 +219,14 @@ QUE NO CAMBIAR:
 Todo texto en espanol. No inventar colores ni patrones.
 Imagen fotorrealista de ${projectSettings.generation.resolution}px, cuadrada 1:1, RGB.`;
 
-    // Generate: approved image as hero (reference), swatch as Image 2 (color)
+    // Generate:
+    // - With swatch: source as hero (Image 1) + swatch (Image 2) for color anchor
+    // - Without swatch: source as the only image (Image 1), color comes from the source itself
     const result = await generateImage({
-      heroImageBase64: sourceBase64,
-      heroMimeType: 'image/png',
-      swatchImageBase64: swatchBase64,
-      swatchMimeType: swatch.mime_type || 'image/png',
+      heroImageBase64: hasSwatch ? sourceBase64 : undefined,
+      heroMimeType: hasSwatch ? 'image/png' : undefined,
+      swatchImageBase64: hasSwatch ? swatchBase64! : sourceBase64,
+      swatchMimeType: hasSwatch ? swatchMimeType : 'image/png',
       promptText: prompt,
       temperature: 0.3,
     });
