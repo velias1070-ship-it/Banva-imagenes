@@ -24,8 +24,8 @@ import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } 
 import { logPipelineEvent } from '@/lib/pipeline-log';
 import { generateResizedVariant } from './resize/route';
 
-// Vercel serverless: max execution time (free=60s, pro=300s)
-export const maxDuration = 60;
+// Vercel Pro: max 300s. Needed for GPT Image 2 fallback (~140s) + verifier.
+export const maxDuration = 300;
 
 interface RouteContext {
   params: Promise<{ id: string; jobId: string }>;

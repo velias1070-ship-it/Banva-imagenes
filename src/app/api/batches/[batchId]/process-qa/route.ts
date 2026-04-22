@@ -7,7 +7,8 @@ import { getProjectSettings } from '@/lib/project-settings';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 import type { BrandConfig } from '@/lib/brand';
 
-export const maxDuration = 60;
+// Vercel Pro: 300s. QA verifier can take 15-30s per job; chain handles multiple.
+export const maxDuration = 300;
 
 interface RouteContext {
   params: Promise<{ batchId: string }>;

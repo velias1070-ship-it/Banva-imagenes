@@ -25,8 +25,9 @@ import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } 
 import { MAX_QA_RETRIES } from '@/lib/constants';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 
-// Vercel serverless: max execution time — one job per invocation (~25s)
-export const maxDuration = 60;
+// Vercel Pro: max 300s. Needed for GPT Image 2 fallback (~140s) + verifier + upload.
+// One job per invocation — Gemini ~25s, GPT-2 ~145s, upload+verifier ~20s.
+export const maxDuration = 300;
 
 interface RouteContext {
   params: Promise<{ batchId: string }>;
