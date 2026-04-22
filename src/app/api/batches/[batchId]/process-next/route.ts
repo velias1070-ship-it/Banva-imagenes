@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage, type GeminiGenerateResult } from '@/lib/gemini/client';
+import { generateImageSmart } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
@@ -1033,17 +1034,29 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     // ── Normal single-pass generation (or fallback from multi-pass) ──
+    // generateImageSmart routes entre Gemini Flash/Pro y GPT Image 2 según
+    // category + swatch profile + attempt. Con ENABLE_GPT_IMAGE_2=0 (default)
+    // siempre usa Gemini (comportamiento legacy, safe).
     if (!result) {
+      const swatchProfile = (job.swatch.fabric_profile as Record<string, unknown> | null) || null;
+      const smartCtx = {
+        category,
+        swatchProfile: swatchProfile as { opacity?: 'sheer'|'translucent'|'opaque'; pattern_type?: string; complexity?: string } | null,
+        attempt: job.attempt,
+        useProModel,
+      };
       if (effectiveMode === 'from_scratch') {
-        result = await generateImage({
+        const smart = await generateImageSmart({
           swatchImageBase64: swatchBase64,
           swatchMimeType: 'image/png',
           promptText: prompt,
           temperature,
           useProModel,
-        });
+        }, smartCtx);
+        result = smart;
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
       } else {
-        result = await generateImage({
+        const smart = await generateImageSmart({
           heroImageBase64: heroBase64,
           heroMimeType: isBrandOnly ? 'image/png' : (job.hero_shot.mime_type || 'image/png'),
           swatchImageBase64: swatchBase64,
@@ -1051,7 +1064,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptText: prompt,
           temperature,
           useProModel,
-        });
+        }, smartCtx);
+        result = smart;
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
       }
     }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImage } from '@/lib/gemini/client';
+import { generateImageSmart } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
@@ -1034,20 +1035,29 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     // ── Normal single-pass generation (or fallback from multi-pass) ──
+    // generateImageSmart routea entre Gemini y GPT Image 2 segun categoría,
+    // swatch profile y attempt. Default ENABLE_GPT_IMAGE_2=0 = siempre Gemini.
     if (!result) {
+      const swatchProfile = (swatch.fabric_profile as unknown as Record<string, unknown> | null | undefined) || null;
+      const smartCtx = {
+        category,
+        swatchProfile: swatchProfile as { opacity?: 'sheer'|'translucent'|'opaque'; pattern_type?: string; complexity?: string } | null,
+        attempt,
+        useProModel,
+      };
       if (mode === 'from_scratch') {
-        result = await generateImage({
+        const smart = await generateImageSmart({
           swatchImageBase64: swatchBase64,
           swatchMimeType: 'image/png',
           promptText: prompt,
           temperature,
           useProModel,
-        });
+        }, smartCtx);
+        result = smart;
+        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
       } else {
         // If strategy enables flatten_hero (e.g. quilts), pre-process the hero
-        // through Sharp to remove its 3D relief (waffle dots, channel stitching)
-        // BEFORE sending to Gemini. This prevents hero texture bleeding into
-        // the result when the swatch is a flat printed pattern.
+        // through Sharp to remove its 3D relief before sending to the model.
         let heroBufferForGen: Buffer = heroBuffer;
         if (strategy.preprocessing.flatten_hero && !skipFlatten) {
           try {
@@ -1061,7 +1071,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           logPipelineEvent(jobId, 'HERO_FLATTEN_SKIPPED', 'api_param', { mode });
         }
         const heroBase64 = heroBufferForGen.toString('base64');
-        result = await generateImage({
+        const smart = await generateImageSmart({
           heroImageBase64: heroBase64,
           heroMimeType: heroShot?.mime_type || 'image/png',
           swatchImageBase64: swatchBase64,
@@ -1069,7 +1079,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           promptText: prompt,
           temperature,
           useProModel,
-        });
+        }, smartCtx);
+        result = smart;
+        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
       }
     }
 
