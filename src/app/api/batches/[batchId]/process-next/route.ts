@@ -1074,6 +1074,26 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (isInfografia) {
       logPipelineEvent(job.id, 'VERIFICATION', 'skipped (infografia color-only edit)');
     }
+
+    // ── EARLY UPLOAD ──
+    // Persist the generated image BEFORE expensive verification so we survive
+    // a Vercel 60s timeout mid-verifier with the image visible in the UI.
+    // The final upload block below re-uploads to a sluggified filename on success.
+    try {
+      const earlyPath = `projects/${project.id}/generated/${job.id}.png`;
+      await supabase.storage.from('images').upload(earlyPath, imageBuffer, {
+        contentType: result.imageMimeType || 'image/png',
+        upsert: true,
+      });
+      await supabase
+        .from('generation_jobs')
+        .update({ output_storage_path: earlyPath, updated_at: new Date().toISOString() })
+        .eq('id', job.id);
+      logPipelineEvent(job.id, 'EARLY_UPLOAD', earlyPath);
+    } catch (earlyErr) {
+      console.error('[process-next] Early upload failed (non-blocking):', earlyErr);
+    }
+
     let verificationRaw: Record<string, unknown> | null = null;
     // Delta-E short-circuit: before hitting the expensive VLM verifier
     // (~$0.10/call), compute a numeric perceptual color distance between

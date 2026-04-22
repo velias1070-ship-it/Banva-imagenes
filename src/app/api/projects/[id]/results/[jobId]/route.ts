@@ -1092,6 +1092,28 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (isInfografia) {
       logPipelineEvent(jobId, 'VERIFICATION', 'skipped (infografia color-only edit)');
     }
+
+    // ── EARLY UPLOAD ──
+    // Persist the generated image to storage and point output_storage_path at it
+    // BEFORE running expensive verification (Delta-E + VLM verifier, ~25-40s combined).
+    // If Vercel kills the function at the 60s mark mid-verifier, we still have the
+    // image saved and visible in the UI instead of output_storage_path=null "Sin imagen".
+    // The final status update below overwrites if verification passes/retries.
+    try {
+      const earlyPath = `projects/${projectId}/generated/${jobId}.png`;
+      await supabase.storage.from('images').upload(earlyPath, imageBuffer, {
+        contentType: 'image/png',
+        upsert: true,
+      });
+      await supabase
+        .from('generation_jobs')
+        .update({ output_storage_path: earlyPath, updated_at: new Date().toISOString() })
+        .eq('id', jobId);
+      logPipelineEvent(jobId, 'EARLY_UPLOAD', earlyPath);
+    } catch (earlyErr) {
+      console.error('[regenerateJob] Early upload failed (non-blocking):', earlyErr);
+    }
+
     let verificationRaw: Record<string, unknown> | null = null;
     // Delta-E pre-VLM color drift check (dual-route sync with process-next).
     // See src/lib/image-processing.ts computeSwatchOutputDeltaE for math
