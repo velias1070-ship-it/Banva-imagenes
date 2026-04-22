@@ -1172,12 +1172,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             // Save a debug copy of the rejected image so we can inspect what
             // Gemini actually produced (otherwise it's lost on retry).
             const debugPath = `projects/${project.id}/generated/_debug/${job.id}_attempt${job.attempt}_rejected.png`;
+            let debugSaved = false;
             try {
               await supabase.storage.from('images').upload(debugPath, imageBuffer, {
                 contentType: result.imageMimeType || 'image/png',
                 upsert: true,
               });
               logPipelineEvent(job.id, 'DEBUG_SAVED_REJECTED', debugPath);
+              debugSaved = true;
             } catch (saveErr) {
               console.error('[process-next] Debug save failed (non-blocking):', saveErr);
             }
@@ -1185,12 +1187,16 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             logPipelineEvent(job.id, 'VERIFICATION', 'FAIL', { score: verification.score, issues: verification.issues });
             logPipelineEvent(job.id, 'VERIFICATION_RETRY', feedback, { new_attempt: job.attempt + 1 });
             console.log(`[process-next] ⚠ Verification BLOCKED ${job.swatch.name} (score: ${verification.score}): ${feedback}`);
+            // Preserve the last rejected image as output_storage_path so the UI can render
+            // the job even if it hits max retries and flags without ever producing an approved
+            // output. Without this, flagged jobs show "Sin imagen" in results.
             await supabase.from('generation_jobs').update({
               status: 'pending',
               attempt: job.attempt + 1,
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               prompt_metadata: promptMetadata,
               verification_raw: verificationRaw,
+              ...(debugSaved ? { output_storage_path: debugPath } : {}),
               updated_at: new Date().toISOString(),
             }).eq('id', job.id);
             // Chain continues — process-next will pick this job up again with the feedback

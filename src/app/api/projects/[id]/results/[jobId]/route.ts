@@ -1174,7 +1174,22 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             delta_e_output_rgb: deltaEResult?.outputRgb ?? null,
           };
           if (!verification.pass && attempt < 4) {
-            // BLOCK: verification failed — delegate retry to process-next chain
+            // BLOCK: verification failed — delegate retry to process-next chain.
+            // Save the rejected image to _debug and point output_storage_path at it so the
+            // UI has something to render if the job later flags at max retries (otherwise
+            // the job ends with output_storage_path=null and shows "Sin imagen").
+            const debugPath = `projects/${projectId}/generated/_debug/${jobId}_attempt${attempt}_rejected.png`;
+            let debugSaved = false;
+            try {
+              await supabase.storage.from('images').upload(debugPath, imageBuffer, {
+                contentType: 'image/png',
+                upsert: true,
+              });
+              logPipelineEvent(jobId, 'DEBUG_SAVED_REJECTED', debugPath);
+              debugSaved = true;
+            } catch (saveErr) {
+              console.error('[regenerateJob] Debug save failed (non-blocking):', saveErr);
+            }
             const feedback = verification.feedback || verification.issues.join('. ');
             logPipelineEvent(jobId, 'VERIFICATION', 'FAIL', { score: verification.score, issues: verification.issues });
             logPipelineEvent(jobId, 'VERIFICATION_RETRY', feedback, { new_attempt: attempt + 1 });
@@ -1184,6 +1199,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               attempt: attempt + 1,
               prompt_metadata: promptMetadata,
+              ...(debugSaved ? { output_storage_path: debugPath } : {}),
               updated_at: new Date().toISOString(),
             }).eq('id', jobId);
             // Trigger process-next chain to pick up this pending job
