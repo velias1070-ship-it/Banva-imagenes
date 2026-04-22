@@ -256,6 +256,7 @@ Imagen fotorrealista de ${projectSettings.generation.resolution}px, cuadrada 1:1
         output_storage_path: newOutputPath,
         generation_time_ms: result.durationMs,
         prompt_text: prompt,
+        error_message: null,
         prompt_metadata: {
           strategy: 'resize_bed',
           source_job_id: originalJob.id,
