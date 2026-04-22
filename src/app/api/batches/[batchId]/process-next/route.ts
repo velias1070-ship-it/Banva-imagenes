@@ -189,13 +189,17 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   // ── SELF-HEALING: Reset stale "generating" jobs (stuck > 90s) ──
   // If batch is halted (e.g. user-cancel), push stale jobs to `error` instead of `pending`
   // so they don't get reclaimed and re-unhalt the batch on the next invocation.
+  // BRAND_ONLY jobs are owned by the regen route and must NOT be touched by the batch chain.
   const staleThreshold = new Date(Date.now() - 90_000).toISOString();
-  const { data: staleJobs } = await supabase
+  const { data: rawStaleJobs } = await supabase
     .from('generation_jobs')
-    .select('id')
+    .select('id, prompt_adjustment')
     .eq('batch_id', batchId)
     .eq('status', 'generating')
     .lt('updated_at', staleThreshold);
+  const staleJobs = (rawStaleJobs || []).filter(
+    (j) => j.prompt_adjustment !== 'BRAND_ONLY',
+  );
 
   if (staleJobs?.length) {
     const batchIsHalted = batch.status === 'halted';
@@ -362,6 +366,24 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
 
   const isBrandOnly = job.prompt_adjustment === 'BRAND_ONLY';
   const isMLImport = !job.hero_shot || job.prompt_adjustment === 'ML_IMPORT';
+
+  // BRAND_ONLY jobs are owned by the regen route (/api/projects/[id]/results/[jobId]),
+  // not by the batch chain. If one lands here (cron reset after a slow Brand Gemini
+  // call), DON'T touch it — the regen after() is likely still finishing, and auto-
+  // approving would clobber its output. Unclaim and chain to the next job.
+  if (isBrandOnly) {
+    logPipelineEvent(job.id, 'BRAND_ONLY_SKIP', 'process-next released BRAND_ONLY job back to regen route', { batch_id: batchId });
+    await supabase
+      .from('generation_jobs')
+      .update({
+        status: 'generating',
+        claimed_by: null,
+        claimed_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id);
+    return { chain: true, triggerQA: false };
+  }
 
   // ML imports have no hero_shot — they shouldn't go through Gemini generation.
   // If one ends up here (e.g. delegated from regenerateJob after verification failed),

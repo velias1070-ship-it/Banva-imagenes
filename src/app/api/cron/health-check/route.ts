@@ -104,13 +104,17 @@ export async function GET(request: NextRequest) {
 
     const batchIsNowHalted = batch.status === 'halted';
 
-    // Check for stale generating jobs
-    const { data: staleGenerating } = await supabase
+    // Check for stale generating jobs. Exclude BRAND_ONLY (owned by regen route, not
+    // the batch chain — resetting them causes the batch chain to claim + clobber them).
+    const { data: rawStaleGenerating } = await supabase
       .from('generation_jobs')
-      .select('id')
+      .select('id, prompt_adjustment')
       .eq('batch_id', batch.id)
       .eq('status', 'generating')
       .lt('updated_at', staleThreshold);
+    const staleGenerating = (rawStaleGenerating || []).filter(
+      (j) => j.prompt_adjustment !== 'BRAND_ONLY',
+    );
 
     // Check for stale qa_pending jobs
     const { data: staleQaPending } = await supabase
