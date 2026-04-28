@@ -49,7 +49,7 @@ WITH last_provider AS (
 UPDATE generation_jobs gj
 SET provider_used     = lp.provider_used,
     cost_usd_actual   = lp.cost_usd_actual,
-    model_id          = COALESCE(lp.model_id_event, btrim(gj.gemini_model_used)),
+    model_id          = COALESCE(NULLIF(btrim(lp.model_id_event, E' \t\n\r'), ''), btrim(gj.gemini_model_used, E' \t\n\r')),
     _telemetry_source = 'sprint_1_runtime'
 FROM last_provider lp
 WHERE gj.id = lp.job_id;
@@ -60,14 +60,14 @@ WHERE gj.id = lp.job_id;
 -- btrim() handles trailing whitespace/newlines observed in legacy data.
 UPDATE generation_jobs SET
   provider_used = CASE
-    WHEN btrim(gemini_model_used) ILIKE 'gpt-image%'                       THEN 'gpt-image-2'
-    WHEN btrim(gemini_model_used) ILIKE 'sharp-%'                          THEN 'sharp'
-    WHEN btrim(gemini_model_used) = 'gemini-brand'                         THEN 'gemini-flash'
-    WHEN btrim(gemini_model_used) ILIKE '%-pro-%' OR btrim(gemini_model_used) ILIKE '%-pro' THEN 'gemini-pro'
-    WHEN btrim(gemini_model_used) ILIKE '%-flash-%' OR btrim(gemini_model_used) ILIKE '%-flash' THEN 'gemini-flash'
+    WHEN btrim(gemini_model_used, E' \t\n\r') ILIKE 'gpt-image%'                       THEN 'gpt-image-2'
+    WHEN btrim(gemini_model_used, E' \t\n\r') ILIKE 'sharp-%'                          THEN 'sharp'
+    WHEN btrim(gemini_model_used, E' \t\n\r') = 'gemini-brand'                         THEN 'gemini-flash'
+    WHEN btrim(gemini_model_used, E' \t\n\r') ILIKE '%-pro-%' OR btrim(gemini_model_used, E' \t\n\r') ILIKE '%-pro' THEN 'gemini-pro'
+    WHEN btrim(gemini_model_used, E' \t\n\r') ILIKE '%-flash-%' OR btrim(gemini_model_used, E' \t\n\r') ILIKE '%-flash' THEN 'gemini-flash'
     ELSE NULL
   END,
-  model_id = btrim(gemini_model_used),
+  model_id = NULLIF(btrim(gemini_model_used, E' \t\n\r'), ''),
   _telemetry_source = 'backfill_inferred'
 WHERE provider_used IS NULL
   AND gemini_model_used IS NOT NULL;
@@ -103,11 +103,10 @@ BEGIN
   RAISE NOTICE '=== Migration 007 — backfill report ===';
   RAISE NOTICE '  Total terminal jobs (approved/flagged/error): %', total_terminal;
   IF total_terminal > 0 THEN
-    RAISE NOTICE '  sprint_1_runtime  (high confidence):   % (%.1f%%)', cnt_runtime,  100.0 * cnt_runtime  / total_terminal;
-    RAISE NOTICE '  backfill_inferred (pattern-matched):   % (%.1f%%)', cnt_inferred, 100.0 * cnt_inferred / total_terminal;
-    RAISE NOTICE '  legacy NULL       (irrecoverable):     % (%.1f%%)', cnt_null,     100.0 * cnt_null     / total_terminal;
-    RAISE NOTICE '  Total covered:                         % (%.1f%%)', cnt_runtime + cnt_inferred,
-      100.0 * (cnt_runtime + cnt_inferred) / total_terminal;
+    RAISE NOTICE '  sprint_1_runtime  (high confidence):   % (% %%)',  cnt_runtime,                   ROUND(100.0 * cnt_runtime  / total_terminal, 1);
+    RAISE NOTICE '  backfill_inferred (pattern-matched):   % (% %%)',  cnt_inferred,                  ROUND(100.0 * cnt_inferred / total_terminal, 1);
+    RAISE NOTICE '  legacy NULL       (irrecoverable):     % (% %%)',  cnt_null,                      ROUND(100.0 * cnt_null     / total_terminal, 1);
+    RAISE NOTICE '  Total covered:                         % (% %%)',  cnt_runtime + cnt_inferred,    ROUND(100.0 * (cnt_runtime + cnt_inferred) / total_terminal, 1);
   ELSE
     RAISE NOTICE '  (no terminal jobs in table — fresh schema)';
   END IF;
