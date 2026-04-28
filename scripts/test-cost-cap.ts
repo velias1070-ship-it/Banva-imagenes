@@ -68,6 +68,7 @@ async function main() {
         durationMs: 50,
         modelId: 'gemini-3.1-flash-image-preview',
         costUsd: 0.045,
+        providerFamily: 'gemini',
       };
     };
     MODEL_REGISTRY['gemini-pro'].adapter.generate = async () => {
@@ -79,6 +80,7 @@ async function main() {
         durationMs: 50,
         modelId: 'gemini-3-pro-image-preview',
         costUsd: 0.134,
+        providerFamily: 'gemini',
       };
     };
     if (MODEL_REGISTRY['gpt-image-2']) {
@@ -91,6 +93,7 @@ async function main() {
           durationMs: 50,
           modelId: 'gpt-image-2',
           costUsd: 0.21,
+          providerFamily: 'openai',
         };
       };
     }
