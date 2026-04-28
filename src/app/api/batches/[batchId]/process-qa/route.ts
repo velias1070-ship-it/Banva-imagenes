@@ -5,6 +5,7 @@ import { getCategoryStrategy } from '@/lib/category-strategy';
 import { shouldHaltBatch } from '@/lib/qa-criteria';
 import { getProjectSettings } from '@/lib/project-settings';
 import { logPipelineEvent } from '@/lib/pipeline-log';
+import { computeQAErrorTransition } from '@/lib/qa-rate-limit-transition';
 import type { BrandConfig } from '@/lib/brand';
 
 // Vercel Pro: 300s. QA verifier can take 15-30s per job; chain handles multiple.
@@ -337,18 +338,38 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     );
 
   } catch (err) {
-    // QA failure → reset to qa_pending (another chain attempt or health check will retry)
+    // QA failure path — Sprint 2 issue #1.
+    //
+    // Branches by error type via computeQAErrorTransition (pure helper, tested
+    // in scripts/test-rate-limit-transitions.ts):
+    //   - 429 / Resource Exhausted / quota → status=qa_rate_limited with
+    //     next_retry_at; cron /api/cron/retry-rate-limited promotes back to
+    //     qa_pending when next_retry_at elapses. Backoff: [30s, 2m, 10m, 30m, 60m].
+    //     After 24h cumulative in this loop, terminal status=error.
+    //   - non-429 → legacy reset to qa_pending (no upper bound today; Sprint 2.x).
+    //
+    // Why no sleep here: the function exits immediately to free the Vercel
+    // invocation. The cron is the timer, not the function. Costs $0 to wait.
     const errorMessage = err instanceof Error ? err.message : 'Unknown QA error';
-    console.error(`[process-qa] Job ${job.id.substring(0, 8)} QA error:`, errorMessage);
+    const transition = computeQAErrorTransition({
+      promptMetadata: job.prompt_metadata as Record<string, unknown> | null,
+      errorMessage,
+    });
+    console.error(
+      `[process-qa] Job ${job.id.substring(0, 8)} QA error → ${transition.kind}:`,
+      errorMessage,
+    );
 
-    await supabase
-      .from('generation_jobs')
-      .update({
-        status: 'qa_pending', // Reset — NOT qa_processing (allow retry)
-        error_message: `QA error: ${errorMessage}`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
+    if (transition.kind === 'rate_limit_deferred') {
+      logPipelineEvent(job.id, 'RATE_LIMIT_DEFERRED', `retry ${transition.newHistoryEntry.retry_n}, wait ${transition.newHistoryEntry.wait_minutes}min`, {
+        next_retry_at: transition.newHistoryEntry.next_retry_at,
+        hours_in_loop: transition.newHistoryEntry.hours_in_loop,
+      });
+    } else if (transition.kind === 'rate_limit_exhausted') {
+      logPipelineEvent(job.id, 'RATE_LIMIT_EXHAUSTED', `${transition.hoursInLoop.toFixed(1)}h in 429 loop, ${transition.newHistoryEntry.retry_n} retries — terminal`);
+    }
+
+    await supabase.from('generation_jobs').update(transition.update).eq('id', job.id);
   }
 
   // Signal: chain to next QA job

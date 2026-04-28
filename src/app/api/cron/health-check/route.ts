@@ -190,8 +190,39 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Relaunch QA chain (for stale qa_pending OR recovered qa_processing)
-    const needsQARelaunch = (staleQaPending?.length || 0) > 0 || (staleQaProcessing?.length || 0) > 0;
+    // ── DEFENSE IN DEPTH: rescue qa_rate_limited jobs whose next_retry_at is
+    //   >1h overdue. The primary recovery is /api/cron/retry-rate-limited
+    //   (every 10 min), but if THAT cron is broken/disabled, this daily
+    //   sweep guarantees jobs eventually escape rate-limit purgatory.
+    //   Sprint 2 issue #1.
+    const overdueRateLimitedThreshold = new Date(Date.now() - 3_600_000).toISOString(); // 1h ago
+    const { data: overdueRateLimited } = await supabase
+      .from('generation_jobs')
+      .select('id')
+      .eq('batch_id', batch.id)
+      .eq('status', 'qa_rate_limited')
+      .lt('next_retry_at', overdueRateLimitedThreshold);
+
+    if ((overdueRateLimited?.length || 0) > 0) {
+      for (const job of overdueRateLimited!) {
+        await supabase
+          .from('generation_jobs')
+          .update({
+            status: 'qa_pending',
+            next_retry_at: null,
+            error_message: 'Rescued by daily health check — qa_rate_limited overdue >1h (primary cron may be down)',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', job.id)
+          .eq('status', 'qa_rate_limited');
+      }
+      actions.push(`Rescued ${overdueRateLimited!.length} overdue qa_rate_limited → qa_pending`);
+    }
+
+    // Relaunch QA chain (for stale qa_pending OR recovered qa_processing OR rescued rate-limited)
+    const needsQARelaunch = (staleQaPending?.length || 0) > 0
+      || (staleQaProcessing?.length || 0) > 0
+      || (overdueRateLimited?.length || 0) > 0;
     if (needsQARelaunch) {
       try {
         await fetch(`${baseUrl}/api/batches/${batch.id}/process-qa`, {
