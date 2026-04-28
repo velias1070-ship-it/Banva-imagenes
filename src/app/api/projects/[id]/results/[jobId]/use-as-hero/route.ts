@@ -333,6 +333,8 @@ IDIOMA: Todo texto visible DEBE estar en español.
 
 Genera una imagen fotorrealista de ${projectSettings.generation.resolution}.${buildSizePromptNote(swatch.sku_suffix, category)}`;
 
+    // TODO Sprint 2: bypassa generateImageSmart, candidato refactor.
+    // Sin telemetría provider_used/model_id/cost_usd_actual hoy.
     const result = await generateImage({
       heroImageBase64: heroBase64,
       heroMimeType: 'image/png',

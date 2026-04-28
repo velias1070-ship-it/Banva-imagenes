@@ -91,6 +91,8 @@ REGLAS:
 - La imagen debe mantener calidad fotografica profesional`;
 
       // Send to Gemini — image as hero, no swatch needed
+      // TODO Sprint 2: bypassa generateImageSmart, candidato refactor.
+      // Sin telemetría provider_used/model_id/cost_usd_actual hoy.
       const result = await generateImage({
         heroImageBase64: imageBase64,
         heroMimeType: 'image/png',

@@ -26,6 +26,8 @@ ${patternDescription ? `\nThe pattern is described as: "${patternDescription}"` 
 CRITICAL: Reproduce the pattern EXACTLY as it appears on the product. Do NOT simplify, abstract, or reinterpret it.`;
 
   try {
+    // TODO Sprint 2: bypassa generateImageSmart, candidato refactor.
+    // Sin telemetría provider_used/model_id/cost_usd_actual hoy.
     const result = await generateImage({
       swatchImageBase64: swatchBase64,
       swatchMimeType: swatchMimeType,

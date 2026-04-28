@@ -222,6 +222,8 @@ Imagen fotorrealista de ${projectSettings.generation.resolution}px, cuadrada 1:1
     // Generate:
     // - With swatch: source as hero (Image 1) + swatch (Image 2) for color anchor
     // - Without swatch: source as the only image (Image 1), color comes from the source itself
+    // TODO Sprint 2: bypassa generateImageSmart, candidato refactor.
+    // Sin telemetría provider_used/model_id/cost_usd_actual hoy.
     const result = await generateImage({
       heroImageBase64: hasSwatch ? sourceBase64 : undefined,
       heroMimeType: hasSwatch ? 'image/png' : undefined,
