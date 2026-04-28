@@ -1,104 +1,127 @@
--- Migration 007: provider telemetry columns + backfill + drop legacy gemini_model_used
+-- Migration 007: provider telemetry columns + best-effort backfill (additive)
 --
 -- Why: gemini_model_used lies when GPT-2 (or any non-Gemini provider) is used —
 -- process-next:1311 and results/[jobId]:1324 hardcode it to GEMINI_MODEL_PRO/GEMINI_MODEL
 -- regardless of which provider actually generated the image. The truth lives only in
 -- pipeline_log JSONB (not queryable). This migration:
---   1. Adds queryable columns: provider_used, model_id, cost_usd_actual
---   2. Backfills from pipeline_log PROVIDER_USED events (shape: {event, detail, data:{cost_usd}})
---   3. Asserts >99% coverage on completed jobs (else aborts via RAISE)
---   4. Drops the lying gemini_model_used column
+--   1. Adds queryable columns: provider_used, model_id, cost_usd_actual, _telemetry_source
+--   2. Backfills from pipeline_log PROVIDER_USED events (sprint_1_runtime tag)
+--   3. Falls back to pattern matching gemini_model_used (backfill_inferred tag)
+--   4. Reports coverage but DOES NOT block — additive migration is safe by design
+--   5. KEEPS gemini_model_used column for 2-3 months until confidence in new columns
 --
--- Order is strict and atomic in a single transaction — if assert fails, ROLLBACK.
+-- ROUTE B (additive): no destructive DROP. The legacy column stays as a fallback
+-- and audit trail. A future migration drops it after >30 days of clean telemetry.
 --
--- IMPORTANT shape note: PROVIDER_USED events were logged as:
---   logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd })
--- which the helper writes as { ts, event:'PROVIDER_USED', detail:'<provider>', data:{cost_usd} }.
--- So provider lives in event->>'detail', cost in event->'data'->>'cost_usd'. There is NO model_id
--- in pipeline_log — we infer model_id as a best-effort fallback from gemini_model_used (when the
--- provider was Gemini and the column was at least nominally correct) or 'gpt-image-2' literal.
+-- IMPORTANT shape note: PROVIDER_USED events are logged as:
+--   logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd, model_id })
+-- which the helper writes as { ts, event:'PROVIDER_USED', detail:'<provider>', data:{cost_usd, model_id} }.
+-- So provider lives in event->>'detail', cost+model_id in event->'data'->>'<key>'.
+--
+-- _telemetry_source values:
+--   'sprint_1_runtime'    : populated from PROVIDER_USED event (high confidence)
+--   'backfill_inferred'   : pattern-matched from gemini_model_used (medium confidence)
+--   NULL                  : no signal available (legacy job, irrecoverable)
 
 BEGIN;
 
--- Step 1: ADD COLUMN
+-- Step 1: ADD COLUMN (additive only, no DROP)
 ALTER TABLE generation_jobs
   ADD COLUMN provider_used TEXT,
   ADD COLUMN model_id TEXT,
-  ADD COLUMN cost_usd_actual DECIMAL(8,4);
+  ADD COLUMN cost_usd_actual DECIMAL(8,4),
+  ADD COLUMN _telemetry_source TEXT;
 
--- Step 2: BACKFILL from pipeline_log PROVIDER_USED events
+-- Step 2: PRIMARY BACKFILL — from pipeline_log PROVIDER_USED events.
 -- Take the LAST PROVIDER_USED event per job (latest attempt's truth).
+-- This is the high-confidence path: events written by Sprint 1 runtime.
 WITH last_provider AS (
   SELECT DISTINCT ON (gj.id)
     gj.id AS job_id,
     ev->>'detail' AS provider_used,
-    NULLIF(ev->'data'->>'cost_usd', '')::DECIMAL(8,4) AS cost_usd_actual
+    NULLIF(ev->'data'->>'cost_usd', '')::DECIMAL(8,4) AS cost_usd_actual,
+    NULLIF(ev->'data'->>'model_id', '') AS model_id_event
   FROM generation_jobs gj,
        LATERAL jsonb_array_elements(COALESCE(gj.pipeline_log, '[]'::jsonb)) AS ev
   WHERE ev->>'event' = 'PROVIDER_USED'
   ORDER BY gj.id, (ev->>'ts') DESC
 )
 UPDATE generation_jobs gj
-SET provider_used    = lp.provider_used,
-    cost_usd_actual  = lp.cost_usd_actual,
-    model_id = CASE
-      WHEN lp.provider_used = 'gpt-image-2' THEN 'gpt-image-2'
-      WHEN lp.provider_used = 'gemini-pro'  THEN COALESCE(gj.gemini_model_used, 'gemini-3-pro-image-preview')
-      WHEN lp.provider_used = 'gemini-flash' THEN COALESCE(gj.gemini_model_used, 'gemini-3.1-flash-image-preview')
-      ELSE gj.gemini_model_used
-    END
+SET provider_used     = lp.provider_used,
+    cost_usd_actual   = lp.cost_usd_actual,
+    model_id          = COALESCE(lp.model_id_event, btrim(gj.gemini_model_used)),
+    _telemetry_source = 'sprint_1_runtime'
 FROM last_provider lp
 WHERE gj.id = lp.job_id;
 
--- Fallback for completed jobs WITHOUT a PROVIDER_USED event (legacy jobs predating the smart router):
--- if gemini_model_used is set, infer provider from it.
-UPDATE generation_jobs
-SET provider_used = CASE
-      WHEN gemini_model_used ILIKE '%pro%' THEN 'gemini-pro'
-      WHEN gemini_model_used ILIKE '%flash%' THEN 'gemini-flash'
-      WHEN gemini_model_used = 'gemini-brand' THEN 'gemini-flash'
-      WHEN gemini_model_used = 'sharp-only' THEN 'sharp-only'
-      ELSE 'gemini-flash'
-    END,
-    model_id = gemini_model_used
+-- Step 3: FALLBACK BACKFILL — pattern match gemini_model_used.
+-- Only for jobs not covered by step 2 and that have a non-null gemini_model_used.
+-- Treats 'sharp-only' / 'sharp-tint' as a special 'sharp' provider (overlay-only flow).
+-- btrim() handles trailing whitespace/newlines observed in legacy data.
+UPDATE generation_jobs SET
+  provider_used = CASE
+    WHEN btrim(gemini_model_used) ILIKE 'gpt-image%'                       THEN 'gpt-image-2'
+    WHEN btrim(gemini_model_used) ILIKE 'sharp-%'                          THEN 'sharp'
+    WHEN btrim(gemini_model_used) = 'gemini-brand'                         THEN 'gemini-flash'
+    WHEN btrim(gemini_model_used) ILIKE '%-pro-%' OR btrim(gemini_model_used) ILIKE '%-pro' THEN 'gemini-pro'
+    WHEN btrim(gemini_model_used) ILIKE '%-flash-%' OR btrim(gemini_model_used) ILIKE '%-flash' THEN 'gemini-flash'
+    ELSE NULL
+  END,
+  model_id = btrim(gemini_model_used),
+  _telemetry_source = 'backfill_inferred'
 WHERE provider_used IS NULL
   AND gemini_model_used IS NOT NULL;
 
--- Step 3: ASSERT coverage on completed jobs
+-- Step 4: REPORT post-backfill coverage. Does NOT abort — just informational.
+-- This replaces the blocking ASSERT (route B is additive, so 100% coverage is not required).
 DO $$
 DECLARE
-  null_count INT;
-  total_completed INT;
-  pct_null DECIMAL;
+  total_terminal INT;
+  cnt_runtime    INT;
+  cnt_inferred   INT;
+  cnt_null       INT;
 BEGIN
-  SELECT COUNT(*) INTO null_count
-  FROM generation_jobs
-  WHERE provider_used IS NULL AND status IN ('completed', 'approved', 'qa_pending');
+  SELECT COUNT(*) INTO total_terminal
+    FROM generation_jobs
+    WHERE status IN ('approved', 'flagged', 'error');
 
-  SELECT COUNT(*) INTO total_completed
-  FROM generation_jobs
-  WHERE status IN ('completed', 'approved', 'qa_pending');
+  SELECT COUNT(*) INTO cnt_runtime
+    FROM generation_jobs
+    WHERE _telemetry_source = 'sprint_1_runtime'
+      AND status IN ('approved', 'flagged', 'error');
 
-  IF total_completed = 0 THEN
-    -- Empty table or no completed rows — accept and continue.
-    RAISE NOTICE 'No completed jobs found; backfill check skipped.';
+  SELECT COUNT(*) INTO cnt_inferred
+    FROM generation_jobs
+    WHERE _telemetry_source = 'backfill_inferred'
+      AND status IN ('approved', 'flagged', 'error');
+
+  SELECT COUNT(*) INTO cnt_null
+    FROM generation_jobs
+    WHERE _telemetry_source IS NULL
+      AND status IN ('approved', 'flagged', 'error');
+
+  RAISE NOTICE '=== Migration 007 — backfill report ===';
+  RAISE NOTICE '  Total terminal jobs (approved/flagged/error): %', total_terminal;
+  IF total_terminal > 0 THEN
+    RAISE NOTICE '  sprint_1_runtime  (high confidence):   % (%.1f%%)', cnt_runtime,  100.0 * cnt_runtime  / total_terminal;
+    RAISE NOTICE '  backfill_inferred (pattern-matched):   % (%.1f%%)', cnt_inferred, 100.0 * cnt_inferred / total_terminal;
+    RAISE NOTICE '  legacy NULL       (irrecoverable):     % (%.1f%%)', cnt_null,     100.0 * cnt_null     / total_terminal;
+    RAISE NOTICE '  Total covered:                         % (%.1f%%)', cnt_runtime + cnt_inferred,
+      100.0 * (cnt_runtime + cnt_inferred) / total_terminal;
   ELSE
-    pct_null := (null_count::DECIMAL / total_completed::DECIMAL) * 100;
-    RAISE NOTICE 'Backfill coverage: % completed jobs, % NULL provider_used (%.2f%%).',
-      total_completed, null_count, pct_null;
-    IF pct_null > 1.0 THEN
-      RAISE EXCEPTION
-        'Backfill coverage insufficient: % of % completed jobs lack provider_used (%.2f%% > 1%% threshold). Aborting migration.',
-        null_count, total_completed, pct_null;
-    END IF;
+    RAISE NOTICE '  (no terminal jobs in table — fresh schema)';
   END IF;
+  RAISE NOTICE '======================================';
+  RAISE NOTICE 'Note: gemini_model_used column kept for 2-3 months as audit trail.';
+  RAISE NOTICE 'Filter model_performance queries by _telemetry_source to exclude inferred/legacy.';
 END $$;
 
--- Step 4: DROP legacy column (only reached if step 3 didn't RAISE EXCEPTION)
-ALTER TABLE generation_jobs DROP COLUMN gemini_model_used;
+-- Step 5: indexes for telemetry queries
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_model_id           ON generation_jobs(model_id);
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_provider_used      ON generation_jobs(provider_used);
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_telemetry_source   ON generation_jobs(_telemetry_source);
 
--- Step 5: index for telemetry queries
-CREATE INDEX IF NOT EXISTS idx_generation_jobs_model_id ON generation_jobs(model_id);
-CREATE INDEX IF NOT EXISTS idx_generation_jobs_provider_used ON generation_jobs(provider_used);
+-- NOTE: No DROP COLUMN gemini_model_used. Route B (additive). Schedule drop in migration 0XX
+-- after >30 days of clean Sprint 1 telemetry on new jobs.
 
 COMMIT;

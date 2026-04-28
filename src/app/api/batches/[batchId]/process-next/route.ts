@@ -1321,6 +1321,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         provider_used: providerUsed,
         model_id: modelIdUsed,
         cost_usd_actual: costUsdActual,
+        _telemetry_source: 'sprint_1_runtime',
         error_message: null,
         updated_at: new Date().toISOString(),
         // ─── Observability v1 captures ───
