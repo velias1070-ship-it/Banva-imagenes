@@ -1004,6 +1004,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       temperature, mode: effectiveMode, brand: brand?.name || null,
     });
     let result: GeminiGenerateResult | undefined;
+    // Telemetry captured per generation path; persisted on the job at the end of this block.
+    let providerUsed: string | undefined;
+    let modelIdUsed: string | undefined;
+    let costUsdActual: number | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
     if (false && category === 'sabanas' && effectiveMode === 'edit') {
@@ -1055,7 +1059,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           useProModel,
         }, smartCtx);
         result = smart;
-        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
+        providerUsed = smart.providerUsed;
+        modelIdUsed = smart.modelIdUsed;
+        costUsdActual = smart.costEstimateUsd;
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
       } else {
         const smart = await generateImageSmart({
           heroImageBase64: heroBase64,
@@ -1067,7 +1074,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           useProModel,
         }, smartCtx);
         result = smart;
-        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
+        providerUsed = smart.providerUsed;
+        modelIdUsed = smart.modelIdUsed;
+        costUsdActual = smart.costEstimateUsd;
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
       }
     }
 
@@ -1308,7 +1318,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
-        gemini_model_used: useProModel ? (process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview'),
+        provider_used: providerUsed,
+        model_id: modelIdUsed,
+        cost_usd_actual: costUsdActual,
         error_message: null,
         updated_at: new Date().toISOString(),
         // ─── Observability v1 captures ───

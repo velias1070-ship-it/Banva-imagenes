@@ -558,7 +558,8 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
         status: 'approved',
         output_storage_path: outputPath,
         generation_time_ms: 0,
-        gemini_model_used: usedGemini ? 'gemini-brand' : 'sharp-only',
+        provider_used: usedGemini ? 'gemini-flash' : 'sharp-only',
+        model_id: usedGemini ? (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview') : 'sharp',
         attempt: attempt + 1,
         qa_score: 0.95,
         qa_feedback: usedGemini ? 'Auto-approved (BRAND_ONLY Gemini)' : 'Auto-approved (BRAND_ONLY Sharp fallback)',
@@ -1007,6 +1008,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     });
 
     let result: { success: boolean; imageBase64?: string; imageMimeType?: string; error?: string; durationMs: number } | undefined;
+    // Telemetry captured per generation path; persisted on the job at the end of this block.
+    let providerUsed: string | undefined;
+    let modelIdUsed: string | undefined;
+    let costUsdActual: number | undefined;
 
     // ── Multi-pass generation for sabanas (DISABLED — single-pass Pro gives better results) ──
     if (false && category === 'sabanas' && mode === 'edit') {
@@ -1056,7 +1061,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           useProModel,
         }, smartCtx);
         result = smart;
-        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
+        providerUsed = smart.providerUsed;
+        modelIdUsed = smart.modelIdUsed;
+        costUsdActual = smart.costEstimateUsd;
+        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
       } else {
         // If strategy enables flatten_hero (e.g. quilts), pre-process the hero
         // through Sharp to remove its 3D relief before sending to the model.
@@ -1083,7 +1091,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           useProModel,
         }, smartCtx);
         result = smart;
-        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd });
+        providerUsed = smart.providerUsed;
+        modelIdUsed = smart.modelIdUsed;
+        costUsdActual = smart.costEstimateUsd;
+        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
       }
     }
 
@@ -1323,7 +1334,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         status: finalStatus,
         output_storage_path: outputPath,
         generation_time_ms: result.durationMs,
-        gemini_model_used: useProModel ? (process.env.GEMINI_MODEL_PRO || 'gemini-3.1-pro-preview') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview'),
+        provider_used: providerUsed,
+        model_id: modelIdUsed,
+        cost_usd_actual: costUsdActual,
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,
