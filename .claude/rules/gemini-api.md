@@ -5,7 +5,8 @@
 | Parametro | Valor | Env Var |
 |-----------|-------|---------|
 | Modelo default (attempt 0) | `gemini-3.1-flash-image-preview` | `GEMINI_MODEL` |
-| Modelo escalada (retry + brand) | `gemini-3.1-pro-preview` | `GEMINI_MODEL_PRO` |
+| Modelo escalada (retry) | `gemini-3.1-pro-preview` | `GEMINI_MODEL_PRO` |
+| Modelo BRAND_ONLY | `gemini-3.1-flash-image-preview` (Flash, decisión provisoria validada con n=3 en abr-2026) | `GEMINI_MODEL` |
 | Modelo analisis (shot/stripe/pattern) | `gemini-2.0-flash` default, override a `gemini-2.5-flash` por caller | `GEMINI_ANALYSIS_MODEL` |
 | Modelo verifier (swatch fidelity) | `gemini-2.5-pro` | `GEMINI_VERIFY_MODEL` |
 | Endpoint | `https://generativelanguage.googleapis.com/v1beta/models` | `GEMINI_ENDPOINT` |
@@ -20,8 +21,8 @@
 - **Calidad**: Flash da textura de tela 4/5 vs Pro 5/5 (ranking Arena.ai, ver `research/2026-04-14-ai-image-pipelines-ecommerce-textile.md`). Para la mayoria de las categorias la diferencia no justifica el 3x.
 - **Escalada automatica**: el pipeline escala a Pro en estos casos:
   1. Retry despues de fallar verifier 2.5 Pro (`process-next/route.ts` — `useProModel: true` en retries).
-  2. Flujo BRAND_ONLY (`results/[jobId]/route.ts` — el brand overlay con re-rendering usa Pro por mejor preservacion de texto y logos).
-  3. Cualquier job con `attempt >= proThreshold` (umbral por categoria en `category-strategy.ts`).
+  2. Cualquier job con `attempt >= proThreshold` (umbral por categoria en `category-strategy.ts`).
+- **BRAND_ONLY usa Flash (no Pro)**: el flujo brand overlay con re-rendering corre con `gemini-flash` por defecto. Decisión provisoria basada en n=3 jobs (abr-2026): approval rate 66.7%, avg qa_score 0.867. El único fail observado fue con Pro y por `product_fidelity = 0.0` (caso `PATRON`/swatch floral ignorado), no por capacidad del modelo. Pro no resuelve ese caso. Re-evaluar cuando `model_performance` view tenga >30 brand jobs. Configurado en `config/routing-rules.json` → `categories.brand.attempts`.
 - **Degradacion conocida de Flash**: "Nano Banana 2" tiene drift documentado despues de 3-4 ediciones iterativas. Por eso el retry escala a Pro en vez de reintentar con Flash.
 
 Regla: si tocas el default, actualiza ESTE archivo Y `CLAUDE.md` simultaneamente — los dos tienen que decir lo mismo.

@@ -33,7 +33,9 @@
     },
 
     "brand": {
-      "attempts": ["gemini-flash", "gemini-flash"]
+      "attempts": ["gemini-flash", "gemini-flash"],
+      "_review_when": "model_performance view tenga >30 brand jobs",
+      "_decision_basis": "n=3, approval 66.7%, avg_score 0.867, abr-2026 (1 fail con Pro por product_fidelity=0.0, no por modelo)"
     }
   },
 

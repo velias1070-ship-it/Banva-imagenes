@@ -54,6 +54,8 @@ const CategoryRule = z.object({
   attempts: Chain.optional(),
   shot_types: z.record(z.string(), z.object({ attempts: Chain })).optional(),
   swatch_overrides: SwatchOverrides.optional(),
+  _review_when: z.string().optional(),
+  _decision_basis: z.string().optional(),
 });
 
 export const RoutingRulesSchema = z.object({
