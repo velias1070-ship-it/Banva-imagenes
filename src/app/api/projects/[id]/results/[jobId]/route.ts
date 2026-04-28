@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImage } from '@/lib/gemini/client';
 import { generateImageSmart } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
@@ -418,14 +417,17 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
             }
           }
 
-          const geminiResult = await generateImage({
-            heroImageBase64: sourceB64,
-            heroMimeType: 'image/png',
-            swatchImageBase64: sourceB64,
-            swatchMimeType: 'image/png',
-            promptText: buildBrandPrompt(extraDirective),
-            temperature: attempt === 1 ? 0.2 : 0.4, // higher temperature on retry for variation
-          });
+          const geminiResult = await generateImageSmart(
+            {
+              heroImageBase64: sourceB64,
+              heroMimeType: 'image/png',
+              swatchImageBase64: sourceB64,
+              swatchMimeType: 'image/png',
+              promptText: buildBrandPrompt(extraDirective),
+              temperature: attempt === 1 ? 0.2 : 0.4, // higher temperature on retry for variation
+            },
+            { category: 'brand', attempt: attempt - 1 },
+          );
 
           if (!geminiResult.success || !geminiResult.imageBase64) {
             logPipelineEvent(jobId, 'BRAND_GEMINI_FAILED', `attempt ${attempt}: ${geminiResult.error || 'no image'}`);

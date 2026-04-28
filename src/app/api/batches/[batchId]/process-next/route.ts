@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImage, type GeminiGenerateResult } from '@/lib/gemini/client';
+import { type GeminiGenerateResult } from '@/lib/gemini/client';
 import { generateImageSmart } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE } from '@/lib/image-processing';
 import {

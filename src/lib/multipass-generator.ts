@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { generateImage } from '@/lib/gemini/client';
+import { generateImageSmart } from '@/lib/image-providers';
 
 export interface MultiPassResult {
   success: boolean;
@@ -47,19 +47,22 @@ export async function generateSabanasMultiPass(
 
   // Pass 1: Pillowcases only
   console.log(`[multipass] Pass 1: Pillowcases (top 45% of swatch, ${width}x${height})`);
-  const pass1 = await generateImage({
-    heroImageBase64: currentBase64,
-    heroMimeType: currentMimeType,
-    swatchImageBase64: pillowCrop.toString('base64'),
-    swatchMimeType: 'image/png',
-    promptText: `Change ONLY the PILLOWCASES in Image 1 to match the fabric pattern in Image 2.
+  const pass1 = await generateImageSmart(
+    {
+      heroImageBase64: currentBase64,
+      heroMimeType: currentMimeType,
+      swatchImageBase64: pillowCrop.toString('base64'),
+      swatchMimeType: 'image/png',
+      promptText: `Change ONLY the PILLOWCASES in Image 1 to match the fabric pattern in Image 2.
 DO NOT change the sheets, fitted sheet, or any other textile — ONLY the pillowcases.
 DO NOT change non-textile elements (walls, furniture, floor, lamp, headboard).
 Keep the exact same composition, camera angle, and lighting.
 The pillowcase pattern must match Image 2 EXACTLY — same texture, same stripes, same colors.`,
-    temperature,
-    useProModel,
-  });
+      temperature,
+      useProModel,
+    },
+    { category: 'sabanas', attempt: useProModel ? 1 : 0, useProModel },
+  );
 
   if (pass1.success && pass1.imageBase64) {
     currentBase64 = pass1.imageBase64;
@@ -73,20 +76,23 @@ The pillowcase pattern must match Image 2 EXACTLY — same texture, same stripes
 
   // Pass 2: Sheets only (preserve pillowcases from pass 1)
   console.log(`[multipass] Pass 2: Sheets (bottom 65% of swatch)`);
-  const pass2 = await generateImage({
-    heroImageBase64: currentBase64,
-    heroMimeType: currentMimeType,
-    swatchImageBase64: sheetCrop.toString('base64'),
-    swatchMimeType: 'image/png',
-    promptText: `Change ONLY the SHEETS (sabanas) in Image 1 to match the fabric pattern in Image 2.
+  const pass2 = await generateImageSmart(
+    {
+      heroImageBase64: currentBase64,
+      heroMimeType: currentMimeType,
+      swatchImageBase64: sheetCrop.toString('base64'),
+      swatchMimeType: 'image/png',
+      promptText: `Change ONLY the SHEETS (sabanas) in Image 1 to match the fabric pattern in Image 2.
 DO NOT change the pillowcases — they are already correct, leave them EXACTLY as they are.
 DO NOT change non-textile elements (walls, furniture, floor, lamp, headboard).
 Keep the exact same composition, camera angle, and lighting.
 The sheet pattern must match Image 2 EXACTLY — same texture, same pattern, same colors.
 IMPORTANT: Sheets (sabanas) are FLAT, thin fabric — they must lay SMOOTH and FLAT on the bed. DO NOT add volume, puffiness, or quilting. Sheets are NOT duvets/comforters/plumones.`,
-    temperature,
-    useProModel,
-  });
+      temperature,
+      useProModel,
+    },
+    { category: 'sabanas', attempt: useProModel ? 1 : 0, useProModel },
+  );
 
   if (pass2.success && pass2.imageBase64) {
     currentBase64 = pass2.imageBase64;
