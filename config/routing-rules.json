@@ -1,0 +1,48 @@
+{
+  "$schema_note": "Validated at runtime by src/lib/models/routing-rules.schema.ts. Model ids must exist in MODEL_REGISTRY. Order in 'attempts' arrays is the chain order: index 0 = attempt 0.",
+
+  "default_chain": [
+    "gemini-flash",
+    "gemini-pro",
+    "gpt-image-2"
+  ],
+
+  "categories": {
+    "quilts": {
+      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"]
+    },
+    "cortinas": {
+      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"],
+      "swatch_overrides": {
+        "sheer": ["gpt-image-2", "gemini-pro"],
+        "translucent": ["gpt-image-2", "gemini-pro"]
+      }
+    },
+    "alfombras": {
+      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"],
+      "swatch_overrides": {
+        "printed_illustration": ["gpt-image-2", "gemini-pro"],
+        "photographic": ["gpt-image-2", "gemini-pro"]
+      }
+    },
+    "sabanas": {
+      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"]
+    },
+    "toallas": {
+      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"]
+    },
+
+    "brand": {
+      "attempts": ["gemini-flash", "gemini-flash"]
+    }
+  },
+
+  "max_cost_per_job_usd": {
+    "default": 0.30,
+    "sabanas": 0.40,
+    "quilts": 0.50,
+    "cortinas": 0.50,
+    "alfombras": 0.50,
+    "brand": 0.20
+  }
+}
