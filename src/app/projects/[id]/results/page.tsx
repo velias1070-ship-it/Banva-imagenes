@@ -293,15 +293,25 @@ export default function ResultsPage() {
     [variantes]
   );
 
+  // Design key = color + tipo (NOT including bed_size). This way "Aba 1 plaza"
+  // and "Aba 1.5 plazas" both map to the same design slug "aba-estampado" so
+  // the UI groups all sizes of the same design under one header.
   function designForGroup(group: SwatchResultGroup): string | null {
     const sku = (group.swatch.sku_suffix || '').toUpperCase();
     if (!sku) return null;
     const variant = variantBySku.get(sku);
-    return variant?.color_slug ?? null;
+    if (!variant) return null;
+    const color = (variant.color || '').trim();
+    const tipo = (variant.tipo || '').trim();
+    if (!color && !tipo) return variant.color_slug ?? null;
+    const key = `${color}|${tipo}`.toLowerCase();
+    return key.replace(/\s+/g, '-');
   }
 
   function sizeForGroup(group: SwatchResultGroup): string | null {
-    return extractSizeFromSku(group.swatch.sku_suffix || '');
+    const sku = (group.swatch.sku_suffix || '').toUpperCase();
+    const variant = sku ? variantBySku.get(sku) : undefined;
+    return variant?.bed_size || extractSizeFromSku(group.swatch.sku_suffix || '');
   }
 
   // ── Filter groups ──
@@ -2128,7 +2138,13 @@ export default function ResultsPage() {
                             }}
                             title={allSelected ? 'Deseleccionar diseño' : 'Seleccionar diseño'}
                           />
-                          <h2 className="text-base font-semibold capitalize">{groupDesign || 'Sin diseño'}</h2>
+                          <h2 className="text-base font-semibold capitalize">{(() => {
+                            // Derive readable label from variant.color + tipo
+                            const sku = (group.swatch.sku_suffix || '').toUpperCase();
+                            const v = sku ? variantBySku.get(sku) : undefined;
+                            if (v?.color) return [v.color, v.tipo].filter(Boolean).join(' · ');
+                            return groupDesign || 'Sin diseño';
+                          })()}</h2>
                           <span className="text-xs text-muted-foreground">
                             {designSwatchIds.length} swatch(es)
                             {selectedInDesign.length > 0 && ` · ${selectedInDesign.length} seleccionado${selectedInDesign.length !== 1 ? 's' : ''}`}
