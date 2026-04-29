@@ -140,19 +140,93 @@ console.log('\n[Group 7b] inferCaseSignatureFromJob — legacy is_dark_swatch ke
   check('signature === sabanas:main:samepattern:light', out.signature === 'sabanas:main:samepattern:light');
 }
 
-console.log('\n[Group 8] inferCaseSignatureFromJob — slow path: dark_swatch in metadata + PATTERN_COMPARED in log');
+console.log('\n[Group 8] inferCaseSignatureFromJob — slow path: dark_swatch in metadata + PATTERN_COMPARED in log (legacy data field)');
 {
   const job = {
     category: 'sabanas',
     shot_type: 'main',
     prompt_metadata: { dark_swatch: true }, // pattern_similarity missing → fast path skipped
     pipeline_log: [
-      { event: 'PATTERN_COMPARED', data: 'false' }, // patterns differ
+      { event: 'PATTERN_COMPARED', data: 'false' }, // patterns differ — legacy shape with bool in data
     ],
   };
   const out = inferCaseSignatureFromJob(job);
   check("source === 'backfill_inferred'", out.source === 'backfill_inferred');
   check('signature reconstructed correctly', out.signature === 'sabanas:main:multipattern:dark');
+}
+
+console.log('\n[Group 8a] inferCaseSignatureFromJob — RUNTIME shape: bool in detail, struct in data');
+{
+  // Replicates exactly what src/app/api/batches/[batchId]/process-next/route.ts:718-721 writes:
+  //   logPipelineEvent(jobId, 'PATTERN_COMPARED', String(patternSimilarity), { auto_switch, effective_mode })
+  //                                                ↑ entry.detail            ↑ entry.data (no boolean here)
+  // Pre-fix: the slow path only read entry.data, never matched, fell through to last-ditch
+  // unknownpattern. This is the bug that made every backfilled job sigange ':unknownpattern'.
+  const job = {
+    category: 'alfombras',
+    shot_type: 'lifestyle',
+    prompt_metadata: { dark_swatch: true }, // pattern_similarity missing → fast path skipped
+    pipeline_log: [
+      {
+        event: 'PATTERN_COMPARED',
+        detail: 'false', // patterns differ — runtime canonical location
+        data: { auto_switch: null, effective_mode: 'reference' },
+      },
+    ],
+  };
+  const out = inferCaseSignatureFromJob(job);
+  check("source === 'backfill_inferred'", out.source === 'backfill_inferred');
+  check('runtime detail=false → multipattern (NOT unknownpattern)', out.signature === 'alfombras:lifestyle:multipattern:dark');
+}
+
+console.log('\n[Group 8c] inferCaseSignatureFromJob — RUNTIME shape: detail=true → samepattern');
+{
+  const job = {
+    category: 'quilts',
+    shot_type: 'main',
+    prompt_metadata: { dark_swatch: false },
+    pipeline_log: [
+      {
+        event: 'PATTERN_COMPARED',
+        detail: 'true', // patterns are similar
+        data: { auto_switch: 'patterns_similar_reference_to_edit', effective_mode: 'edit' },
+      },
+    ],
+  };
+  const out = inferCaseSignatureFromJob(job);
+  check('runtime detail=true → samepattern', out.signature === 'quilts:main:samepattern:light');
+}
+
+console.log('\n[Group 8d] inferCaseSignatureFromJob — case-insensitive detail (TRUE / FALSE)');
+{
+  const job = {
+    category: 'cortinas',
+    shot_type: 'lifestyle',
+    prompt_metadata: { dark_swatch: false },
+    pipeline_log: [
+      { event: 'PATTERN_COMPARED', detail: 'TRUE' as string },
+    ],
+  };
+  const out = inferCaseSignatureFromJob(job);
+  check('uppercase TRUE detail handled', out.signature === 'cortinas:lifestyle:samepattern:light');
+}
+
+console.log('\n[Group 8e] inferCaseSignatureFromJob — multiple PATTERN_COMPARED events: last one wins');
+{
+  // A job that retried 3 times has 3 PATTERN_COMPARED events. We let the last
+  // one set patternsDiffer (consistent with prior behavior — the loop
+  // overwrites without breaking).
+  const job = {
+    category: 'sabanas',
+    shot_type: 'detail',
+    prompt_metadata: { dark_swatch: false },
+    pipeline_log: [
+      { event: 'PATTERN_COMPARED', detail: 'true' },  // attempt 0: similar
+      { event: 'PATTERN_COMPARED', detail: 'false' }, // attempt 1: cmp re-ran, said different
+    ],
+  };
+  const out = inferCaseSignatureFromJob(job);
+  check('later detail overrides earlier', out.signature === 'sabanas:detail:multipattern:light');
 }
 
 console.log('\n[Group 8b] inferCaseSignatureFromJob — last-ditch: dark flag only, no pattern signal');

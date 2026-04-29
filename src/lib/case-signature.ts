@@ -102,7 +102,7 @@ export function inferCaseSignatureFromJob(job: {
   shot_type?: string | null;
   detected_shot_type?: string | null;
   prompt_metadata?: Record<string, unknown> | null;
-  pipeline_log?: Array<{ event: string; data?: Record<string, unknown> | string | null }> | null;
+  pipeline_log?: Array<{ event: string; detail?: string | null; data?: Record<string, unknown> | string | null }> | null;
 }): { signature: string | null; source: 'sprint_1_runtime' | 'backfill_inferred' | 'insufficient' } {
   const meta = job.prompt_metadata || {};
 
@@ -135,13 +135,24 @@ export function inferCaseSignatureFromJob(job: {
   // Slow path: combine prompt_metadata.dark_swatch (the runtime persists this
   // even when pattern_similarity is missing) with pipeline_log
   // PATTERN_COMPARED events. Most pre-Sprint-1 jobs land here.
+  //
+  // The runtime in process-next/route.ts logs the boolean as the third arg
+  // (detail) of logPipelineEvent, NOT inside data:
+  //   logPipelineEvent(jobId, 'PATTERN_COMPARED', String(patternSimilarity), { auto_switch, effective_mode })
+  //                                                ↑ becomes entry.detail    ↑ becomes entry.data
+  // The original slow path only inspected entry.data, so every backfilled job
+  // fell through to the last-ditch unknownpattern path. Read entry.detail
+  // first (canonical), with entry.data kept as a fallback for hand-mocked /
+  // older log shapes.
   let patternsDiffer: boolean | null = null;
   for (const entry of job.pipeline_log || []) {
-    if (entry.event === 'PATTERN_COMPARED') {
-      const dataStr = typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data);
-      if (dataStr === 'true' || dataStr.includes('"true"')) patternsDiffer = false;
-      else if (dataStr === 'false' || dataStr.includes('"false"')) patternsDiffer = true;
-    }
+    if (entry.event !== 'PATTERN_COMPARED') continue;
+    const detailVal = typeof entry.detail === 'string' ? entry.detail.toLowerCase() : null;
+    if (detailVal === 'true') { patternsDiffer = false; continue; }
+    if (detailVal === 'false') { patternsDiffer = true; continue; }
+    const dataStr = typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data);
+    if (dataStr === 'true' || dataStr.includes('"true"')) patternsDiffer = false;
+    else if (dataStr === 'false' || dataStr.includes('"false"')) patternsDiffer = true;
   }
 
   if (patternsDiffer !== null && darkRaw !== null && (job.shot_type || job.detected_shot_type)) {
