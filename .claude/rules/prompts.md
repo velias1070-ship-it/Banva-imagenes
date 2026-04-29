@@ -198,7 +198,7 @@ Score de penalizacion por invencion de producto: **-0.5 automatico** (garantiza 
 1. **3 imagenes**: Enviar Image 3 (swatch enhanced) NO funciona — Gemini ignora la 3ra imagen
 2. **CLAHE como Image 2**: Reemplazar swatch con version grayscale enhanced genera colores incorrectos
 3. **Temperatura alta en edit mode**: Subir de 0.2 aumenta creatividad = mas inventos = peor fidelidad
-4. **Duplicar buildPrompt()**: Ya existe en Inngest (deprecated). NUNCA crear otra copia
+4. **Duplicar buildPrompt()**: La unica fuente es `generate/route.ts`. NUNCA crear otra copia
 5. **Prompt generico**: Sin category rules, Gemini no sabe que cambiar
 6. **Flatten del swatch**: NUNCA aplanar el swatch — solo el hero
 7. **Edit mode cuando patron ≠**: NUNCA usar edit mode cuando el swatch tiene patron diferente al hero — SIEMPRE produce invencion de producto
