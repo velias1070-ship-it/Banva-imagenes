@@ -22,6 +22,9 @@ import { verifySwatch } from '@/lib/swatch-verifier';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
 import { buildCaseSignature } from '@/lib/case-signature';
+import { sumJobCostFromPipelineLog, evaluateCostCap, getCostCapForCategory } from '@/lib/cost-cap';
+import { selectModelId } from '@/lib/image-providers';
+import { MODEL_REGISTRY } from '@/lib/models/registry';
 import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } from '@/lib/bed-camera-angle';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 import { logPipelineEvent } from '@/lib/pipeline-log';
@@ -408,6 +411,77 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       })
       .eq('id', job.id);
     return { chain: true, triggerQA: false };
+  }
+
+  // ── COST CAP GUARD (Sprint 2 issue #3) ──
+  // Before doing the expensive work, check whether running this attempt
+  // would push the job's cumulative cost beyond the per-category cap.
+  // Attempt 0 is exempt (every job gets at least one shot).
+  //
+  // Source of truth for prior costs is pipeline_log PROVIDER_USED entries.
+  // The cost_usd_actual column overwrites on every attempt, so it can't
+  // be summed.
+  if (job.attempt > 0) {
+    const { data: pipelineLogRow } = await supabase
+      .from('generation_jobs')
+      .select('pipeline_log')
+      .eq('id', job.id)
+      .single();
+    const log = (pipelineLogRow?.pipeline_log as Array<{ event: string; data?: unknown }> | null) || null;
+    const accumulatedUsd = sumJobCostFromPipelineLog(
+      log as Array<{ event: string; data?: string | Record<string, unknown> | null }> | null,
+    );
+    // Project the next attempt's cost via the same routing the generator
+    // will use. Done before the heavier preprocessing work so we don't
+    // burn time we'll throw away.
+    const swatchProfileForCap = (job.swatch?.fabric_profile as { opacity?: 'opaque' | 'translucent' | 'sheer'; pattern_type?: string; complexity?: string } | null) || null;
+    const nextModelId = selectModelId({
+      category,
+      swatchProfile: swatchProfileForCap,
+      attempt: job.attempt,
+    });
+    const projectedNextUsd = MODEL_REGISTRY[nextModelId]?.costPerImageUsd ?? 0;
+    const capUsd = getCostCapForCategory(category);
+    const decision = evaluateCostCap({
+      attempt: job.attempt,
+      accumulatedUsd,
+      projectedNextUsd,
+      capUsd,
+    });
+    if (decision.exceeded) {
+      // Flag (NOT error) — flagged jobs stay reviewable in the UI; error
+      // hides them as technical failures. Cost cap is a deliberate
+      // decision, not a fault.
+      const existingMeta = (job.prompt_metadata as Record<string, unknown> | null) || {};
+      logPipelineEvent(job.id, 'COST_CAP_EXCEEDED', 'flagged', {
+        accumulated_usd: accumulatedUsd,
+        projected_usd: decision.projectedUsd,
+        cap_usd: capUsd,
+        category,
+        next_model_id: nextModelId,
+      });
+      await supabase
+        .from('generation_jobs')
+        .update({
+          status: 'flagged',
+          error_message: `Cost cap reached: $${decision.projectedUsd.toFixed(3)} projected vs $${capUsd.toFixed(2)} cap (${category}). Stopped before attempt ${job.attempt}.`,
+          prompt_metadata: { ...existingMeta, cost_capped: true, cost_cap_decision: { accumulated_usd: accumulatedUsd, projected_usd: decision.projectedUsd, cap_usd: capUsd, attempt: job.attempt } },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', job.id);
+      await supabase
+        .from('generation_batches')
+        .update({
+          completed_count: (batch.completed_count || 0) + 1,
+          flagged_count: (batch.flagged_count || 0) + 1,
+        })
+        .eq('id', batchId);
+      console.log(
+        `[process-next] Cost cap reached for job ${job.id.substring(0, 8)} ` +
+        `(${category}, attempt ${job.attempt}): $${decision.projectedUsd.toFixed(3)} > $${capUsd.toFixed(2)} — flagged`,
+      );
+      return { chain: true, triggerQA: false };
+    }
   }
 
   logPipelineEvent(job.id, 'PICKED_UP', 'process-next chain', { batch_id: batchId, attempt: job.attempt, brand_only: isBrandOnly });

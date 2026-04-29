@@ -20,6 +20,9 @@ import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
 import { buildCaseSignature } from '@/lib/case-signature';
+import { sumJobCostFromPipelineLog, evaluateCostCap, getCostCapForCategory } from '@/lib/cost-cap';
+import { selectModelId } from '@/lib/image-providers';
+import { MODEL_REGISTRY } from '@/lib/models/registry';
 import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } from '@/lib/bed-camera-angle';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 import { generateResizedVariant } from './resize/route';
@@ -1019,6 +1022,59 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // (Flash can't reproduce fine/smooth weave — verifier rejects coarse output).
     const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras') ? 1 : 2;
     const useProModel = attempt >= proThreshold;
+
+    // ── COST CAP GUARD (Sprint 2 issue #3) ──
+    // Mirror of process-next guard. Same rules: attempt 0 exempt, sum from
+    // pipeline_log PROVIDER_USED, flag (not error) on cap hit, write
+    // prompt_metadata.cost_capped = true.
+    if (attempt > 0 && !isBrandOnly) {
+      const { data: pipelineLogRow } = await supabase
+        .from('generation_jobs')
+        .select('pipeline_log')
+        .eq('id', jobId)
+        .single();
+      const log = (pipelineLogRow?.pipeline_log as Array<{ event: string; data?: unknown }> | null) || null;
+      const accumulatedUsd = sumJobCostFromPipelineLog(
+        log as Array<{ event: string; data?: string | Record<string, unknown> | null }> | null,
+      );
+      const swatchProfileForCap = (swatch.fabric_profile as { opacity?: 'opaque' | 'translucent' | 'sheer'; pattern_type?: string; complexity?: string } | null) || null;
+      const nextModelId = selectModelId({
+        category,
+        swatchProfile: swatchProfileForCap,
+        attempt,
+      });
+      const projectedNextUsd = MODEL_REGISTRY[nextModelId]?.costPerImageUsd ?? 0;
+      const capUsd = getCostCapForCategory(category);
+      const decision = evaluateCostCap({
+        attempt,
+        accumulatedUsd,
+        projectedNextUsd,
+        capUsd,
+      });
+      if (decision.exceeded) {
+        logPipelineEvent(jobId, 'COST_CAP_EXCEEDED', 'flagged', {
+          accumulated_usd: accumulatedUsd,
+          projected_usd: decision.projectedUsd,
+          cap_usd: capUsd,
+          category,
+          next_model_id: nextModelId,
+        });
+        await supabase
+          .from('generation_jobs')
+          .update({
+            status: 'flagged',
+            error_message: `Cost cap reached: $${decision.projectedUsd.toFixed(3)} projected vs $${capUsd.toFixed(2)} cap (${category}). Stopped before regen attempt ${attempt}.`,
+            prompt_metadata: { ...promptMetadata, cost_capped: true, cost_cap_decision: { accumulated_usd: accumulatedUsd, projected_usd: decision.projectedUsd, cap_usd: capUsd, attempt } },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', jobId);
+        console.log(
+          `[regenerateJob] Cost cap reached for job ${jobId.substring(0, 8)} ` +
+          `(${category}, attempt ${attempt}): $${decision.projectedUsd.toFixed(3)} > $${capUsd.toFixed(2)} — flagged`,
+        );
+        return;
+      }
+    }
 
     logPipelineEvent(jobId, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {
       temperature, mode: mode as string, brand: brand?.name || null,
