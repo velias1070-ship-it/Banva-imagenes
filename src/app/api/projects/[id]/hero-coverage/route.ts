@@ -126,6 +126,7 @@ export async function GET(_req: Request, ctx: RouteContext) {
     designs,
     sizes,
     heroes_total: heroes.length,
+    heroes,
     variants_total: resolved.length,
     variants_with_size: resolved.filter((v) => v.size).length,
     variants_without_size: resolved.filter((v) => !v.size).map((v) => v.sku),

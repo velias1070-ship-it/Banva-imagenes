@@ -61,3 +61,40 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
 
   return NextResponse.json({ success: true });
 }
+
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  const { heroId } = await context.params;
+  const supabase = createAdminClient();
+  const body = await request.json().catch(() => ({}));
+
+  const update: Record<string, unknown> = {};
+  if ('applies_to_designs' in body) {
+    update.applies_to_designs =
+      Array.isArray(body.applies_to_designs) && body.applies_to_designs.length > 0
+        ? body.applies_to_designs
+        : null;
+  }
+  if ('applies_to_sizes' in body) {
+    update.applies_to_sizes =
+      Array.isArray(body.applies_to_sizes) && body.applies_to_sizes.length > 0
+        ? body.applies_to_sizes
+        : null;
+  }
+
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: 'no fields to update' }, { status: 400 });
+  }
+
+  const { data, error } = await supabase
+    .from('hero_shots')
+    .update(update)
+    .eq('id', heroId)
+    .select('id, applies_to_designs, applies_to_sizes')
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json(data);
+}
