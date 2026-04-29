@@ -881,6 +881,7 @@ Everything else (product, background, people, objects) must remain as in Image 1
 Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[regenerateJob] BRAND_ONLY mode — reproducing image with brand guidelines`);
     } else {
+      const cachedHeroOverlays = (heroShot as unknown as { text_elements?: Array<{ text: string; position?: string; size?: string; role?: string }> } | null)?.text_elements ?? null;
       prompt = buildPromptForMode(
         mode,
         strategy,
@@ -892,6 +893,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         projectSettings.generation.resolution,
         null,
         patternsDiffer,
+        cachedHeroOverlays,
       );
     }
 

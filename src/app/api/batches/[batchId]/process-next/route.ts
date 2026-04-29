@@ -932,6 +932,14 @@ Everything else (product, background, people, objects) must remain as in Image 1
 Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[process-next] BRAND_ONLY mode — reproducing image with brand guidelines`);
     } else {
+      // Hero overlays (text/branding/dimensions) need to be preserved by the
+      // edit prompt. Pull from the cached hero_shots.text_elements regardless
+      // of brand processing — when the project has no brand, the brand block
+      // below skips and the overlays would otherwise never reach buildPrompt.
+      const cachedHeroOverlays = job.hero_shot?.text_elements as
+        | Array<{ text: string; position?: string; size?: string; role?: string }>
+        | null
+        | undefined;
       prompt = buildPromptForMode(
         effectiveMode,
         strategy,
@@ -943,6 +951,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         projectSettings.generation.resolution,
         swatchHex,
         patternSimilarity === false,
+        cachedHeroOverlays ?? null,
       );
     }
 

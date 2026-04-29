@@ -923,8 +923,24 @@ export function buildEditPrompt(
   resolution: string = '1200x1200',
   _swatchHex?: string | null,
   patternsDiffer: boolean = false,
+  heroTextElements?: Array<{ text: string; position?: string; size?: string; role?: string }> | null,
 ): string {
   const darkNote = isDarkSwatch ? ' No aclares la tela — debe ser igual de oscura que la Imagen 2.' : '';
+  // When the hero is classified as `detail` but actually carries text overlays
+  // (BANVA branding, dimensions, headlines, OEKO-TEX badges), the default
+  // "close-up de tela" template makes Gemini regenerate the scene from scratch
+  // and lose every overlay. Detect overlays here and inject a preserve clause.
+  // See post-mortem of job 8731dbfa-80a0-4b91-b869-64bc5485196a (limpiapies/Cat).
+  const hasHeroOverlays = (heroTextElements?.length ?? 0) > 0;
+  const overlayList = hasHeroOverlays
+    ? heroTextElements!.map(el => `- "${el.text}"${el.position ? ` (${el.position})` : ''}`).join('\n')
+    : '';
+  const overlayPreserveNote = hasHeroOverlays ? `
+
+PRESERVAR OVERLAYS DEL HERO — REGLA CRÍTICA:
+La Imagen 1 contiene overlays de texto, branding, cotas e infografía superpuestos sobre el producto. ESOS OVERLAYS DEBEN APARECER IDÉNTICOS EN EL RESULTADO — mismo contenido, misma posición, mismo tamaño, misma fuente, mismo color. NO los borres. NO los muevas. NO los traduzcas. Solo cambia la TELA del producto que está debajo de ellos.
+Lista de elementos a preservar:
+${overlayList}` : '';
   // When patterns differ, DISCARD any verifier qaFeedback — it usually says
   // "pattern doesn't match" which Gemini reads as "preserve the hero's pattern
   // (the model the verifier expected)", directly contradicting the REEMPLAZO
@@ -953,14 +969,17 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
     // This is crucial for quilts where we must NOT invent texture and must NOT
     // preserve hero relief.
     const detailRule = strategy.prompt.what_to_change_detail;
+    const opener = hasHeroOverlays
+      ? 'Toma la Imagen 1 y reemplaza ÚNICAMENTE la tela del producto con la tela de la Imagen 2. Mantén intacto el resto de la Imagen 1 (layout, fondo, overlays, branding, cotas, badges, gráficos).'
+      : 'Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.';
     if (detailRule) {
-      return `Genera la Imagen 1 (close-up de tela) con la tela de la Imagen 2.
+      return `${opener}
 
-${detailRule}${darkNote}${qaNote}${replaceNote}
+${detailRule}${darkNote}${qaNote}${replaceNote}${overlayPreserveNote}
 
 Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
     }
-    return `Genera la Imagen 1 (close-up de tela) con el color y textura de la Imagen 2. Misma composición, ángulo y pliegues.${darkNote}${qaNote}${replaceNote}
+    return `${opener}${darkNote}${qaNote}${replaceNote}${overlayPreserveNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
@@ -1109,10 +1128,11 @@ export function buildPromptForMode(
   resolution: string = '1200x1200',
   swatchHex?: string | null,
   patternsDiffer: boolean = false,
+  heroTextElements?: Array<{ text: string; position?: string; size?: string; role?: string }> | null,
 ): string {
   switch (mode) {
     case 'edit':
-      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex, patternsDiffer);
+      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex, patternsDiffer, heroTextElements);
     case 'reference':
       return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
     case 'from_scratch':
