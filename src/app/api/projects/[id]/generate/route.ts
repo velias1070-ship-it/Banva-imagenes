@@ -133,6 +133,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const heroIds: string[] | undefined = body.hero_ids;
   const swatchIds: string[] | undefined = body.swatch_ids;
   const skipBrandHeroIds: string[] = body.skip_brand_hero_ids || [];
+  // Optional explicit pairs: when sent, the resolver and cross product are
+  // both bypassed and we create exactly one job per pair. Used by the
+  // "preview before generate" UI in /results.
+  const pairs: Array<{ swatch_id: string; hero_id: string }> | undefined = body.pairs;
 
   // Get project
   const { data: project, error: projError } = await supabase
@@ -177,11 +181,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   // Decide job creation strategy:
-  //   - If at least one selected hero has design/size tags AND the project has
-  //     resolved variantes (multi-tamano like limpiapies/alfombras), use the
-  //     resolver: 1 job per swatch with the best-matching hero.
+  //   - If `pairs` came in the body, create exactly those jobs (preview UI).
+  //   - Else if at least one selected hero has design/size tags AND the
+  //     project has resolved variantes (multi-tamano like limpiapies/
+  //     alfombras), use the resolver: all compatible heroes per swatch.
   //   - Otherwise, fall back to legacy cross product (heroes x swatches).
+  const useExplicitPairs = Array.isArray(pairs) && pairs.length > 0;
   const useResolver =
+    !useExplicitPairs &&
     anyHeroHasTags(selectedHeroes) &&
     Array.isArray((project.metadata as { variantes?: ProjectVariant[] } | null)?.variantes);
 
@@ -210,7 +217,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
     generic: 0,
   };
 
-  if (useResolver) {
+  if (useExplicitPairs) {
+    const swatchById = new Map(swatches.map((s) => [s.id, s]));
+    const heroById = new Map(allHeroes.map((h) => [h.id, h]));
+    for (const p of pairs!) {
+      const sw = swatchById.get(p.swatch_id);
+      const hero = heroById.get(p.hero_id);
+      if (!sw || !hero) continue;
+      jobs.push({
+        batch_id: '',
+        hero_shot_id: hero.id,
+        swatch_id: sw.id,
+        status: 'pending',
+        attempt: 0,
+        ...(skipBrandSet.has(hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
+      });
+    }
+    totalCombinations = jobs.length;
+  } else if (useResolver) {
     for (const swatch of selectedSwatches) {
       const sku = (swatch.sku_suffix || '').toUpperCase();
       const variant = sku ? variantBySku.get(sku) : undefined;
