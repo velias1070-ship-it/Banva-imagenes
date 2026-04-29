@@ -987,6 +987,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
           if (textAnalysis?.elements?.length) {
             detectedHeroOverlays = textAnalysis.elements;
+            // Mutate in-memory so the OVERLAY_RESTORED composite gate below
+            // (which reads job.hero_shot.text_elements) sees the fresh data
+            // on the same request, not just on subsequent jobs.
+            (job.hero_shot as Record<string, unknown>).text_elements = detectedHeroOverlays;
             supabase.from('hero_shots').update({ text_elements: detectedHeroOverlays }).eq('id', job.hero_shot.id).then(() => {}, () => {});
             logPipelineEvent(job.id, 'HERO_OVERLAYS_DETECTED', `${detectedHeroOverlays.length} elements`);
           }

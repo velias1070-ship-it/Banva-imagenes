@@ -951,6 +951,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           const textAnalysis = await analyzeTextElements(heroB64, heroMime);
           if (textAnalysis?.elements?.length) {
             detectedHeroOverlays = textAnalysis.elements;
+            // Mutate in-memory copy so the OVERLAY_RESTORED gate below
+            // (which reads heroShot.text_elements) sees fresh data on this
+            // same request, not only on subsequent regens.
+            (heroShot as unknown as Record<string, unknown>).text_elements = detectedHeroOverlays;
             supabase.from('hero_shots').update({ text_elements: detectedHeroOverlays }).eq('id', heroShotId).then(() => {}, () => {});
             logPipelineEvent(jobId, 'HERO_OVERLAYS_DETECTED', `${detectedHeroOverlays.length} elements`);
           }
