@@ -818,3 +818,61 @@ export async function createSwatchCollage(imageBuffers: Buffer[]): Promise<Buffe
   console.log(`[image-processing] Created swatch collage: ${count} images in ${cols}x${rows} grid`);
   return collage;
 }
+
+/**
+ * Pixel-perfect overlay restore. After Gemini edit-mode generation, the model
+ * re-renders any text/logo overlays from the hero with subtle font/style drift
+ * (different weight, missing taglines, slight position shift). For categories
+ * where the result MUST match the hero overlay layer exactly (e.g. limpiapies
+ * heros with infographic cotas + BANVA branding), copy the original hero
+ * pixels for each detected text bbox over the generated result.
+ *
+ * Inputs are expected at the same dimensions; result is resized to hero's W/H
+ * if it isn't already.
+ *
+ * Bbox padding: 4px on each side to capture anti-aliasing fringes that would
+ * otherwise leave a halo of the regenerated text peeking around the original.
+ */
+export async function compositeHeroOverlays(
+  heroBuffer: Buffer,
+  resultBuffer: Buffer,
+  bboxes: Array<{ text?: string; x: number; y: number; width: number; height: number }>,
+): Promise<Buffer> {
+  if (!bboxes || bboxes.length === 0) return resultBuffer;
+
+  const heroMeta = await sharp(heroBuffer).metadata();
+  const W = heroMeta.width || 1200;
+  const H = heroMeta.height || 1200;
+
+  // Normalize result to hero dimensions so bbox coords align.
+  const resultMeta = await sharp(resultBuffer).metadata();
+  const sameSize = resultMeta.width === W && resultMeta.height === H;
+  const baseBuffer = sameSize
+    ? resultBuffer
+    : await sharp(resultBuffer)
+        .resize(W, H, { fit: 'contain', background: { r: 255, g: 255, b: 255 } })
+        .png()
+        .toBuffer();
+
+  const PAD = 4;
+  const composites: import('sharp').OverlayOptions[] = [];
+  for (const b of bboxes) {
+    if (!Number.isFinite(b.x) || !Number.isFinite(b.y) || !Number.isFinite(b.width) || !Number.isFinite(b.height)) continue;
+    const x = Math.max(0, Math.round(b.x - PAD));
+    const y = Math.max(0, Math.round(b.y - PAD));
+    const w = Math.min(W - x, Math.round(b.width + PAD * 2));
+    const h = Math.min(H - y, Math.round(b.height + PAD * 2));
+    if (w <= 0 || h <= 0) continue;
+    const region = await sharp(heroBuffer)
+      .extract({ left: x, top: y, width: w, height: h })
+      .png()
+      .toBuffer();
+    composites.push({ input: region, left: x, top: y });
+  }
+
+  if (composites.length === 0) return baseBuffer;
+
+  const composited = await sharp(baseBuffer).composite(composites).png().toBuffer();
+  console.log(`[image-processing] Restored ${composites.length} hero overlay regions onto generated output`);
+  return composited;
+}

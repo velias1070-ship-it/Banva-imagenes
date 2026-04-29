@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImageSmart } from '@/lib/image-providers';
-import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -1183,6 +1183,51 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Post-process: ensure 1200x1200 sRGB
     const rawBuffer = Buffer.from(result.imageBase64, 'base64');
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
+
+    // ── Pixel-perfect overlay restore (mirror of process-next) ──
+    // For detail edit-mode jobs whose hero has infographic overlays, copy the
+    // original hero pixels into the result for each detected text bbox so
+    // overlays are byte-identical instead of Gemini-rerendered.
+    const heroOverlaysCount = ((heroShot as unknown as { text_elements?: unknown[] } | null)?.text_elements?.length) ?? 0;
+    if (
+      !isBrandOnly &&
+      effectiveShotType === 'detail' &&
+      mode === 'edit' &&
+      heroOverlaysCount > 0 &&
+      heroShot &&
+      heroBuffer.length > 0
+    ) {
+      try {
+        type Bbox = { text?: string; x: number; y: number; width: number; height: number };
+        const heroShotRow = heroShot as unknown as { id: string; text_bboxes?: Bbox[] | null; mime_type?: string | null };
+        let bboxes: Bbox[] | null = (heroShotRow.text_bboxes as Bbox[] | null) ?? null;
+        if (!bboxes || bboxes.length === 0) {
+          const heroMeta = await (await import('sharp')).default(heroBuffer).metadata();
+          const detected = await detectTextBboxes(
+            heroBuffer.toString('base64'),
+            heroShotRow.mime_type || 'image/png',
+            heroMeta.width || 1200,
+            heroMeta.height || 1200,
+          );
+          if (detected && detected.length > 0) {
+            bboxes = detected;
+            supabase
+              .from('hero_shots')
+              .update({ text_bboxes: detected })
+              .eq('id', heroShotRow.id)
+              .then(() => {}, () => {});
+            logPipelineEvent(jobId, 'OVERLAY_BBOXES_CACHED', `${detected.length} bboxes`);
+          }
+        }
+        if (bboxes && bboxes.length > 0) {
+          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes);
+          logPipelineEvent(jobId, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero`);
+        }
+      } catch (overlayErr) {
+        console.error('[regenerateJob] Hero overlay restore failed (non-blocking):', overlayErr);
+        logPipelineEvent(jobId, 'OVERLAY_RESTORE_FAILED', overlayErr instanceof Error ? overlayErr.message : 'unknown');
+      }
+    }
 
     // Brand logo overlay: DISABLED. The user applies the logo manually via
     // the Brand button in the results UI (BRAND_ONLY regeneration mode).
