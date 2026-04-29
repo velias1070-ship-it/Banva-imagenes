@@ -132,27 +132,40 @@ export function inferCaseSignatureFromJob(job: {
     };
   }
 
-  // Slow path: scan pipeline_log for PATTERN_COMPARED + DARK_SWATCH events.
+  // Slow path: combine prompt_metadata.dark_swatch (the runtime persists this
+  // even when pattern_similarity is missing) with pipeline_log
+  // PATTERN_COMPARED events. Most pre-Sprint-1 jobs land here.
   let patternsDiffer: boolean | null = null;
-  let isDark: boolean | null = null;
   for (const entry of job.pipeline_log || []) {
     if (entry.event === 'PATTERN_COMPARED') {
       const dataStr = typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data);
-      // Logged value is the SIMILARITY boolean, so similar=true → patternsDiffer=false.
       if (dataStr === 'true' || dataStr.includes('"true"')) patternsDiffer = false;
       else if (dataStr === 'false' || dataStr.includes('"false"')) patternsDiffer = true;
     }
-    if (entry.event === 'DARK_SWATCH_DETECTED') isDark = true;
-    if (entry.event === 'LIGHT_SWATCH_DETECTED') isDark = false;
   }
 
-  if (patternsDiffer !== null && isDark !== null && (job.shot_type || job.detected_shot_type)) {
+  if (patternsDiffer !== null && darkRaw !== null && (job.shot_type || job.detected_shot_type)) {
     return {
       signature: buildCaseSignature({
         category: job.category,
         shotType: job.detected_shot_type || job.shot_type,
         patternsDiffer,
-        isDarkSwatch: isDark,
+        isDarkSwatch: darkRaw,
+        opacity: sp?.opacity || null,
+      }),
+      source: 'backfill_inferred',
+    };
+  }
+
+  // Last-ditch: dark_swatch is in metadata but no pattern signal anywhere.
+  // Emit unknownpattern so model_performance can still group these jobs.
+  if (darkRaw !== null && (job.shot_type || job.detected_shot_type) && job.category) {
+    return {
+      signature: buildCaseSignature({
+        category: job.category,
+        shotType: job.detected_shot_type || job.shot_type,
+        patternsDiffer: null,
+        isDarkSwatch: darkRaw,
         opacity: sp?.opacity || null,
       }),
       source: 'backfill_inferred',

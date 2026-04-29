@@ -46,25 +46,41 @@ async function main() {
   for (const p of projects || []) projectCat.set(p.id, p.category || 'textile');
   console.log(`[backfill] cached ${projectCat.size} project categories`);
 
-  // Pull jobs lacking case_signature. Joining hero_shots for shot type.
-  const { data: jobs, error } = await supabase
-    .from('generation_jobs')
-    .select(`
-      id,
-      prompt_metadata,
-      pipeline_log,
-      hero_shot:hero_shots ( shot_type, detected_shot_type ),
-      batch:generation_batches ( project_id )
-    `)
-    .is('case_signature', null)
-    .limit(SCAN_LIMIT);
-
-  if (error) {
-    console.error('[fail] read error:', error);
-    process.exit(1);
+  // Pull jobs lacking case_signature in pages of 1000 (PostgREST default cap).
+  type Row = {
+    id: string;
+    prompt_metadata: Record<string, unknown> | null;
+    pipeline_log: Array<{ event: string; data?: unknown }> | null;
+    hero_shot: { shot_type: string | null; detected_shot_type: string | null } | Array<{ shot_type: string | null; detected_shot_type: string | null }> | null;
+    batch: { project_id: string } | Array<{ project_id: string }> | null;
+  };
+  const PAGE_SIZE = 1000;
+  const jobs: Row[] = [];
+  let from = 0;
+  while (jobs.length < SCAN_LIMIT) {
+    const { data: page, error: pageErr } = await supabase
+      .from('generation_jobs')
+      .select(`
+        id,
+        prompt_metadata,
+        pipeline_log,
+        hero_shot:hero_shots ( shot_type, detected_shot_type ),
+        batch:generation_batches ( project_id )
+      `)
+      .is('case_signature', null)
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (pageErr) {
+      console.error('[fail] read error:', pageErr);
+      process.exit(1);
+    }
+    if (!page || page.length === 0) break;
+    jobs.push(...(page as unknown as Row[]));
+    if (page.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
   }
 
-  const total = jobs?.length || 0;
+  const total = jobs.length;
   console.log(`[backfill] scanning ${total} jobs with NULL case_signature`);
 
   const counts = {

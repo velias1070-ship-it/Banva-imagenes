@@ -140,20 +140,32 @@ console.log('\n[Group 7b] inferCaseSignatureFromJob — legacy is_dark_swatch ke
   check('signature === sabanas:main:samepattern:light', out.signature === 'sabanas:main:samepattern:light');
 }
 
-console.log('\n[Group 8] inferCaseSignatureFromJob — pipeline_log fallback');
+console.log('\n[Group 8] inferCaseSignatureFromJob — slow path: dark_swatch in metadata + PATTERN_COMPARED in log');
 {
   const job = {
     category: 'sabanas',
     shot_type: 'main',
-    prompt_metadata: {},
+    prompt_metadata: { dark_swatch: true }, // pattern_similarity missing → fast path skipped
     pipeline_log: [
       { event: 'PATTERN_COMPARED', data: 'false' }, // patterns differ
-      { event: 'DARK_SWATCH_DETECTED', data: null },
     ],
   };
   const out = inferCaseSignatureFromJob(job);
   check("source === 'backfill_inferred'", out.source === 'backfill_inferred');
   check('signature reconstructed correctly', out.signature === 'sabanas:main:multipattern:dark');
+}
+
+console.log('\n[Group 8b] inferCaseSignatureFromJob — last-ditch: dark flag only, no pattern signal');
+{
+  const job = {
+    category: 'sabanas',
+    shot_type: 'lifestyle',
+    prompt_metadata: { dark_swatch: false },
+    pipeline_log: [],
+  };
+  const out = inferCaseSignatureFromJob(job);
+  check("source === 'backfill_inferred'", out.source === 'backfill_inferred');
+  check('emits unknownpattern', out.signature === 'sabanas:lifestyle:unknownpattern:light');
 }
 
 console.log('\n[Group 9] inferCaseSignatureFromJob — insufficient data');
