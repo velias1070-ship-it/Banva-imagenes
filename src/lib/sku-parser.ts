@@ -83,7 +83,18 @@ export function resolveHeroForVariant<H extends TaggedHero>(
   design: string | null,
   size: string | null
 ): ResolvedHero<H> | null {
-  const ranked = heroes
+  return resolveHeroesForVariant(heroes, design, size)[0] || null;
+}
+
+// Returns ALL compatible heroes for a variant, ordered best-first
+// (exact > design_only > size_only > generic). Use this when you want
+// every hero that applies, not just the top match.
+export function resolveHeroesForVariant<H extends TaggedHero>(
+  heroes: H[],
+  design: string | null,
+  size: string | null
+): ResolvedHero<H>[] {
+  return heroes
     .map((h) => ({ hero: h, tier: classifyHero(h, design, size) }))
     .filter((r) => r.tier !== 'none')
     .sort((a, b) => {
@@ -91,7 +102,6 @@ export function resolveHeroForVariant<H extends TaggedHero>(
       if (t !== 0) return t;
       return a.hero.display_order - b.hero.display_order;
     });
-  return ranked[0] || null;
 }
 
 export function anyHeroHasTags(heroes: TaggedHero[]): boolean {
