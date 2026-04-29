@@ -4,6 +4,12 @@ import { mlGet } from '@/lib/ml';
 
 export const maxDuration = 60;
 
+interface MlAttribute {
+  id?: string;
+  name?: string;
+  value_name?: string | null;
+}
+
 interface MlItem {
   id: string;
   title?: string;
@@ -12,6 +18,33 @@ interface MlItem {
   permalink?: string | null;
   price?: number | null;
   user_product_id?: string | null;
+  attributes?: MlAttribute[];
+}
+
+const SIZE_ATTR_IDS = new Set([
+  'BED_SIZE',
+  'PACK_SIZE',
+  'SIZE',
+  'MATTRESS_SIZE',
+  'PILLOW_SIZE',
+  'TOWEL_SIZE',
+  'RUG_SIZE',
+]);
+
+function extractBedSize(attrs?: MlAttribute[]): string | null {
+  if (!attrs?.length) return null;
+  for (const a of attrs) {
+    if (a.id && SIZE_ATTR_IDS.has(a.id) && a.value_name) return a.value_name;
+  }
+  // Fallback: any attribute whose name mentions "tamaño" or "plaza"
+  for (const a of attrs) {
+    if (!a.value_name) continue;
+    const n = (a.name || '').toLowerCase();
+    if (n.includes('tamaño') || n.includes('plaza') || n.includes('medida')) {
+      return a.value_name;
+    }
+  }
+  return null;
 }
 
 function getInventorySupabase() {
@@ -64,7 +97,7 @@ export async function POST(request: NextRequest) {
 
   for (const batch of batches) {
     const ids = batch.join(',');
-    const path = `/items?ids=${ids}&attributes=id,title,family_name,thumbnail,permalink,price,user_product_id`;
+    const path = `/items?ids=${ids}&attributes=id,title,family_name,thumbnail,permalink,price,user_product_id,attributes`;
     try {
       const result = await mlGet<Array<{ code: number; body: MlItem }>>(path);
       for (const entry of result) {
@@ -79,6 +112,8 @@ export async function POST(request: NextRequest) {
             permalink: it.permalink ?? null,
             price: it.price ?? null,
             user_product_id: it.user_product_id ?? null,
+            bed_size: extractBedSize(it.attributes),
+            attributes: it.attributes ?? null,
             updated_at: new Date().toISOString(),
           })
           .eq('item_id', it.id);
