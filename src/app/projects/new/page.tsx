@@ -17,11 +17,56 @@ interface ProductGroup {
   slug: string;
   tamano: string;
   categoria: string;
+  family_name?: string | null;
   variantes: {
     sku: string;
     color: string;
     color_slug: string;
+    item_id?: string;
+    titulo?: string;
+    thumbnail?: string;
+    permalink?: string;
   }[];
+}
+
+function SyncMlFamiliesButton() {
+  const [syncing, setSyncing] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function handleSync() {
+    setSyncing(true);
+    setStatus(null);
+    try {
+      const statRes = await fetch('/api/sync/ml-families');
+      const stat = (await statRes.json()) as { pending_sync?: number };
+      const pending = stat.pending_sync ?? 0;
+      if (pending === 0) {
+        setStatus('Sin pendientes');
+        setTimeout(() => window.location.reload(), 800);
+        return;
+      }
+      const res = await fetch('/api/sync/ml-families?stale_only=1', { method: 'POST' });
+      const data = (await res.json()) as { synced?: number; error_count?: number };
+      setStatus(`Sync: ${data.synced ?? 0}${data.error_count ? ` · ${data.error_count} errores` : ''}`);
+      setTimeout(() => window.location.reload(), 800);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleSync}
+      disabled={syncing}
+      className="text-blue-600 hover:underline disabled:opacity-50"
+      title="Refresca family_name y titulos desde MercadoLibre"
+    >
+      {syncing ? 'Sincronizando…' : status || 'Sync ML'}
+    </button>
+  );
 }
 
 function ProductCombobox({
@@ -75,15 +120,18 @@ function ProductCombobox({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label>Productos del catalogo</Label>
-        {selectedSlugs.length > 0 && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Limpiar todo
-          </button>
-        )}
+        <div className="flex items-center gap-3 text-xs">
+          <SyncMlFamiliesButton />
+          {selectedSlugs.length > 0 && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              Limpiar todo
+            </button>
+          )}
+        </div>
       </div>
       <div ref={wrapperRef} className="relative">
         <Input

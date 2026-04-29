@@ -29,46 +29,32 @@ function inferCategory(nombre: string): string {
   return 'otros';
 }
 
-function extractBaseName(nombre: string, color: string): string {
-  let base = color ? nombre.replace(color, '').trim() : nombre;
-  base = base.replace(/\s+[SWAPX]\d{2,3}\s*$/, '').trim();
-  base = base.replace(/\s+PT\s*$/, '').trim();
-  base = base.replace(/\s{2,}/g, ' ').trim();
-  return base;
-}
-
-function stripSizeFromName(name: string): string {
-  return name
-    .replace(/\b(Super\s+)?King\b/gi, '')
-    .replace(/\b\d+(\.\d+)?\s*P(lazas?)?\b/gi, '')
-    .replace(/\b(1|1\.5|2|2\.5|3|Queen|Twin|Full|Single|Double)\b/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
 function slugify(text: string): string {
   return text
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/[%]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/(^-|-$)/g, '');
 }
 
-function findCommonPrefix(strings: string[]): string {
-  if (strings.length === 0) return '';
-  let prefix = strings[0];
-  for (let i = 1; i < strings.length; i++) {
-    while (!strings[i].startsWith(prefix)) {
-      prefix = prefix.slice(0, -1);
-      if (prefix.length === 0) return '';
-    }
-  }
-  // Remove trailing color chars — keep only the size-encoded part
-  // e.g. "TXV23QLAT25" from "TXV23QLAT25BE" and "TXV23QLAT25BC"
-  return prefix;
+// fallbackKey replicates banvabodega's AdminComercial.tsx pattern: when an
+// item has no family_name (legacy or unlinked to ML catalog), group by title
+// minus its last word — the last word is usually the variant modifier (color,
+// size, plazas, etc.).
+function fallbackKey(title: string): string {
+  if (!title) return '';
+  const words = title.trim().split(/\s+/);
+  if (words.length <= 1) return slugify(title);
+  return slugify(words.slice(0, -1).join(' '));
+}
+
+function lastWord(title: string): string {
+  if (!title) return '';
+  const words = title.trim().split(/\s+/);
+  return words[words.length - 1] || '';
 }
 
 interface Variante {
@@ -76,6 +62,10 @@ interface Variante {
   color: string;
   color_slug: string;
   source: 'catalogo' | 'ml';
+  item_id?: string;
+  titulo?: string;
+  thumbnail?: string;
+  permalink?: string;
 }
 
 interface ProductGroup {
@@ -83,200 +73,144 @@ interface ProductGroup {
   slug: string;
   tamano: string;
   categoria: string;
+  family_name: string | null;
   variantes: Variante[];
 }
 
-// GET /api/productos — returns products grouped by base, merging productos + ml_items_map
+// GET /api/productos
+// Groups ML items by family_name (the way banvabodega does it in
+// AdminComercial.tsx:596). Falls back to title-minus-last-word when an item
+// has no family_name (legacy items not linked to ML's catalog).
+//
+// Productos table is used as a SECONDARY enrichment source: if a SKU exists
+// in productos, we use its category/color/tamano fields to enrich the variant.
 export async function GET() {
   try {
-  const supabaseUrl = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.INVENTORY_SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const supabaseUrl = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.INVENTORY_SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!supabaseUrl || !supabaseKey) {
-    return NextResponse.json({ error: 'Missing Supabase config' }, { status: 500 });
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseKey);
-
-  // Fetch both tables in parallel
-  const [productosRes, mlItemsRes] = await Promise.all([
-    supabase
-      .from('productos')
-      .select('sku, nombre, categoria, color, tamano')
-      .order('nombre')
-      .limit(2000),
-    supabase
-      .from('ml_items_map')
-      .select('sku_venta, item_id, titulo')
-      .eq('activo', true)
-      .is('variation_id', null)
-      .limit(2000),
-  ]);
-
-  if (productosRes.error) {
-    return NextResponse.json({ error: productosRes.error.message }, { status: 500 });
-  }
-
-  const productos = productosRes.data || [];
-  const mlItems = mlItemsRes.data || [];
-
-  // 1. Group productos by base product
-  const groups = new Map<string, { base: string; tamano: string; variantes: Map<string, Variante> }>();
-
-  for (const row of productos) {
-    // Infer color from nombre if field is empty
-    let color = row.color || '';
-    if (!color) {
-      const words = row.nombre.trim().split(/\s+/);
-      // Last word is usually the color (e.g. "Set 6 Toallas Valencia Azul" → "Azul")
-      if (words.length > 1) {
-        color = words[words.length - 1];
-      }
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ error: 'Missing Supabase config' }, { status: 500 });
     }
-    if (!color) continue;
 
-    const tamano = row.tamano || '';
-    const base = extractBaseName(row.nombre, color);
-    const key = `${base}|||${tamano.trim().toLowerCase()}`;
-    if (!groups.has(key)) {
-      groups.set(key, { base, tamano, variantes: new Map() });
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    const [mlItemsRes, productosRes] = await Promise.all([
+      supabase
+        .from('ml_items_map')
+        .select('item_id, sku_venta, titulo, family_name, thumbnail, permalink')
+        .eq('activo', true)
+        .is('variation_id', null)
+        .limit(2000),
+      supabase
+        .from('productos')
+        .select('sku, nombre, categoria, color, tamano')
+        .limit(5000),
+    ]);
+
+    if (mlItemsRes.error) {
+      return NextResponse.json({ error: mlItemsRes.error.message }, { status: 500 });
     }
-    groups.get(key)!.variantes.set(row.sku, {
-      sku: row.sku,
-      color: color,
-      color_slug: slugify(color),
-      source: 'catalogo',
-    });
-  }
 
-  // 2. Enrich with ml_items_map — find ML listings that share SKU prefix with existing groups
-  for (const [, group] of groups) {
-    const existingSkus = Array.from(group.variantes.keys());
-    if (existingSkus.length === 0) continue;
+    const mlItems = mlItemsRes.data || [];
+    const productos = productosRes.data || [];
+    const productosBySku = new Map(productos.map((p) => [p.sku, p]));
 
-    // Find common SKU prefix from existing variants
-    // e.g. TXV23QLAT25BE, TXV23QLAT25BC → prefix = "TXV23QLAT25"
-    const skuPrefix = findCommonPrefix(existingSkus);
-    if (skuPrefix.length < 6) continue; // Too short, would match too broadly
+    const groups = new Map<string, ProductGroup>();
 
-    const existingSkuSet = new Set(existingSkus);
+    // Primary path: ML items grouped by family_name (or fallback)
+    for (const item of mlItems) {
+      const titulo: string = item.titulo || '';
+      const familyName: string | null = item.family_name || null;
+      const key = familyName ? `fam:${familyName}` : `fk:${fallbackKey(titulo)}`;
+      if (key === 'fk:') continue; // no titulo to fall back on
 
-    for (const ml of mlItems) {
-      if (!ml.sku_venta) continue;
-      if (existingSkuSet.has(ml.sku_venta)) continue;
-      if (!ml.sku_venta.startsWith(skuPrefix)) continue;
+      const sku = item.sku_venta || '';
+      const producto = sku ? productosBySku.get(sku) : undefined;
 
-      // Extract color from the ML title — last meaningful word
-      const titleWords = ml.titulo.split(/\s+/);
-      let colorGuess = ml.sku_venta;
-      for (let i = titleWords.length - 1; i >= 0; i--) {
-        const w = titleWords[i];
-        if (w && !/^\d/.test(w) && w.length > 1 && !['Cm', 'M', 'Plazas', 'Plaza', 'King', 'Super'].includes(w)) {
-          colorGuess = w;
-          break;
-        }
+      // Variant label: prefer color from productos, else last word of title
+      const color = producto?.color || lastWord(titulo) || sku || item.item_id;
+
+      if (!groups.has(key)) {
+        const baseName = familyName || (titulo ? titulo.split(/\s+/).slice(0, -1).join(' ') : '');
+        groups.set(key, {
+          base_name: baseName,
+          slug: slugify(baseName),
+          tamano: producto?.tamano || '',
+          categoria: inferCategory(baseName),
+          family_name: familyName,
+          variantes: [],
+        });
       }
 
-      existingSkuSet.add(ml.sku_venta);
-      group.variantes.set(ml.sku_venta, {
-        sku: ml.sku_venta,
-        color: colorGuess,
-        color_slug: slugify(colorGuess),
-        source: 'ml',
-      });
-    }
-  }
-
-  // 3. Also find ML-only groups (products in ML but NOT in productos table)
-  const allCatalogSkus = new Set(productos.map((p) => p.sku));
-  const mlOnlyItems = mlItems.filter((ml) => ml.sku_venta && !allCatalogSkus.has(ml.sku_venta));
-
-  // Group ML-only items by title keywords
-  const mlGroups = new Map<string, { titulo: string; items: typeof mlItems }>();
-  for (const ml of mlOnlyItems) {
-    // Use first N words of title as group key (strip color at end)
-    const words = ml.titulo.split(/\s+/);
-    // Try to find a good grouping — use all words except the last one (usually color)
-    const baseWords = words.slice(0, -1).join(' ');
-    const key = slugify(baseWords);
-    if (!mlGroups.has(key)) mlGroups.set(key, { titulo: baseWords, items: [] });
-    mlGroups.get(key)!.items.push(ml);
-  }
-
-  // Add ML-only groups with 2+ variants
-  for (const [key, mlGroup] of mlGroups) {
-    if (mlGroup.items.length < 2) continue;
-    if (groups.has(key)) continue; // Already covered
-
-    const variantes = new Map<string, Variante>();
-    for (const ml of mlGroup.items) {
-      const titleWords = ml.titulo.split(/\s+/);
-      const colorGuess = titleWords[titleWords.length - 1] || ml.sku_venta;
-      variantes.set(ml.sku_venta, {
-        sku: ml.sku_venta,
-        color: colorGuess,
-        color_slug: slugify(colorGuess),
-        source: 'ml',
+      const group = groups.get(key)!;
+      group.variantes.push({
+        sku: sku || item.item_id,
+        color,
+        color_slug: slugify(color),
+        source: producto ? 'catalogo' : 'ml',
+        item_id: item.item_id,
+        titulo: titulo || undefined,
+        thumbnail: item.thumbnail || undefined,
+        permalink: item.permalink || undefined,
       });
     }
 
-    groups.set(key, {
-      base: mlGroup.titulo,
-      tamano: '',
-      variantes,
-    });
-  }
+    // Secondary path: productos NOT covered by ML items (legacy / not yet
+    // listed). Group by base name + size — same as the previous heuristic.
+    const coveredSkus = new Set(
+      mlItems.map((i) => i.sku_venta).filter((s): s is string => !!s)
+    );
 
-  // 4. Merge singleton groups that share the same base product (different sizes, same product)
-  const singletons = new Map<string, string[]>(); // normalized_name -> [keys]
-  for (const [key, group] of groups) {
-    if (group.variantes.size === 1) {
-      const normalized = stripSizeFromName(group.base);
-      if (!normalized) continue;
-      if (!singletons.has(normalized)) singletons.set(normalized, []);
-      singletons.get(normalized)!.push(key);
-    }
-  }
-  for (const [normalized, keys] of singletons) {
-    if (keys.length < 2) continue;
-    // Merge all singletons into the first group
-    const primary = groups.get(keys[0])!;
-    for (let i = 1; i < keys.length; i++) {
-      const other = groups.get(keys[i])!;
-      for (const [sku, v] of other.variantes) {
-        const sizeLabel = other.tamano || v.color;
-        primary.variantes.set(sku, { ...v, color: sizeLabel });
+    const productosFallback = new Map<string, ProductGroup>();
+    for (const row of productos) {
+      if (coveredSkus.has(row.sku)) continue;
+      let color = row.color || '';
+      if (!color) {
+        const words = row.nombre.trim().split(/\s+/);
+        if (words.length > 1) color = words[words.length - 1];
       }
-      groups.delete(keys[i]);
+      if (!color) continue;
+      const tamano = row.tamano || '';
+      const baseName = color
+        ? row.nombre.replace(color, '').replace(/\s{2,}/g, ' ').trim()
+        : row.nombre;
+      const key = `prod:${slugify(baseName)}|${tamano.toLowerCase()}`;
+      if (!productosFallback.has(key)) {
+        productosFallback.set(key, {
+          base_name: baseName,
+          slug: slugify(baseName),
+          tamano,
+          categoria: row.categoria || inferCategory(baseName),
+          family_name: null,
+          variantes: [],
+        });
+      }
+      productosFallback.get(key)!.variantes.push({
+        sku: row.sku,
+        color,
+        color_slug: slugify(color),
+        source: 'catalogo',
+      });
     }
-    // Update primary's own variant label to its size too
-    const firstVariant = primary.variantes.values().next().value!;
-    if (primary.tamano) {
-      primary.variantes.set(firstVariant.sku, { ...firstVariant, color: primary.tamano });
+
+    // Merge — productos fallback only included if 2+ variants
+    for (const [, g] of productosFallback) {
+      if (g.variantes.length < 2) continue;
+      groups.set(`prod-only:${g.slug}|${g.tamano.toLowerCase()}`, g);
     }
-    primary.base = normalized;
-    primary.tamano = '';
-  }
 
-  // 5. Build response — only groups with 2+ variants
-  const result: ProductGroup[] = [];
+    // Output: only groups with 2+ variants
+    const result: ProductGroup[] = [];
+    for (const [, g] of groups) {
+      if (g.variantes.length < 2) continue;
+      g.variantes.sort((a, b) => a.color.localeCompare(b.color));
+      result.push(g);
+    }
 
-  for (const [, group] of groups) {
-    if (group.variantes.size < 2) continue;
+    result.sort((a, b) => a.base_name.localeCompare(b.base_name));
 
-    const variantesArr = Array.from(group.variantes.values());
-    result.push({
-      base_name: group.base,
-      slug: slugify(group.base),
-      tamano: group.tamano,
-      categoria: inferCategory(group.base),
-      variantes: variantesArr,
-    });
-  }
-
-  result.sort((a, b) => a.base_name.localeCompare(b.base_name));
-
-  return NextResponse.json(result);
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[GET /api/productos] error:', message);
