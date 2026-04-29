@@ -37,6 +37,7 @@ interface SwatchData {
   color_description: string | null;
   storage_path: string;
   display_order: number;
+  marked_done_at: string | null;
 }
 
 interface JobData {
@@ -70,6 +71,7 @@ interface SwatchResultGroup {
     color_description: string | null;
     storage_path: string;
     display_order: number;
+    marked_done_at: string | null;
   };
   jobs: Array<{
     id: string;
@@ -129,7 +131,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   // 3. Fetch ALL swatches for the project
   const { data: swatches } = await supabase
     .from('swatches')
-    .select('id, name, sku_suffix, color_description, storage_path, display_order')
+    .select('id, name, sku_suffix, color_description, storage_path, display_order, marked_done_at')
     .eq('project_id', projectId)
     .order('display_order');
 
@@ -244,6 +246,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         color_description: swatch.color_description,
         storage_path: swatch.storage_path,
         display_order: swatch.display_order,
+        marked_done_at: swatch.marked_done_at,
       },
       jobs: swatchJobs.map((j) => ({
         id: j.id,
@@ -272,6 +275,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         color_description: null,
         storage_path: '',
         display_order: 999,
+        marked_done_at: null,
       },
       jobs: noSwatchJobs.map((j) => ({
         id: j.id,

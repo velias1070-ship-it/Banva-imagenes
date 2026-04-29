@@ -67,6 +67,7 @@ interface SwatchResultGroup {
     color_description: string | null;
     storage_path: string;
     display_order: number;
+    marked_done_at: string | null;
   };
   jobs: JobWithRelations[];
   ml_listing: MlListingData | null;
@@ -122,6 +123,9 @@ export default function ResultsPage() {
   const [colorFilter, setColorFilter] = useState<string>('all');
   const [sizeFilter, setSizeFilter] = useState<string>('all');
   const [mlStatusFilter, setMlStatusFilter] = useState<string>('all');
+  // When false (default), swatches marked as done are hidden from the main list.
+  const [showDone, setShowDone] = useState(false);
+  const [markingDoneIds, setMarkingDoneIds] = useState<Set<string>>(new Set());
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -362,6 +366,11 @@ export default function ResultsPage() {
         .filter((g) => g.jobs.length > 0);
     }
 
+    // Hide swatches marked as done unless the user explicitly opted in
+    if (!showDone) {
+      base = base.filter((g) => !g.swatch.marked_done_at);
+    }
+
     // Apply multi-axis filters (tipo, color, size, ml_status)
     if (tipoFilter !== 'all' || colorFilter !== 'all' || sizeFilter !== 'all' || mlStatusFilter !== 'all') {
       base = base.filter((g) => {
@@ -397,7 +406,12 @@ export default function ResultsPage() {
       });
     }
     return base;
-  }, [groups, activeTab, groupByDesign, variantBySku, tipoFilter, colorFilter, sizeFilter, mlStatusFilter]);
+  }, [groups, activeTab, groupByDesign, variantBySku, tipoFilter, colorFilter, sizeFilter, mlStatusFilter, showDone]);
+
+  const doneCount = useMemo(
+    () => groups.filter((g) => g.swatch.marked_done_at).length,
+    [groups]
+  );
 
   // ── Counts ──
   const approvedCount = allJobs.filter((j) => j.status === 'approved').length;
@@ -939,6 +953,47 @@ export default function ResultsPage() {
       }
     } catch {
       toast.error('Error de conexion');
+    }
+  }
+
+  async function handleToggleDone(swatchId: string, currentlyDone: boolean) {
+    setMarkingDoneIds((prev) => new Set(prev).add(swatchId));
+    const newValue = currentlyDone ? null : new Date().toISOString();
+    // Optimistic update
+    setGroups((prev) =>
+      prev.map((g) =>
+        g.swatch.id === swatchId
+          ? { ...g, swatch: { ...g.swatch, marked_done_at: newValue } }
+          : g
+      )
+    );
+    try {
+      const res = await fetch(`/api/projects/${id}/swatches/${swatchId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ marked_done_at: newValue }),
+      });
+      if (!res.ok) {
+        // Revert on failure
+        setGroups((prev) =>
+          prev.map((g) =>
+            g.swatch.id === swatchId
+              ? { ...g, swatch: { ...g.swatch, marked_done_at: currentlyDone ? new Date().toISOString() : null } }
+              : g
+          )
+        );
+        toast.error('No se pudo actualizar el estado');
+        return;
+      }
+      toast.success(currentlyDone ? 'Marcado como pendiente' : 'Marcado como listo');
+    } catch {
+      toast.error('Error de red');
+    } finally {
+      setMarkingDoneIds((prev) => {
+        const next = new Set(prev);
+        next.delete(swatchId);
+        return next;
+      });
     }
   }
 
@@ -2104,6 +2159,16 @@ export default function ResultsPage() {
                 {groupByDesign ? '✓ Por diseño' : 'Agrupar por diseño'}
               </Button>
             )}
+            {doneCount > 0 && (
+              <Button
+                variant={showDone ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setShowDone((v) => !v)}
+                className={showDone ? 'bg-emerald-600 hover:bg-emerald-700' : 'text-emerald-700 border-emerald-300'}
+              >
+                {showDone ? `✓ Mostrando listos (${doneCount})` : `Mostrar listos (${doneCount})`}
+              </Button>
+            )}
             {variantBySku.size > 0 && (filterOptions.tipos.length > 1 || filterOptions.colors.length > 1 || filterOptions.sizes.length > 1) && (
               <>
                 {filterOptions.tipos.length > 1 && (
@@ -2282,7 +2347,7 @@ export default function ResultsPage() {
                         </div>
                       );
                     })()}
-                    <div className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''} ${selectedSwatchIds.has(swatchId) ? 'ring-2 ring-indigo-400' : ''}`}>
+                    <div className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''} ${selectedSwatchIds.has(swatchId) ? 'ring-2 ring-indigo-400' : ''} ${group.swatch.marked_done_at ? 'opacity-70 ring-1 ring-emerald-300 bg-emerald-50/30' : ''}`}>
                     {/* Section header */}
                     <div className="flex items-center gap-3 px-4 py-3">
                       <input
@@ -2353,6 +2418,12 @@ export default function ResultsPage() {
 
                         {/* Status summary */}
                         <div className="flex-shrink-0 flex items-center gap-1.5">
+                          {group.swatch.marked_done_at && (
+                            <Badge variant="default" className="text-xs bg-emerald-600 hover:bg-emerald-600 text-white">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Listo
+                            </Badge>
+                          )}
                           {approvedInGroup === group.jobs.length && group.jobs.length > 0 ? (
                             <Badge variant="default" className="text-xs bg-green-100 text-green-700 border-green-200">
                               <CheckCircle className="h-3 w-3 mr-1" />
@@ -2389,6 +2460,25 @@ export default function ResultsPage() {
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Play className="h-4 w-4" />
+                        )}
+                      </Button>
+
+                      {/* Marcar como listo / pendiente */}
+                      <Button
+                        variant={group.swatch.marked_done_at ? 'default' : 'ghost'}
+                        size="icon"
+                        className={`h-8 w-8 ${group.swatch.marked_done_at ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50'}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleDone(swatchId, !!group.swatch.marked_done_at);
+                        }}
+                        disabled={markingDoneIds.has(swatchId)}
+                        title={group.swatch.marked_done_at ? 'Desmarcar (volver a pendiente)' : 'Marcar como listo'}
+                      >
+                        {markingDoneIds.has(swatchId) ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle className="h-4 w-4" />
                         )}
                       </Button>
 
