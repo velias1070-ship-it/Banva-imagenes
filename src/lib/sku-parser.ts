@@ -3,11 +3,19 @@
 // ya viene en project.metadata.variantes — no se re-deriva del SKU.
 
 const SIZE_PATTERNS: Array<{ regex: RegExp; size: string }> = [
+  // Alfombras / limpiapies — tamaños cm x cm en el sufijo del SKU
   { regex: /4060$/, size: '40x60' },
   { regex: /4575$/, size: '45x75' },
   { regex: /6012$/, size: '60x120' },
   { regex: /80120$/, size: '80x120' },
   { regex: /5790$/, size: '57x90' },
+  // Sabanas / quilts / cubrecamas — código de plaza (10/15/20/25/30) seguido
+  // de letra de temporada y 2 dígitos. Ej: SPAFE30E10W26 → 10 = 1.0 Plazas.
+  { regex: /10[A-Z]\d{2}$/, size: '1.0 Plazas' },
+  { regex: /15[A-Z]\d{2}$/, size: '1.5 Plazas' },
+  { regex: /20[A-Z]\d{2}$/, size: '2.0 Plazas' },
+  { regex: /25[A-Z]\d{2}$/, size: '2.5 Plazas' },
+  { regex: /30[A-Z]\d{2}$/, size: '3.0 Plazas' },
 ];
 
 export function extractSizeFromSku(sku: string): string | null {
@@ -24,6 +32,14 @@ export interface ProjectVariant {
   color: string;
   color_slug: string;
   source: 'catalogo' | 'ml';
+  // Campos opcionales agregados después del refactor de family_name. Pueden
+  // estar ausentes en proyectos antiguos creados antes del cambio.
+  bed_size?: string | null;
+  tipo?: string | null;
+  item_id?: string;
+  titulo?: string;
+  thumbnail?: string;
+  permalink?: string;
 }
 
 export interface ResolvedVariant extends ProjectVariant {
@@ -35,7 +51,9 @@ export function resolveVariants(variantes: ProjectVariant[]): ResolvedVariant[] 
   return variantes.map((v) => ({
     ...v,
     design: v.color_slug,
-    size: extractSizeFromSku(v.sku),
+    // Preferir bed_size de ML si vino en el variante; sino caer al parsing
+    // del SKU para proyectos legacy creados antes del sync de attributes.
+    size: v.bed_size || extractSizeFromSku(v.sku),
   }));
 }
 
