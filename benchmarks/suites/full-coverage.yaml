@@ -1,0 +1,81 @@
+suite: full-coverage
+description: |
+  Un caso por categoría activa en src/lib/category-strategy.ts. Smoke test
+  amplio para detectar regresiones que solo aparecen en una categoría.
+  Cuando salga un modelo nuevo, esta suite + critical-cases dan cobertura
+  razonable antes de adoptar.
+version: 1
+default_min_score: 0.65
+
+cases:
+  - id: quilts-default
+    discovery_filter:
+      category: quilts
+      status_in: [approved]
+    expected_min_score: 0.70
+
+  - id: sabanas-default
+    discovery_filter:
+      category: sabanas
+      status_in: [approved]
+    expected_min_score: 0.70
+
+  - id: cubrecamas-default
+    discovery_filter:
+      category_in: [cubrecama, cubrecamas]
+      status_in: [approved]
+    expected_min_score: 0.70
+
+  - id: plumones-default
+    discovery_filter:
+      category: plumones
+      status_in: [approved]
+    expected_min_score: 0.65
+
+  - id: frazadas-default
+    discovery_filter:
+      category: frazadas
+      status_in: [approved]
+    expected_min_score: 0.65
+
+  - id: almohadas-default
+    discovery_filter:
+      category: almohadas
+      status_in: [approved]
+    expected_min_score: 0.65
+
+  - id: toallas-default
+    discovery_filter:
+      category: toallas
+      status_in: [approved]
+    expected_min_score: 0.70
+
+  - id: manteles-default
+    discovery_filter:
+      category: manteles
+      status_in: [approved]
+    expected_min_score: 0.65
+
+  - id: toppers-default
+    discovery_filter:
+      category: toppers
+      status_in: [approved]
+    expected_min_score: 0.65
+
+  - id: alfombras-default
+    discovery_filter:
+      category: alfombras
+      status_in: [approved]
+    expected_min_score: 0.55
+
+  - id: limpiapies-default
+    discovery_filter:
+      category: limpiapies
+      status_in: [approved]
+    expected_min_score: 0.55
+
+  - id: cortinas-default
+    discovery_filter:
+      category: cortinas
+      status_in: [approved]
+    expected_min_score: 0.65

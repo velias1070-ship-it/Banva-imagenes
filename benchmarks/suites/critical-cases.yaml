@@ -1,0 +1,85 @@
+suite: critical-cases
+description: |
+  Seven historical feedback patterns that have caused production failures.
+  Each case discovers a representative real job from generation_jobs via
+  discovery_filter (PostgREST-style query against generation_jobs columns).
+  The run-golden-set CLI picks ONE matching job per case at run time and
+  benchmarks the requested model against the same hero+swatch.
+  Source of patterns: feedback_*.md memory entries + .claude/rules/*.md.
+version: 1
+default_min_score: 0.70
+
+cases:
+  - id: sabanas-multipattern-lifestyle
+    description: |
+      Sábanas con fundas y sábana bajera de patrones distintos. Pro single-pass
+      sin crop. Multi-pass pierde detalle. Tela plana obligatoria.
+      (memoria: feedback_sabanas_multipattern)
+    discovery_filter:
+      category: sabanas
+      case_signature_like: "%multipattern%"
+      status_in: [approved, flagged]
+    expected_min_score: 0.75
+
+  - id: quilt-stripes-side-angle
+    description: |
+      Quilt en hero side-angle con swatch de rayas. El verificador miente sobre
+      orientación → necesita rotación 90° del swatch antes de pasarlo a Gemini.
+      (memoria: feedback_stripe_orientation_rotation)
+    discovery_filter:
+      category: quilts
+      case_signature_like: "%multipattern%"
+      status_in: [approved, flagged]
+    expected_min_score: 0.70
+
+  - id: toalla-swatch-full-product-photo
+    description: |
+      Swatches de ML son fotos de producto completo, no muestras de tela.
+      Gemini copia la composición del swatch. Hay que extraer solo color/textura.
+      (memoria: feedback_swatch_composition_leak)
+    discovery_filter:
+      category: toallas
+      status_in: [approved, flagged]
+    expected_min_score: 0.75
+
+  - id: cubrecama-pattern-replacement
+    description: |
+      Patrones distintos hero/swatch en cubrecama: edit preserva shapes y solo
+      recolorea. Necesita "2D pattern not 3D" + descartar qaFeedback poison.
+      (memoria: feedback_pattern_replacement)
+    discovery_filter:
+      category_in: [cubrecama, cubrecamas]
+      case_signature_like: "%multipattern%"
+      status_in: [approved, flagged]
+    expected_min_score: 0.70
+
+  - id: toalla-blanco-claro
+    description: |
+      Light-on-white: producto se pierde contra fondo. Necesita subtle soft
+      shadow + rim lighting. Caso difícil para Flash.
+      (regla: qa-scoring.md "Light-on-white")
+    discovery_filter:
+      category: toallas
+      case_signature_like: "%light"
+      status_in: [approved, flagged]
+    expected_min_score: 0.70
+
+  - id: multi-surface-stripe-consistency
+    description: |
+      Cubrecama + fundas: Gemini genera rayas 90° rotadas entre superficies.
+      Text prompts para forzar consistencia no funcionan.
+      (memoria: feedback_multi_surface_stripe_consistency)
+    discovery_filter:
+      category_in: [cubrecama, cubrecamas]
+      status_in: [approved, flagged]
+    expected_min_score: 0.65
+
+  - id: alfombra-printed-illustration
+    description: |
+      Alfombras con swatches printed_illustration o photographic — routing
+      escala a GPT-2 directo. Histórico approval_pct cercano a 0%.
+      (datos: model_performance MV)
+    discovery_filter:
+      category: alfombras
+      status_in: [approved, flagged]
+    expected_min_score: 0.50
