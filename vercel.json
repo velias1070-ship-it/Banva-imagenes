@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/refresh-model-performance",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/regression-alert",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
