@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { headers } from 'next/headers';
+import { HeroTagger } from './hero-tagger';
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -23,6 +24,14 @@ interface CoverageResponse {
   designs: { slug: string; name: string }[];
   sizes: string[];
   heroes_total: number;
+  heroes: {
+    id: string;
+    filename: string;
+    storage_path: string;
+    shot_type: string | null;
+    applies_to_designs: string[] | null;
+    applies_to_sizes: string[] | null;
+  }[];
   variants_total: number;
   variants_with_size: number;
   variants_without_size: string[];
@@ -174,6 +183,8 @@ export default async function CoveragePage({ params }: Props) {
           <div className="mt-1 text-xs text-amber-800 break-all">{variants_without_size.join(', ')}</div>
         </div>
       )}
+
+      <HeroTagger projectId={id} heroes={data.heroes} designs={designs} sizes={sizes} />
     </div>
   );
 }
