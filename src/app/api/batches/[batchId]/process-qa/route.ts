@@ -5,7 +5,7 @@ import { getCategoryStrategy } from '@/lib/category-strategy';
 import { shouldHaltBatch } from '@/lib/qa-criteria';
 import { getProjectSettings } from '@/lib/project-settings';
 import { logPipelineEvent } from '@/lib/pipeline-log';
-import { computeQAErrorTransition } from '@/lib/qa-rate-limit-transition';
+import { computeQAErrorTransition, isRateLimitError } from '@/lib/qa-rate-limit-transition';
 import type { BrandConfig } from '@/lib/brand';
 
 // Vercel Pro: 300s. QA verifier can take 15-30s per job; chain handles multiple.
@@ -351,6 +351,38 @@ async function processOneQAJob(batchId: string): Promise<boolean> {
     // Why no sleep here: the function exits immediately to free the Vercel
     // invocation. The cron is the timer, not the function. Costs $0 to wait.
     const errorMessage = err instanceof Error ? err.message : 'Unknown QA error';
+
+    // ── Verifier-PASS fallback ──
+    // When the QA scorer hits a 429 AND the inline verifier 2.5 Pro already
+    // gave PASS for this job, the swatch fidelity check (the critical one)
+    // is satisfied. After 3 retries we stop bouncing and auto-approve to
+    // unblock jobs that the user is otherwise paying for but cannot use.
+    // Lower threshold than rate_limit_exhausted (24h) — verifier_pass is
+    // strong evidence the image is good.
+    if (isRateLimitError(errorMessage)) {
+      const meta = (job.prompt_metadata as Record<string, unknown> | null) || {};
+      const history = Array.isArray(meta.rate_limit_history) ? meta.rate_limit_history as Array<{ retry_n: number }> : [];
+      const retriesSoFar = history.length;
+      const verifierPassed = Array.isArray(job.pipeline_log)
+        && (job.pipeline_log as Array<{ event?: string; detail?: string }>).some(
+          (e) => e.event === 'VERIFICATION' && e.detail === 'PASS',
+        );
+
+      if (verifierPassed && retriesSoFar >= 3) {
+        const note = `Auto-approved (verifier 2.5 Pro PASS; QA scorer unavailable after ${retriesSoFar} 429 retries)`;
+        logPipelineEvent(job.id, 'VERIFIER_FALLBACK_APPROVED', note, { retries: retriesSoFar });
+        await supabase.from('generation_jobs').update({
+          status: 'approved',
+          qa_score: null,
+          qa_feedback: note,
+          prompt_metadata: { ...meta, verifier_fallback: true, verifier_fallback_at: new Date().toISOString() },
+          updated_at: new Date().toISOString(),
+        }).eq('id', job.id);
+        console.log(`[process-qa] Job ${job.id.substring(0, 8)} → verifier-PASS fallback approved`);
+        return true;
+      }
+    }
+
     const transition = computeQAErrorTransition({
       promptMetadata: job.prompt_metadata as Record<string, unknown> | null,
       errorMessage,
