@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -80,6 +83,44 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   if (insertError) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
+  }
+
+  // Pre-warm the swatch pattern description in the background. The first job
+  // that uses this swatch would otherwise pay ~7-9s + $0.002 for the analysis.
+  // Doing it now means cache is hot by the time the user clicks "Generate".
+  // Skip if a long color_description was supplied at upload (already warm).
+  const swatchId = swatch.id as string;
+  const skipWarm = !!(colorDescription && colorDescription.length > 100);
+  if (!skipWarm) {
+    after(async () => {
+      try {
+        const description = await analyzeSwatchPattern(
+          buffer.toString('base64'),
+          file.type || 'image/png',
+          name,
+        );
+        if (description) {
+          const admin = createAdminClient();
+          // Re-read in case another writer (or a job that already ran) has
+          // populated a long description in the meantime — only overwrite
+          // when the column is still null or a short label like "Crema".
+          const { data: current } = await admin
+            .from('swatches')
+            .select('color_description')
+            .eq('id', swatchId)
+            .single();
+          const existing = current?.color_description as string | null;
+          if (!existing || existing.length <= 100) {
+            await admin
+              .from('swatches')
+              .update({ color_description: description })
+              .eq('id', swatchId);
+          }
+        }
+      } catch (err) {
+        console.error(`[swatches] Pre-warm analyzeSwatchPattern failed for ${swatchId}:`, err);
+      }
+    });
   }
 
   return NextResponse.json(swatch, { status: 201 });

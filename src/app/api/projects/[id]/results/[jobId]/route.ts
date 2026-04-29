@@ -639,20 +639,46 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
         // on pattern mismatch: reference mode invents accent props (pillows,
         // throws) that are not in the hero. The hero_contamination escalation
         // above already handles the real failure case for deep 3D quilting.
-        try {
-          const heroB64 = heroBuffer.toString('base64');
-          const swatchB64 = swatchBuffer.toString('base64');
-          const similar = await arePatternsSimlar(heroB64, heroShot?.mime_type || 'image/png', swatchB64, 'image/png');
-          if (similar === true && mode === 'reference') {
-            mode = 'edit';
-            console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
+        // Cache layers: previous attempt's prompt_metadata.pattern_similarity,
+        // then hero_shots.pattern_similarity_cache by swatch_id, then compute.
+        let similar: boolean | null = null;
+        let cacheSource: 'job_retry' | 'hero_cache' | null = null;
+        const prevMeta = job.prompt_metadata as Record<string, unknown> | null;
+        const prevSim = prevMeta?.pattern_similarity;
+        const heroCache = ((heroShot as unknown as { pattern_similarity_cache?: Record<string, boolean> } | null)?.pattern_similarity_cache
+          ?? {}) as Record<string, boolean>;
+        const heroCacheHit = swatch.id && typeof heroCache[swatch.id] === 'boolean'
+          ? heroCache[swatch.id]
+          : null;
+        if (attempt > 0 && (prevSim === true || prevSim === false)) {
+          similar = prevSim as boolean;
+          cacheSource = 'job_retry';
+        } else if (heroCacheHit !== null) {
+          similar = heroCacheHit;
+          cacheSource = 'hero_cache';
+        } else {
+          try {
+            const heroB64 = heroBuffer.toString('base64');
+            const swatchB64 = swatchBuffer.toString('base64');
+            similar = await arePatternsSimlar(heroB64, heroShot?.mime_type || 'image/png', swatchB64, 'image/png');
+            if (heroShot?.id && swatch.id && similar !== null) {
+              const next = { ...heroCache, [swatch.id]: similar };
+              supabase.from('hero_shots')
+                .update({ pattern_similarity_cache: next })
+                .eq('id', heroShot.id)
+                .then(() => {}, () => {});
+            }
+          } catch (err) {
+            console.error('[regenerateJob] Pattern comparison failed:', err);
           }
-          patternsDiffer = similar === false;
-          patternSimilarity = similar;
-          logPipelineEvent(jobId, 'PATTERN_COMPARED', String(similar), { effective_mode: mode });
-        } catch (err) {
-          console.error('[regenerateJob] Pattern comparison failed:', err);
         }
+        if (similar === true && mode === 'reference') {
+          mode = 'edit';
+          console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
+        }
+        patternsDiffer = similar === false;
+        patternSimilarity = similar;
+        logPipelineEvent(jobId, 'PATTERN_COMPARED', String(similar), { effective_mode: mode, cache_source: cacheSource });
       }
     }
 

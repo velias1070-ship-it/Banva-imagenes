@@ -705,23 +705,54 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     let patternSimilarity: boolean | null = null;
     let patternAutoSwitchReason: string | null = null;
     if (!isBrandOnly && job.hero_shot) {
-      try {
-        patternSimilarity = await arePatternsSimlar(
-          heroBase64, job.hero_shot.mime_type || 'image/png',
-          swatchBase64, 'image/png',
-        );
-        if (patternSimilarity === true && effectiveMode === 'reference') {
-          effectiveMode = 'edit';
-          patternAutoSwitchReason = 'patterns_similar_reference_to_edit';
-          console.log(`[process-next] Patterns similar → switching to edit (color change only)`);
+      // Cache layer 1: previous attempt of THIS job already computed it.
+      // Inputs (hero+swatch images) are immutable across retries → safe to reuse.
+      const prevMeta = job.prompt_metadata as Record<string, unknown> | null;
+      const prevSim = prevMeta?.pattern_similarity;
+      // Cache layer 2: hero_shots.pattern_similarity_cache keyed by swatch_id.
+      // Persists across jobs and across batches for the same (hero, swatch) pair.
+      const heroCache = ((job.hero_shot as Record<string, unknown>).pattern_similarity_cache
+        ?? {}) as Record<string, boolean>;
+      const heroCacheHit = job.swatch.id && typeof heroCache[job.swatch.id] === 'boolean'
+        ? heroCache[job.swatch.id]
+        : null;
+
+      let cacheSource: 'job_retry' | 'hero_cache' | null = null;
+      if (job.attempt > 0 && (prevSim === true || prevSim === false)) {
+        patternSimilarity = prevSim as boolean;
+        cacheSource = 'job_retry';
+      } else if (heroCacheHit !== null) {
+        patternSimilarity = heroCacheHit;
+        cacheSource = 'hero_cache';
+      } else {
+        try {
+          patternSimilarity = await arePatternsSimlar(
+            heroBase64, job.hero_shot.mime_type || 'image/png',
+            swatchBase64, 'image/png',
+          );
+          // Persist in hero_shots cache (non-blocking).
+          if (job.hero_shot.id && job.swatch.id && patternSimilarity !== null) {
+            const next = { ...heroCache, [job.swatch.id]: patternSimilarity };
+            supabase.from('hero_shots')
+              .update({ pattern_similarity_cache: next })
+              .eq('id', job.hero_shot.id)
+              .then(() => {}, () => {});
+          }
+        } catch (err) {
+          console.error('[process-next] Pattern comparison failed (using default):', err);
         }
-        logPipelineEvent(job.id, 'PATTERN_COMPARED', String(patternSimilarity), {
-          auto_switch: patternAutoSwitchReason,
-          effective_mode: effectiveMode,
-        });
-      } catch (err) {
-        console.error('[process-next] Pattern comparison failed (using default):', err);
       }
+
+      if (patternSimilarity === true && effectiveMode === 'reference') {
+        effectiveMode = 'edit';
+        patternAutoSwitchReason = 'patterns_similar_reference_to_edit';
+        console.log(`[process-next] Patterns similar → switching to edit (color change only)`);
+      }
+      logPipelineEvent(job.id, 'PATTERN_COMPARED', String(patternSimilarity), {
+        auto_switch: patternAutoSwitchReason,
+        effective_mode: effectiveMode,
+        cache_source: cacheSource,
+      });
     }
 
     // Detail/doblada shots use edit mode to preserve composition.
@@ -755,10 +786,20 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     // ("Crema") which always fails hasDirectionalPattern() and silently disables
     // the auto-rotation path.
     let swatchPatternDescription: string | null = null;
+    let swatchPatternSource: 'job_retry' | 'swatch_cache' | 'computed' | 'none' = 'none';
     if (!isBrandOnly) {
-      const cached = job.swatch.color_description;
-      if (cached && cached.length > 100) {
-        swatchPatternDescription = cached;
+      // Cache layer 1: previous attempt of THIS job already wrote it.
+      const prevJobPattern = job.swatch_pattern_text as string | null;
+      // Cache layer 2: per-swatch description (populated by upload pre-warm or
+      // a previous job using this swatch).
+      const swatchCached = job.swatch.color_description;
+
+      if (job.attempt > 0 && prevJobPattern && prevJobPattern.length > 100) {
+        swatchPatternDescription = prevJobPattern;
+        swatchPatternSource = 'job_retry';
+      } else if (swatchCached && swatchCached.length > 100) {
+        swatchPatternDescription = swatchCached;
+        swatchPatternSource = 'swatch_cache';
         console.log(`[process-next] Using cached swatch pattern analysis for ${job.swatch.name}`);
       } else {
         swatchPatternDescription = await analyzeSwatchPattern(
@@ -767,6 +808,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
           job.swatch.name,
         );
         if (swatchPatternDescription) {
+          swatchPatternSource = 'computed';
           const existing = job.swatch.color_description;
           if (!existing || existing.length > 100) {
             supabase.from('swatches')
@@ -778,7 +820,7 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
     }
     logPipelineEvent(job.id, 'PATTERN_ANALYSIS', swatchPatternDescription ? 'available' : 'none', {
-      cached: !!(job.swatch.color_description && job.swatch.color_description.length > 100),
+      cache_source: swatchPatternSource,
       length: swatchPatternDescription?.length || 0,
     });
 
