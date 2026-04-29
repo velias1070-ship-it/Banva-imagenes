@@ -16,7 +16,7 @@ import {
   Palette, Copy, Play,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { extractSizeFromSku, type ProjectVariant } from '@/lib/sku-parser';
+import { extractSizeFromSku, resolveHeroesForVariant, type ProjectVariant, type TaggedHero } from '@/lib/sku-parser';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -121,6 +121,24 @@ export default function ResultsPage() {
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
   const [regeneratingBulk, setRegeneratingBulk] = useState(false);
+  const [projectHeroes, setProjectHeroes] = useState<
+    Array<TaggedHero & { id: string; filename: string; storage_path: string; shot_type: string | null }>
+  >([]);
+  const [genPreview, setGenPreview] = useState<{
+    label: string;
+    pairs: Array<{
+      key: string;
+      swatch_id: string;
+      hero_id: string;
+      tier: 'exact' | 'design_only' | 'size_only' | 'generic' | 'none';
+      swatch_name: string;
+      swatch_thumb: string | null;
+      hero_filename: string;
+      hero_thumb: string | null;
+    }>;
+    excluded: Set<string>;
+  } | null>(null);
+  const [genPreviewSubmitting, setGenPreviewSubmitting] = useState(false);
   const [editingJob, setEditingJob] = useState<string | null>(null);
   // Lifted to parent because JobCard is defined inside ResultsPage and
   // re-creates its function reference on every poll (every 10s). That
@@ -244,6 +262,10 @@ export default function ResultsPage() {
         const v = (data?.metadata as { variantes?: ProjectVariant[] } | undefined)?.variantes;
         if (Array.isArray(v)) setVariantes(v);
       })
+      .catch(() => {});
+    fetch(`/api/projects/${id}/heroes`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => Array.isArray(data) && setProjectHeroes(data))
       .catch(() => {});
   }, [id]);
 
@@ -579,19 +601,64 @@ export default function ResultsPage() {
     }
   }
 
-  // ── Generate jobs for one or more swatches (uses resolver) ──
-  async function handleGenerateForSwatches(swatchIds: string[], label?: string) {
+  // ── Open preview modal for swatch generation (don't fire immediately) ──
+  function handleGenerateForSwatches(swatchIds: string[], label?: string) {
     if (swatchIds.length === 0) return;
-    setGeneratingSwatches((prev) => {
-      const next = new Set(prev);
-      for (const sid of swatchIds) next.add(sid);
-      return next;
+    const variantBySkuLocal = new Map(variantes.map((v) => [v.sku.toUpperCase(), v]));
+    const swatchesById = new Map<string, SwatchResultGroup['swatch']>();
+    for (const g of groups) swatchesById.set(g.swatch.id, g.swatch);
+    const heroesById = new Map(projectHeroes.map((h) => [h.id, h]));
+    const pairs: NonNullable<typeof genPreview>['pairs'] = [];
+    for (const sid of swatchIds) {
+      const sw = swatchesById.get(sid);
+      if (!sw) continue;
+      const sku = (sw.sku_suffix || '').toUpperCase();
+      const variant = sku ? variantBySkuLocal.get(sku) : undefined;
+      const design = variant?.color_slug || null;
+      const size = sku ? extractSizeFromSku(sku) : null;
+      const matched = resolveHeroesForVariant(projectHeroes, design, size);
+      const list = matched.length > 0
+        ? matched
+        : projectHeroes.map((h) => ({ hero: h, tier: 'generic' as const }));
+      for (const r of list) {
+        pairs.push({
+          key: `${sw.id}:${r.hero.id}`,
+          swatch_id: sw.id,
+          hero_id: r.hero.id,
+          tier: r.tier,
+          swatch_name: sw.name,
+          swatch_thumb: sw.storage_path,
+          hero_filename: heroesById.get(r.hero.id)?.filename || r.hero.id,
+          hero_thumb: heroesById.get(r.hero.id)?.storage_path || null,
+        });
+      }
+    }
+    if (pairs.length === 0) {
+      toast.error('No hay heros disponibles para esos swatches');
+      return;
+    }
+    setGenPreview({
+      label: label || `${swatchIds.length} swatch(es)`,
+      pairs,
+      excluded: new Set(),
     });
+  }
+
+  async function submitGenPreview() {
+    if (!genPreview) return;
+    const pairs = genPreview.pairs
+      .filter((p) => !genPreview.excluded.has(p.key))
+      .map(({ swatch_id, hero_id }) => ({ swatch_id, hero_id }));
+    if (pairs.length === 0) {
+      toast.error('Marcaste todo como excluido');
+      return;
+    }
+    setGenPreviewSubmitting(true);
     try {
       const res = await fetch(`/api/projects/${id}/generate`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ swatch_ids: swatchIds }),
+        body: JSON.stringify({ pairs }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -599,22 +666,11 @@ export default function ResultsPage() {
         return;
       }
       const data = await res.json();
-      const meta = data?._resolver;
-      const total = data?.total_combinations ?? swatchIds.length;
-      toast.success(
-        `${label ? label + ' · ' : ''}Batch lanzado · ${total} imagen${total !== 1 ? 'es' : ''}` +
-          (meta?.mode === 'resolver' && meta.skipped?.length
-            ? ` (${meta.skipped.length} swatch saltean por sin hero)`
-            : '')
-      );
-      // Refresh after a beat so the new jobs appear
+      toast.success(`Batch lanzado · ${data.total_combinations ?? pairs.length} imagen(es)`);
+      setGenPreview(null);
       setTimeout(() => fetchResults(), 1500);
     } finally {
-      setGeneratingSwatches((prev) => {
-        const next = new Set(prev);
-        for (const sid of swatchIds) next.delete(sid);
-        return next;
-      });
+      setGenPreviewSubmitting(false);
     }
   }
 
@@ -2511,6 +2567,110 @@ export default function ResultsPage() {
         className="hidden"
         onChange={handleUploadFile}
       />
+
+      {/* Preview before generate */}
+      <Dialog
+        open={!!genPreview}
+        onOpenChange={(open) => !open && !genPreviewSubmitting && setGenPreview(null)}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Confirmar generación · {genPreview?.label}</DialogTitle>
+          </DialogHeader>
+          {genPreview && (
+            <>
+              <div className="text-xs text-muted-foreground">
+                {genPreview.pairs.length - genPreview.excluded.size} de {genPreview.pairs.length} imagen(es)
+                seleccionadas. Desmarcá las que no quieras generar.
+              </div>
+              <div className="max-h-[50vh] overflow-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/50">
+                    <tr className="text-left">
+                      <th className="p-2 w-8"></th>
+                      <th className="p-2">Swatch</th>
+                      <th className="p-2">Hero</th>
+                      <th className="p-2">Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {genPreview.pairs.map((p) => {
+                      const excluded = genPreview.excluded.has(p.key);
+                      const tierColor = {
+                        exact: 'bg-emerald-100 text-emerald-900',
+                        design_only: 'bg-cyan-100 text-cyan-900',
+                        size_only: 'bg-amber-100 text-amber-900',
+                        generic: 'bg-indigo-100 text-indigo-900',
+                        none: 'bg-rose-100 text-rose-900',
+                      }[p.tier];
+                      return (
+                        <tr key={p.key} className={`border-t ${excluded ? 'opacity-40' : ''}`}>
+                          <td className="p-2">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 cursor-pointer accent-indigo-600"
+                              checked={!excluded}
+                              onChange={() =>
+                                setGenPreview((prev) => {
+                                  if (!prev) return prev;
+                                  const next = new Set(prev.excluded);
+                                  if (next.has(p.key)) next.delete(p.key);
+                                  else next.add(p.key);
+                                  return { ...prev, excluded: next };
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="p-2">
+                            <div className="flex items-center gap-2">
+                              {p.swatch_thumb && (
+                                <img
+                                  src={getStorageUrl(p.swatch_thumb)}
+                                  alt={p.swatch_name}
+                                  className="h-8 w-8 object-cover rounded border"
+                                />
+                              )}
+                              <span>{p.swatch_name}</span>
+                            </div>
+                          </td>
+                          <td className="p-2">
+                            <div className="flex items-center gap-2">
+                              {p.hero_thumb && (
+                                <img
+                                  src={getStorageUrl(p.hero_thumb)}
+                                  alt={p.hero_filename}
+                                  className="h-8 w-8 object-cover rounded border"
+                                />
+                              )}
+                              <span className="truncate max-w-[220px]">{p.hero_filename}</span>
+                            </div>
+                          </td>
+                          <td className="p-2">
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] ${tierColor}`}>{p.tier}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGenPreview(null)} disabled={genPreviewSubmitting}>
+              Cancelar
+            </Button>
+            <Button onClick={submitGenPreview} disabled={genPreviewSubmitting}>
+              {genPreviewSubmitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="mr-2 h-4 w-4" />
+              )}
+              Generar {genPreview ? genPreview.pairs.length - genPreview.excluded.size : 0}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
