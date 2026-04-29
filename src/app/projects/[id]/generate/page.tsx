@@ -55,6 +55,7 @@ export default function GeneratePage() {
   const [missingVariants, setMissingVariants] = useState<Array<{ item_id: string; title: string; seller_sku: string; status: string; available_quantity: number }>>([]);
   const [loadingMissing, setLoadingMissing] = useState(false);
   const [addingMissing, setAddingMissing] = useState(false);
+  const [showAssignments, setShowAssignments] = useState(false);
 
   const fetchData = useCallback(async () => {
     const [heroStatusRes, swatchRes] = await Promise.all([
@@ -187,12 +188,26 @@ export default function GeneratePage() {
         total: selectedCount * selectedSwatchCount,
         skipped: [] as { sku?: string; name: string }[],
         breakdown: { exact: 0, design_only: 0, size_only: 0, generic: 0 },
+        assignments: [] as Array<{
+          swatch: Swatch;
+          hero: HeroWithStatus | null;
+          tier: 'exact' | 'design_only' | 'size_only' | 'generic' | 'none';
+          design: string | null;
+          size: string | null;
+        }>,
       };
     }
     const variantBySku = new Map(variantes.map((v) => [v.sku.toUpperCase(), v]));
     const selectedSwatches = swatches.filter((s) => selectedSwatchIds.has(s.id));
     const breakdown = { exact: 0, design_only: 0, size_only: 0, generic: 0 };
     const skipped: { sku?: string; name: string }[] = [];
+    const assignments: Array<{
+      swatch: Swatch;
+      hero: HeroWithStatus | null;
+      tier: 'exact' | 'design_only' | 'size_only' | 'generic' | 'none';
+      design: string | null;
+      size: string | null;
+    }> = [];
     let total = 0;
     for (const sw of selectedSwatches) {
       const sku = (sw.sku_suffix || '').toUpperCase();
@@ -202,12 +217,14 @@ export default function GeneratePage() {
       const r = resolveHeroForVariant(selectedHeroes, design, size);
       if (!r) {
         skipped.push({ sku: sw.sku_suffix || undefined, name: sw.name });
+        assignments.push({ swatch: sw, hero: null, tier: 'none', design, size });
         continue;
       }
       if (r.tier !== 'none') breakdown[r.tier as keyof typeof breakdown]++;
       total++;
+      assignments.push({ swatch: sw, hero: r.hero, tier: r.tier, design, size });
     }
-    return { useResolver: true, total, skipped, breakdown };
+    return { useResolver: true, total, skipped, breakdown, assignments };
   }, [heroesWithStatus, swatches, variantes, selectedHeroIds, selectedSwatchIds, selectedCount, selectedSwatchCount]);
 
   const totalCombinations = resolverPreview.total;
@@ -603,8 +620,17 @@ export default function GeneratePage() {
 
           {resolverPreview.useResolver && (
             <div className="mt-4 rounded border border-indigo-200 bg-indigo-50 p-3 text-xs">
-              <div className="font-medium text-indigo-900">
-                Modo resolver activo · 1 hero por swatch (no cross product)
+              <div className="flex items-center justify-between">
+                <div className="font-medium text-indigo-900">
+                  Modo resolver activo · 1 hero por swatch (no cross product)
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAssignments((v) => !v)}
+                  className="text-indigo-700 underline hover:text-indigo-900"
+                >
+                  {showAssignments ? 'Ocultar' : 'Ver'} asignaciones
+                </button>
               </div>
               <div className="mt-1 text-indigo-800">
                 Match por SKU →{' '}
@@ -618,6 +644,79 @@ export default function GeneratePage() {
                   <span className="font-medium">{resolverPreview.skipped.length}</span> swatch(es) sin hero
                   compatible (saltean): {resolverPreview.skipped.slice(0, 5).map((s) => s.name).join(', ')}
                   {resolverPreview.skipped.length > 5 ? '…' : ''}
+                </div>
+              )}
+
+              {showAssignments && (
+                <div className="mt-3 max-h-96 overflow-auto rounded border border-indigo-100 bg-white">
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-indigo-50">
+                      <tr className="text-left text-indigo-900">
+                        <th className="p-2">Swatch</th>
+                        <th className="p-2">SKU</th>
+                        <th className="p-2">Diseño</th>
+                        <th className="p-2">Tamaño</th>
+                        <th className="p-2">→ Hero asignado</th>
+                        <th className="p-2">Match</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...resolverPreview.assignments]
+                        .sort((a, b) => {
+                          const order = { exact: 0, design_only: 1, size_only: 2, generic: 3, none: 4 };
+                          return order[a.tier] - order[b.tier];
+                        })
+                        .map((a) => {
+                          const tierColor = {
+                            exact: 'bg-emerald-100 text-emerald-900',
+                            design_only: 'bg-cyan-100 text-cyan-900',
+                            size_only: 'bg-amber-100 text-amber-900',
+                            generic: 'bg-gray-100 text-gray-700',
+                            none: 'bg-rose-100 text-rose-900',
+                          }[a.tier];
+                          return (
+                            <tr key={a.swatch.id} className="border-t border-indigo-50">
+                              <td className="p-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="h-8 w-8 overflow-hidden rounded bg-gray-100">
+                                    {a.swatch.storage_path && (
+                                      <img
+                                        src={getStorageUrl(a.swatch.storage_path)}
+                                        alt={a.swatch.name}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    )}
+                                  </div>
+                                  <span>{a.swatch.name}</span>
+                                </div>
+                              </td>
+                              <td className="p-2 font-mono text-[10px]">{a.swatch.sku_suffix || '—'}</td>
+                              <td className="p-2">{a.design || '—'}</td>
+                              <td className="p-2">{a.size || '—'}</td>
+                              <td className="p-2">
+                                {a.hero ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-8 w-8 overflow-hidden rounded bg-gray-100">
+                                      <img
+                                        src={getStorageUrl(a.hero.storage_path)}
+                                        alt={a.hero.filename}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    </div>
+                                    <span className="truncate max-w-[180px]">{a.hero.filename}</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-rose-700">— skipea —</span>
+                                )}
+                              </td>
+                              <td className="p-2">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] ${tierColor}`}>{a.tier}</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
