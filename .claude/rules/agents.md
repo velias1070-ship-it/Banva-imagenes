@@ -69,15 +69,6 @@ Pasar imagenes a agentes que no las necesitan es un desperdicio masivo.
 - Optimizado: 1 agente x 10 imagenes x 7K tokens = 70K tokens/batch
 - **Ahorro: 75% de tokens de imagen** (210K tokens por batch)
 
-## BUG CONOCIDO: Inngest Duplicate
-
-`src/lib/inngest/functions/batch-generate.ts` contiene un `buildPrompt()` DUPLICADO:
-- NO tiene dark swatch handling
-- NO tiene category-specific rules (quilts, sabanas)
-- NO tiene las mejoras de prompt recientes
-- **Status**: DEPRECATED — el flujo actual usa serverless chain (`process-next`), no Inngest
-- **Accion**: No borrar (puede servir de referencia), pero NUNCA usar para generacion real
-
 ## Evolucion Futura — QA Adversarial
 
 ### Patron: Dos Reviewers + Arbitro

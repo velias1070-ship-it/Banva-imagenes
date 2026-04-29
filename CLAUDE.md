@@ -61,7 +61,6 @@ src/
 ## REGLA CRITICA: Single Source of Truth
 `buildPrompt()` en `src/app/api/projects/[id]/generate/route.ts` es la UNICA funcion para construir prompts.
 Todos los demas archivos la IMPORTAN dinamicamente. NUNCA duplicar esta logica.
-NOTA: `src/lib/inngest/functions/batch-generate.ts` tiene un buildPrompt() DUPLICADO y DESACTUALIZADO — esta deprecated, no usar.
 
 ## Documentacion Detallada
 Ver `.claude/rules/` para reglas especificas:
