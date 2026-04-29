@@ -1,44 +1,53 @@
 suite: alfombras-debugging
 description: |
-  Casos de alfombras donde model_performance MV mostró approval_pct=0% en
-  varios case_signatures con :unknownpattern. Sprint 2 issue #4 hallazgo —
-  ver project_banva_sprint3_backlog.md TODO #2A.
+  Casos de alfombras donde model_performance MV mostró approval bajo en
+  varios case_signatures. Sprint 2 issue #4 hallazgo — ver
+  project_banva_sprint3_backlog.md TODO #2A.
   Objetivo: determinar si un modelo distinto al actual mejora la tasa, o si
   el problema es de prompts/preprocessing más que del modelo.
-version: 1
+  Counts refrescados 2026-04-29 desde scripts/discover-case-signatures.ts.
+version: 2
 default_min_score: 0.50
 
 cases:
   - id: alfombras-detail-multipattern-light
-    description: 11 jobs en prod en este bucket. Verificar si Pro o GPT-2 mejora.
+    description: |
+      Bucket más grande de alfombras (11 jobs: 4 approved, 7 flagged).
+      Patrones distintos hero/swatch en detail shot. Verificar si Pro o
+      GPT-2 mejoran sobre el primary actual (Flash).
     discovery_filter:
       case_signature: "alfombras:detail:multipattern:light"
       status_in: [approved, flagged, error]
     expected_min_score: 0.50
 
   - id: alfombras-detail-multipattern-dark
-    description: Variante dark del bucket detail-multipattern.
+    description: |
+      Variante dark del bucket detail-multipattern. (4 jobs: 2 approved, 2 flagged)
     discovery_filter:
       case_signature: "alfombras:detail:multipattern:dark"
       status_in: [approved, flagged, error]
     expected_min_score: 0.50
 
   - id: alfombras-lifestyle-multipattern-light
-    description: 7 jobs en prod, lifestyle con patrones distintos hero/swatch.
+    description: |
+      Lifestyle con patrones distintos hero/swatch. (7 jobs: 3 approved, 4 flagged)
     discovery_filter:
       case_signature: "alfombras:lifestyle:multipattern:light"
       status_in: [approved, flagged, error]
     expected_min_score: 0.50
 
   - id: alfombras-lifestyle-unknownpattern-light
-    description: 7 jobs en prod, signature con unknownpattern (pattern_similarity nulo).
+    description: |
+      Signature con unknownpattern (pattern_similarity nulo, no se pudo
+      comparar). (7 jobs: 4 approved, 3 error)
     discovery_filter:
       case_signature: "alfombras:lifestyle:unknownpattern:light"
       status_in: [approved, flagged, error]
     expected_min_score: 0.50
 
   - id: alfombras-flatlay-multipattern-light
-    description: Flatlay (fondo blanco packshot) con patrones distintos.
+    description: |
+      Flatlay (fondo blanco packshot) con patrones distintos. (3 jobs: 2 approved, 1 flagged)
     discovery_filter:
       case_signature: "alfombras:flatlay:multipattern:light"
       status_in: [approved, flagged, error]

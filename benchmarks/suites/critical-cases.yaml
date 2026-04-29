@@ -1,85 +1,90 @@
 suite: critical-cases
 description: |
-  Seven historical feedback patterns that have caused production failures.
-  Each case discovers a representative real job from generation_jobs via
-  discovery_filter (PostgREST-style query against generation_jobs columns).
-  The run-golden-set CLI picks ONE matching job per case at run time and
-  benchmarks the requested model against the same hero+swatch.
-  Source of patterns: feedback_*.md memory entries + .claude/rules/*.md.
-version: 1
+  Production-validated failure patterns. Each case_signature resolves to
+  ≥ 3 terminal jobs with usable hero+swatch in generation_jobs as of
+  2026-04-29. Re-populated from scripts/discover-case-signatures.ts output;
+  v1 used wildcard patterns ("%multipattern%") that lost matches against
+  the resolveSuite .limit(50) PostgREST cap when high-volume categories
+  saturated the page before the post-fetch category filter ran.
+
+  Each case below uses an exact case_signature, so the category prefix
+  in the signature is the implicit scope — no post-fetch filter needed.
+version: 2
 default_min_score: 0.70
 
 cases:
   - id: sabanas-multipattern-lifestyle
     description: |
-      Sábanas con fundas y sábana bajera de patrones distintos. Pro single-pass
-      sin crop. Multi-pass pierde detalle. Tela plana obligatoria.
+      Sábanas con fundas + bajera de patrones distintos en hero lifestyle.
+      Pro single-pass sin crop. Tela plana obligatoria.
+      (76 jobs prod: 58 approved, 1 flagged, 17 error)
       (memoria: feedback_sabanas_multipattern)
     discovery_filter:
-      category: sabanas
-      case_signature_like: "%multipattern%"
+      case_signature: "sabanas:lifestyle:multipattern:light"
       status_in: [approved, flagged]
     expected_min_score: 0.75
 
-  - id: quilt-stripes-side-angle
+  - id: quilts-multipattern-lifestyle
     description: |
-      Quilt en hero side-angle con swatch de rayas. El verificador miente sobre
-      orientación → necesita rotación 90° del swatch antes de pasarlo a Gemini.
-      (memoria: feedback_stripe_orientation_rotation)
+      Quilt + fundas con patrones distintos en hero lifestyle. Multi-superficie
+      con consistencia de stripes/patrones. Verificador miente sobre orientación.
+      (122 jobs prod: 111 approved, 11 flagged)
+      (memoria: feedback_multi_surface_stripe_consistency, feedback_stripe_orientation_rotation)
     discovery_filter:
-      category: quilts
-      case_signature_like: "%multipattern%"
+      case_signature: "quilts:lifestyle:multipattern:light"
       status_in: [approved, flagged]
     expected_min_score: 0.70
 
-  - id: toalla-swatch-full-product-photo
+  - id: quilts-multipattern-detail
     description: |
-      Swatches de ML son fotos de producto completo, no muestras de tela.
-      Gemini copia la composición del swatch. Hay que extraer solo color/textura.
+      Quilt detail shot con stitch pattern 3D embossed. Limitación conocida:
+      textura difícil de reemplazar en cuerpo del quilt → Tier 2 directo.
+      (71 jobs prod: 67 approved, 2 flagged, 2 error)
+      (memoria: feedback_pattern_replacement, regla: prompts.md "Quilting 3D")
+    discovery_filter:
+      case_signature: "quilts:detail:multipattern:light"
+      status_in: [approved, flagged]
+    expected_min_score: 0.70
+
+  - id: toallas-baseline
+    description: |
+      Toallas único bucket en prod (lifestyle:unknownpattern). Light-on-white
+      challenge + swatches a menudo full-product-photo.
+      (86 jobs prod: 73 approved, 13 flagged)
       (memoria: feedback_swatch_composition_leak)
     discovery_filter:
-      category: toallas
+      case_signature: "toallas:lifestyle:unknownpattern:light"
       status_in: [approved, flagged]
     expected_min_score: 0.75
 
-  - id: cubrecama-pattern-replacement
+  - id: cortinas-multipattern-detail
     description: |
-      Patrones distintos hero/swatch en cubrecama: edit preserva shapes y solo
-      recolorea. Necesita "2D pattern not 3D" + descartar qaFeedback poison.
-      (memoria: feedback_pattern_replacement)
+      Cortinas detail con patrones distintos hero/swatch. Reemplaza el v1
+      cubrecama-pattern-replacement (categoría cubrecama no existe en prod).
+      (10 jobs prod: 4 approved, 6 flagged)
     discovery_filter:
-      category_in: [cubrecama, cubrecamas]
-      case_signature_like: "%multipattern%"
+      case_signature: "cortinas:detail:multipattern:light"
       status_in: [approved, flagged]
     expected_min_score: 0.70
 
-  - id: toalla-blanco-claro
+  - id: alfombras-multipattern-detail
     description: |
-      Light-on-white: producto se pierde contra fondo. Necesita subtle soft
-      shadow + rim lighting. Caso difícil para Flash.
-      (regla: qa-scoring.md "Light-on-white")
+      Alfombras detail con patrones distintos. Categoría con histórico bajo
+      approval (ver alfombras-debugging.yaml para A/B exhaustivo).
+      (11 jobs prod: 4 approved, 7 flagged)
     discovery_filter:
-      category: toallas
-      case_signature_like: "%light"
-      status_in: [approved, flagged]
-    expected_min_score: 0.70
-
-  - id: multi-surface-stripe-consistency
-    description: |
-      Cubrecama + fundas: Gemini genera rayas 90° rotadas entre superficies.
-      Text prompts para forzar consistencia no funcionan.
-      (memoria: feedback_multi_surface_stripe_consistency)
-    discovery_filter:
-      category_in: [cubrecama, cubrecamas]
-      status_in: [approved, flagged]
-    expected_min_score: 0.65
-
-  - id: alfombra-printed-illustration
-    description: |
-      Alfombras con swatches printed_illustration o photographic — routing
-      escala a GPT-2 directo. Histórico approval_pct cercano a 0%.
-      (datos: model_performance MV)
-    discovery_filter:
-      category: alfombras
+      case_signature: "alfombras:detail:multipattern:light"
       status_in: [approved, flagged]
     expected_min_score: 0.50
+
+  - id: plumones-dark-swatch
+    description: |
+      Plumones lifestyle con swatch dark. Reemplaza v1 toalla-blanco-claro
+      (no existe variante :dark de toallas en prod). Dark swatch handling
+      via prompt-only (isSwatchDark + nota DARK FABRIC HANDLING).
+      (19 jobs prod: 17 approved, 2 flagged)
+      (regla: prompts.md "Dark Swatch Handling")
+    discovery_filter:
+      case_signature: "plumones:lifestyle:unknownpattern:dark"
+      status_in: [approved, flagged]
+    expected_min_score: 0.70
