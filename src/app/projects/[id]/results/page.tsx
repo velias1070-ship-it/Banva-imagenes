@@ -13,7 +13,7 @@ import {
   ImageIcon, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
   Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
-  Palette, Copy,
+  Palette, Copy, Play,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { extractSizeFromSku, type ProjectVariant } from '@/lib/sku-parser';
@@ -117,6 +117,7 @@ export default function ResultsPage() {
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
   const [groupByDesign, setGroupByDesign] = useState(false);
   const [variantes, setVariantes] = useState<ProjectVariant[]>([]);
+  const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [editingJob, setEditingJob] = useState<string | null>(null);
   // Lifted to parent because JobCard is defined inside ResultsPage and
   // re-creates its function reference on every poll (every 10s). That
@@ -572,6 +573,45 @@ export default function ResultsPage() {
       toast.error('Error de conexion');
     } finally {
       setMlSaving((prev) => new Map(prev).set(swatchId, false));
+    }
+  }
+
+  // ── Generate jobs for one or more swatches (uses resolver) ──
+  async function handleGenerateForSwatches(swatchIds: string[], label?: string) {
+    if (swatchIds.length === 0) return;
+    setGeneratingSwatches((prev) => {
+      const next = new Set(prev);
+      for (const sid of swatchIds) next.add(sid);
+      return next;
+    });
+    try {
+      const res = await fetch(`/api/projects/${id}/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ swatch_ids: swatchIds }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        toast.error(`No se pudo generar: ${err.error || res.status}`);
+        return;
+      }
+      const data = await res.json();
+      const meta = data?._resolver;
+      const total = data?.total_combinations ?? swatchIds.length;
+      toast.success(
+        `${label ? label + ' · ' : ''}Batch lanzado · ${total} imagen${total !== 1 ? 'es' : ''}` +
+          (meta?.mode === 'resolver' && meta.skipped?.length
+            ? ` (${meta.skipped.length} swatch saltean por sin hero)`
+            : '')
+      );
+      // Refresh after a beat so the new jobs appear
+      setTimeout(() => fetchResults(), 1500);
+    } finally {
+      setGeneratingSwatches((prev) => {
+        const next = new Set(prev);
+        for (const sid of swatchIds) next.delete(sid);
+        return next;
+      });
     }
   }
 
@@ -1781,14 +1821,36 @@ export default function ResultsPage() {
 
                 return (
                   <div key={swatchId}>
-                    {showDesignHeader && (
-                      <div className="mt-6 mb-2 flex items-center gap-2 border-b pb-1">
-                        <h2 className="text-base font-semibold capitalize">{groupDesign || 'Sin diseño'}</h2>
-                        <span className="text-xs text-muted-foreground">
-                          {filteredGroups.filter((g) => designForGroup(g) === groupDesign).length} swatch(es)
-                        </span>
-                      </div>
-                    )}
+                    {showDesignHeader && (() => {
+                      const designSwatchIds = filteredGroups
+                        .filter((g) => designForGroup(g) === groupDesign)
+                        .map((g) => g.swatch.id);
+                      const generatingThisDesign = designSwatchIds.some((sid) => generatingSwatches.has(sid));
+                      return (
+                        <div className="mt-6 mb-2 flex items-center gap-3 border-b pb-1">
+                          <h2 className="text-base font-semibold capitalize">{groupDesign || 'Sin diseño'}</h2>
+                          <span className="text-xs text-muted-foreground">
+                            {designSwatchIds.length} swatch(es)
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="ml-auto h-7 text-xs"
+                            onClick={() =>
+                              handleGenerateForSwatches(designSwatchIds, `Diseño ${groupDesign}`)
+                            }
+                            disabled={generatingThisDesign}
+                          >
+                            {generatingThisDesign ? (
+                              <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                            ) : (
+                              <Play className="mr-1.5 h-3 w-3" />
+                            )}
+                            Generar diseño completo
+                          </Button>
+                        </div>
+                      );
+                    })()}
                     <div className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''}`}>
                     {/* Section header */}
                     <div className="flex items-center gap-3 px-4 py-3">
@@ -1863,6 +1925,25 @@ export default function ResultsPage() {
                             : <ChevronDown className="h-5 w-5" />}
                         </div>
                       </button>
+
+                      {/* Generar para este swatch */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleGenerateForSwatches([swatchId], group.swatch.name);
+                        }}
+                        disabled={generatingSwatches.has(swatchId)}
+                        title="Generar para este swatch"
+                      >
+                        {generatingSwatches.has(swatchId) ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
+                      </Button>
 
                       {/* Import/upload actions (icon-only with tooltip) */}
                       <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
