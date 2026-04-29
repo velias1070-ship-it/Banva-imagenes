@@ -34,4 +34,11 @@ export const DELAY_BETWEEN_REQUESTS_SEC = 7;
 export const MAX_QA_RETRIES = 2;
 export const BATCH_HALT_MIN_PROCESSED = 5;
 export const BATCH_HALT_FLAGGED_PERCENT = 0.20;
-export const CHAIN_STALE_THRESHOLD_MS = 60 * 1000; // 60 seconds — reduced for faster recovery
+// Stale-recovery threshold for /api/batches/[batchId]/health and the daily
+// health-check cron. Sprint 5 Issue #0a: was 60s, raised to 300s after a race
+// where a Flash→GPT-2 fallback chain ran ~200s without per-step heartbeats,
+// tripping the old 60s threshold and letting the health endpoint reset the
+// job mid-flight (allowing a parallel claim). With Fix B (no in-call fallback)
+// no path should exceed 5 min; threshold can be lowered again once Sprint 5
+// Issue #4 (heartbeat pattern in adapters) is in place.
+export const CHAIN_STALE_THRESHOLD_MS = 300 * 1000; // 5 minutes

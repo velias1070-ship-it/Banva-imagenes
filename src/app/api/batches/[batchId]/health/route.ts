@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { CHAIN_STALE_THRESHOLD_MS } from '@/lib/constants';
+import { logPipelineEvent } from '@/lib/pipeline-log';
 
 interface RouteContext {
   params: Promise<{ batchId: string }>;
@@ -41,13 +42,19 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
   const staleThreshold = new Date(Date.now() - CHAIN_STALE_THRESHOLD_MS).toISOString();
 
-  // Check for stale generating jobs (stuck in generation)
+  // Check for stale generating jobs (stuck in generation).
+  // Sprint 5 Issue #0a (race condition fix): also require claimed_at to be
+  // older than the threshold. Without this, a job whose worker is mid-flight
+  // (claimed recently, no event-driven updated_at touch yet because the
+  // adapter is in a long generation call) gets falsely flagged as stale and
+  // reset, allowing a parallel claim → two workers race the same job.
   const { data: staleGenerating } = await supabase
     .from('generation_jobs')
-    .select('id, status, updated_at')
+    .select('id, status, updated_at, claimed_at, claimed_by')
     .eq('batch_id', batchId)
     .eq('status', 'generating')
     .lt('updated_at', staleThreshold)
+    .lt('claimed_at', staleThreshold)
     .limit(10);
 
   // Check for stale qa_pending jobs (QA chain might have died)
@@ -59,13 +66,21 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     .lt('updated_at', staleThreshold)
     .limit(10);
 
-  // Check for stale qa_processing jobs (QA function died mid-scoring)
+  // Check for stale qa_processing jobs (QA function died mid-scoring).
+  // Sprint 5 Issue #0a: also require claimed_at to be older than the
+  // threshold. Same defensive pattern as the generating reset above —
+  // protects against rescuing a row whose process-qa worker is mid-flight.
+  // Note: claimed_at on a qa_processing row reflects the original generation
+  // claim (process-qa doesn't re-claim), so this filter mostly excludes rows
+  // claimed within the last 5 minutes (i.e., generation just finished and
+  // QA started). The optimistic UPDATE below is the strong defense.
   const { data: staleQaProcessing } = await supabase
     .from('generation_jobs')
-    .select('id, status, updated_at')
+    .select('id, status, updated_at, claimed_at, claimed_by')
     .eq('batch_id', batchId)
     .eq('status', 'qa_processing')
     .lt('updated_at', staleThreshold)
+    .lt('claimed_at', staleThreshold)
     .limit(10);
 
   // Check for pending jobs that should be processed
@@ -82,34 +97,68 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   const actions: string[] = [];
 
   // ── RESET stale qa_processing → qa_pending ──
-  // These are jobs where the QA function died mid-scoring
+  // These are jobs where the QA function died mid-scoring.
+  // Sprint 5 Issue #0a: optimistic lock — only flip if the row is STILL in
+  // qa_processing AND updated_at is STILL stale at write time. If the QA
+  // worker just heartbeated, the UPDATE no-ops and we log
+  // STALE_QA_PROCESSING_RESCUE_ABORTED instead of clobbering its work.
   if ((staleQaProcessing?.length || 0) > 0) {
+    let rescued = 0;
+    let aborted = 0;
     for (const job of staleQaProcessing || []) {
-      await supabase
+      const { data: updated } = await supabase
         .from('generation_jobs')
         .update({
           status: 'qa_pending',
           error_message: 'Reset by health check — stale qa_processing',
           updated_at: new Date().toISOString(),
         })
-        .eq('id', job.id);
+        .eq('id', job.id)
+        .eq('status', 'qa_processing')
+        .lt('updated_at', staleThreshold)
+        .select('id')
+        .maybeSingle();
+      if (updated) {
+        rescued += 1;
+      } else {
+        aborted += 1;
+        logPipelineEvent(job.id, 'STALE_QA_PROCESSING_RESCUE_ABORTED', 'health endpoint: QA worker still mid-flight or already moved — skipping reset', { batch_id: batchId });
+      }
     }
-    actions.push(`Reset ${staleQaProcessing?.length} stale qa_processing → qa_pending`);
+    if (rescued > 0) actions.push(`Reset ${rescued} stale qa_processing → qa_pending`);
+    if (aborted > 0) actions.push(`Skipped ${aborted} qa_processing — already moved or mid-flight`);
   }
 
   // ── RESET stale generating → pending ──
+  // Sprint 5 Issue #0a: optimistic lock — the UPDATE only matches if the row
+  // is STILL stale at write time (status='generating' AND updated_at hasn't
+  // moved since the SELECT). If a worker just published a heartbeat, the
+  // UPDATE no-ops and we log STALE_RESCUE_ABORTED instead of clobbering it.
   if (!batchIsHalted && (staleGenerating?.length || 0) > 0) {
+    let rescued = 0;
+    let aborted = 0;
     for (const job of staleGenerating || []) {
-      await supabase
+      const { data: updated } = await supabase
         .from('generation_jobs')
         .update({
           status: 'pending',
           error_message: 'Reset by health check — stale generating',
           updated_at: new Date().toISOString(),
         })
-        .eq('id', job.id);
+        .eq('id', job.id)
+        .eq('status', 'generating')
+        .lt('updated_at', staleThreshold)
+        .select('id')
+        .maybeSingle();
+      if (updated) {
+        rescued += 1;
+      } else {
+        aborted += 1;
+        logPipelineEvent(job.id, 'STALE_RESCUE_ABORTED', 'health endpoint: worker still owns claim — skipping reset', { batch_id: batchId });
+      }
     }
-    actions.push(`Reset ${staleGenerating?.length} stale generating → pending`);
+    if (rescued > 0) actions.push(`Reset ${rescued} stale generating → pending`);
+    if (aborted > 0) actions.push(`Skipped ${aborted} stale candidates — claim still owned`);
   } else if (batchIsHalted && (staleGenerating?.length || 0) > 0) {
     actions.push(`Batch halted — ${staleGenerating?.length} stale generating jobs skipped`);
   }

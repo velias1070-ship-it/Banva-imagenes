@@ -156,6 +156,43 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   return NextResponse.json({ status: 'processing' });
 }
 
+/**
+ * Optimistic-lock UPDATE on generation_jobs that only writes if THIS worker
+ * still owns the claim. Race-condition fix (Sprint 5 Issue #0a): without the
+ * status+claimed_by guard, a stale-recovery from /api/batches/[batchId]/health
+ * (or another concurrent worker) can reset status='generating' → 'pending'
+ * mid-flight, allowing a second claim_next_job to hand the same job to a
+ * parallel worker. Both workers then race writes — the first to finish wins,
+ * the second clobbers it. The .eq('status','generating') + .eq('claimed_by')
+ * filter ensures only the still-owning worker writes.
+ *
+ * Returns true if the UPDATE matched (we still own the claim). Returns false
+ * if another worker took over — caller should bail out and let that worker
+ * complete the job.
+ */
+async function attemptOwnedUpdate(
+  supabase: ReturnType<typeof createAdminClient>,
+  jobId: string,
+  workerId: string,
+  updates: Record<string, unknown>,
+  abortContext: string,
+): Promise<boolean> {
+  const fullUpdates = { ...updates, updated_at: new Date().toISOString() };
+  const { data: updated } = await supabase
+    .from('generation_jobs')
+    .update(fullUpdates as never)
+    .eq('id', jobId)
+    .eq('status', 'generating')
+    .eq('claimed_by', workerId)
+    .select('id')
+    .maybeSingle();
+  if (!updated) {
+    logPipelineEvent(jobId, 'STALE_CLAIM_ABORTED', abortContext);
+    return false;
+  }
+  return true;
+}
+
 async function processOneJob(batchId: string): Promise<{ chain: boolean; triggerQA: boolean }> {
   const supabase = createAdminClient();
 
@@ -326,14 +363,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         `[process-next] Job ${job.id.substring(0, 8)} — attempt ${job.attempt} >= max ${maxRetries}, ` +
         `but QA score ${(existingScore * 100).toFixed(0)}% >= ${(autoApproveThreshold * 100).toFixed(0)}% — approving`
       );
-      await supabase
-        .from('generation_jobs')
-        .update({
-          status: 'approved',
-          error_message: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
+      const owned = await attemptOwnedUpdate(supabase, job.id, workerId, {
+        status: 'approved',
+        error_message: null,
+      }, 'antiloop-existing-score-approve');
+      if (!owned) return { chain: true, triggerQA: false };
 
       await supabase
         .from('generation_batches')
@@ -349,14 +383,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
     console.log(
       `[process-next] Job ${job.id.substring(0, 8)} — attempt ${job.attempt} >= max ${maxRetries}, flagging directly`
     );
-    await supabase
-      .from('generation_jobs')
-      .update({
-        status: 'flagged',
-        error_message: `Max QA retries (${maxRetries}) reached without approval`,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
+    const ownedFlag = await attemptOwnedUpdate(supabase, job.id, workerId, {
+      status: 'flagged',
+      error_message: `Max QA retries (${maxRetries}) reached without approval`,
+    }, 'antiloop-max-retries-flagged');
+    if (!ownedFlag) return { chain: true, triggerQA: false };
 
     // Update batch counters
     await supabase
@@ -384,15 +415,14 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   // approving would clobber its output. Unclaim and chain to the next job.
   if (isBrandOnly) {
     logPipelineEvent(job.id, 'BRAND_ONLY_SKIP', 'process-next released BRAND_ONLY job back to regen route', { batch_id: batchId });
-    await supabase
-      .from('generation_jobs')
-      .update({
-        status: 'generating',
-        claimed_by: null,
-        claimed_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
+    // Optimistic release: only clear claim if WE still own it. Otherwise the
+    // regen route's after() may already be working on this job — clobbering
+    // its claim_by would let a parallel worker pick it up mid-regen.
+    await attemptOwnedUpdate(supabase, job.id, workerId, {
+      status: 'generating',
+      claimed_by: null,
+      claimed_at: null,
+    }, 'brand-only-release');
     return { chain: true, triggerQA: false };
   }
 
@@ -401,15 +431,11 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
   // mark as approved using the existing output instead of crashing.
   if (isMLImport) {
     logPipelineEvent(job.id, 'ML_IMPORT_SKIP', 'process-next received ML import — auto-approving', { batch_id: batchId });
-    await supabase
-      .from('generation_jobs')
-      .update({
-        status: 'approved',
-        qa_score: 1.0,
-        qa_feedback: 'Auto-approved (ML import)',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
+    await attemptOwnedUpdate(supabase, job.id, workerId, {
+      status: 'approved',
+      qa_score: 1.0,
+      qa_feedback: 'Auto-approved (ML import)',
+    }, 'ml-import-auto-approve');
     return { chain: true, triggerQA: false };
   }
 
@@ -460,15 +486,12 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
         category,
         next_model_id: nextModelId,
       });
-      await supabase
-        .from('generation_jobs')
-        .update({
-          status: 'flagged',
-          error_message: `Cost cap reached: $${decision.projectedUsd.toFixed(3)} projected vs $${capUsd.toFixed(2)} cap (${category}). Stopped before attempt ${job.attempt}.`,
-          prompt_metadata: { ...existingMeta, cost_capped: true, cost_cap_decision: { accumulated_usd: accumulatedUsd, projected_usd: decision.projectedUsd, cap_usd: capUsd, attempt: job.attempt } },
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
+      const ownedCap = await attemptOwnedUpdate(supabase, job.id, workerId, {
+        status: 'flagged',
+        error_message: `Cost cap reached: $${decision.projectedUsd.toFixed(3)} projected vs $${capUsd.toFixed(2)} cap (${category}). Stopped before attempt ${job.attempt}.`,
+        prompt_metadata: { ...existingMeta, cost_capped: true, cost_cap_decision: { accumulated_usd: accumulatedUsd, projected_usd: decision.projectedUsd, cap_usd: capUsd, attempt: job.attempt } },
+      }, 'cost-cap-flagged');
+      if (!ownedCap) return { chain: true, triggerQA: false };
       await supabase
         .from('generation_batches')
         .update({
@@ -1070,15 +1093,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // Persist prompt + attempt increment. Status was already set to 'generating'
     // atomically by claim_next_job() at the top of this function.
-    await supabase
-      .from('generation_jobs')
-      .update({
-        prompt_text: prompt,
-        attempt: job.attempt + 1,
-        prompt_metadata: promptMetadata,
-        case_signature: caseSignature,
-      })
-      .eq('id', job.id);
+    const ownedPrompt = await attemptOwnedUpdate(supabase, job.id, workerId, {
+      prompt_text: prompt,
+      attempt: job.attempt + 1,
+      prompt_metadata: promptMetadata,
+      case_signature: caseSignature,
+    }, 'prompt-persist-pre-generation');
+    if (!ownedPrompt) return { chain: true, triggerQA: false };
 
     // ── Generate image based on mode ──
     // Escalate to Pro model for retries. Categories with fine/smooth weave
@@ -1205,10 +1226,12 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         contentType: result.imageMimeType || 'image/png',
         upsert: true,
       });
-      await supabase
-        .from('generation_jobs')
-        .update({ output_storage_path: earlyPath, updated_at: new Date().toISOString() })
-        .eq('id', job.id);
+      // attemptOwnedUpdate logs STALE_CLAIM_ABORTED if we lost the claim.
+      // Don't bail here — the upload already happened and the next owning
+      // worker will overwrite output_storage_path on its final write anyway.
+      await attemptOwnedUpdate(supabase, job.id, workerId, {
+        output_storage_path: earlyPath,
+      }, 'early-upload-path');
       logPipelineEvent(job.id, 'EARLY_UPLOAD', earlyPath);
     } catch (earlyErr) {
       console.error('[process-next] Early upload failed (non-blocking):', earlyErr);
@@ -1272,14 +1295,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       logPipelineEvent(job.id, 'VERIFICATION', 'COLOR_DRIFT_REJECT', { delta_e: deltaEResult.deltaE });
       logPipelineEvent(job.id, 'VERIFICATION_RETRY', feedback, { new_attempt: job.attempt + 1 });
       console.log(`[process-next] ⚠ Color drift REJECT ${job.swatch.name} (ΔE=${dE})`);
-      await supabase.from('generation_jobs').update({
+      await attemptOwnedUpdate(supabase, job.id, workerId, {
         status: 'pending',
         attempt: job.attempt + 1,
         qa_feedback: `[Delta-E ${dE}] ${feedback}`,
         prompt_metadata: { ...promptMetadata, color_delta_e: deltaEResult.deltaE },
         ...(debugSaved ? { output_storage_path: debugPath } : {}),
-        updated_at: new Date().toISOString(),
-      }).eq('id', job.id);
+      }, 'color-drift-retry');
       return { chain: true, triggerQA: false };
     }
     if (!isBrandOnly && !isMultiPass && !isInfografia) {
@@ -1339,15 +1361,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
             // Preserve the last rejected image as output_storage_path so the UI can render
             // the job even if it hits max retries and flags without ever producing an approved
             // output. Without this, flagged jobs show "Sin imagen" in results.
-            await supabase.from('generation_jobs').update({
+            await attemptOwnedUpdate(supabase, job.id, workerId, {
               status: 'pending',
               attempt: job.attempt + 1,
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               prompt_metadata: promptMetadata,
               verification_raw: verificationRaw,
               ...(debugSaved ? { output_storage_path: debugPath } : {}),
-              updated_at: new Date().toISOString(),
-            }).eq('id', job.id);
+            }, 'verifier-retry');
             // Chain continues — process-next will pick this job up again with the feedback
             return { chain: true, triggerQA: false };
           } else if (!verification.pass) {
@@ -1401,26 +1422,28 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Regular: send to QA for evaluation
     const finalStatus = isBrandOnly ? 'approved' : 'qa_pending';
 
-    await supabase
-      .from('generation_jobs')
-      .update({
-        status: finalStatus,
-        output_storage_path: outputPath,
-        generation_time_ms: result.durationMs,
-        provider_used: providerUsed,
-        model_id: modelIdUsed,
-        cost_usd_actual: costUsdActual,
-        _telemetry_source: 'sprint_1_runtime',
-        error_message: null,
-        updated_at: new Date().toISOString(),
-        // ─── Observability v1 captures ───
-        swatch_pattern_text: swatchPatternDescription,
-        verification_raw: verificationRaw,
-        gemini_response_meta: result.meta || null,
-        prompt_metadata: promptMetadata,
-        ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
-      })
-      .eq('id', job.id);
+    const ownedFinal = await attemptOwnedUpdate(supabase, job.id, workerId, {
+      status: finalStatus,
+      output_storage_path: outputPath,
+      generation_time_ms: result.durationMs,
+      provider_used: providerUsed,
+      model_id: modelIdUsed,
+      cost_usd_actual: costUsdActual,
+      _telemetry_source: 'sprint_1_runtime',
+      error_message: null,
+      // ─── Observability v1 captures ───
+      swatch_pattern_text: swatchPatternDescription,
+      verification_raw: verificationRaw,
+      gemini_response_meta: result.meta || null,
+      prompt_metadata: promptMetadata,
+      ...(isBrandOnly ? { qa_score: 0.95, qa_feedback: 'Auto-approved (BRAND_ONLY)' } : {}),
+    }, 'final-write-after-generation');
+    if (!ownedFinal) {
+      // Lost the claim mid-flight — another worker processed this job.
+      // The 200s of generation work is wasted but we don't want to
+      // overwrite their result. Chain continues for the next pending job.
+      return { chain: true, triggerQA: false };
+    }
 
     logPipelineEvent(job.id, 'STATUS', finalStatus, { qa_triggered: !isBrandOnly });
 
@@ -1440,14 +1463,15 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     logPipelineEvent(job.id, 'ERROR', errorMessage);
 
-    await supabase
-      .from('generation_jobs')
-      .update({
-        status: 'error',
-        error_message: errorMessage,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
+    const ownedError = await attemptOwnedUpdate(supabase, job.id, workerId, {
+      status: 'error',
+      error_message: errorMessage,
+    }, 'catch-error-write');
+    if (!ownedError) {
+      // Lost the claim mid-flight; another worker is handling this job
+      // and we shouldn't clobber its state with our error. Chain continues.
+      return { chain: true, triggerQA: false };
+    }
 
     await supabase
       .from('generation_batches')

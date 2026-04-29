@@ -15,8 +15,14 @@
  *   - Return shape extended with modelIdUsed and costCapped (both optional).
  *   - The legacy `ImageProvider` enum is preserved for callers that
  *     still type against it.
- *   - The recoverable-error fallback to GPT-2 (billing/rate/internal
- *     errors) is kept verbatim.
+ *
+ * Sprint 5 Issue #0a: the in-call recoverable-error fallback to GPT-2 was
+ * removed. Concatenated in one invocation, the chain took ~200s (Flash ~25s
+ * + GPT-2 ~145s + post-processing) without per-step heartbeats — long enough
+ * for /api/batches/[batchId]/health to declare the job stale and reset it,
+ * letting a parallel claim_next_job hand the same job to a second worker.
+ * Escalation now happens at the job level (process-next chains attempts via
+ * routing-rules + verifier gates between them).
  */
 
 import fs from 'fs';
@@ -205,22 +211,6 @@ function familyToLegacyProvider(family: string, modelId: ProviderId): ImageProvi
   return 'gemini-flash';
 }
 
-const RECOVERABLE_PATTERNS = [
-  'spending cap',
-  'billing',
-  'resource_exhausted',
-  'resource exhausted',
-  'rate limit',
-  'internal error',
-  'quota exceeded',
-];
-
-function isRecoverable(error: string | undefined): boolean {
-  if (!error) return false;
-  const lower = error.toLowerCase();
-  return RECOVERABLE_PATTERNS.some(p => lower.includes(p));
-}
-
 /**
  * Generate one image. Picks the model id from routing rules at the given
  * attempt, dispatches to its adapter. If the chosen Gemini model fails
@@ -244,33 +234,13 @@ export async function generateImageSmart(
   const result = await entry.adapter.generate(unifiedReq);
   const legacyProvider = familyToLegacyProvider(entry.providerFamily, modelId);
 
-  // Recoverable-error fallback to GPT-2 — preserve the existing safety net.
-  // Only triggers when the failed attempt was a Gemini model AND ENABLE_GPT_IMAGE_2=1.
-  // Skipped under forcedModelId so benchmarks measure the requested model.
-  if (
-    !ctx.forcedModelId
-    && !result.success
-    && entry.providerFamily === 'gemini'
-    && process.env.ENABLE_GPT_IMAGE_2 === '1'
-    && isRecoverable(result.error)
-    && req.heroImageBase64
-  ) {
-    const gpt2Entry = MODEL_REGISTRY['gpt-image-2'];
-    if (gpt2Entry) {
-      const fallback = await gpt2Entry.adapter.generate(unifiedReq);
-      if (fallback.success) {
-        const merged = toGeminiResult(fallback);
-        merged.durationMs = (result.durationMs || 0) + fallback.durationMs;
-        return {
-          ...merged,
-          providerUsed: 'gpt-image-2',
-          costEstimateUsd: fallback.costUsd,
-          modelIdUsed: fallback.modelId,
-        };
-      }
-    }
-  }
-
+  // Sprint 5 Issue #0a (race condition fix): the in-call Flash→GPT-2 recoverable
+  // fallback was removed. Concatenated in one invocation, the chain takes ~200s
+  // (Flash ~25s + GPT-2 ~145s + post-processing). Without per-step heartbeats,
+  // updated_at stays stale long enough for /api/batches/[batchId]/health to
+  // declare the job dead and reset status='generating' → 'pending', allowing
+  // a parallel claim. Escalation now happens at the job level: process-next
+  // chains attempts via routing-rules + verifier gates between them.
   return {
     ...toGeminiResult(result),
     providerUsed: legacyProvider,

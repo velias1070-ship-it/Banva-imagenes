@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { CHAIN_STALE_THRESHOLD_MS } from '@/lib/constants';
+import { logPipelineEvent } from '@/lib/pipeline-log';
 
 /**
  * CRON HEALTH CHECK — Auto-heals broken generation/QA chains.
@@ -106,12 +107,16 @@ export async function GET(request: NextRequest) {
 
     // Check for stale generating jobs. Exclude BRAND_ONLY (owned by regen route, not
     // the batch chain — resetting them causes the batch chain to claim + clobber them).
+    // Sprint 5 Issue #0a: also require claimed_at to be older than the threshold
+    // so we don't falsely rescue jobs whose worker is mid-flight in a long
+    // generation call (no per-step heartbeat yet — see Sprint 5 Issue #4).
     const { data: rawStaleGenerating } = await supabase
       .from('generation_jobs')
-      .select('id, prompt_adjustment')
+      .select('id, prompt_adjustment, claimed_at, claimed_by')
       .eq('batch_id', batch.id)
       .eq('status', 'generating')
-      .lt('updated_at', staleThreshold);
+      .lt('updated_at', staleThreshold)
+      .lt('claimed_at', staleThreshold);
     const staleGenerating = (rawStaleGenerating || []).filter(
       (j) => j.prompt_adjustment !== 'BRAND_ONLY',
     );
@@ -139,34 +144,60 @@ export async function GET(request: NextRequest) {
       .eq('batch_id', batch.id)
       .eq('status', 'pending');
 
-    // Reset stale qa_processing → qa_pending
+    // Reset stale qa_processing → qa_pending (optimistic lock — Sprint 5 #0a)
     if ((staleQaProcessing?.length || 0) > 0) {
+      let rescued = 0;
+      let aborted = 0;
       for (const job of staleQaProcessing!) {
-        await supabase
+        const { data: updated } = await supabase
           .from('generation_jobs')
           .update({
             status: 'qa_pending',
             error_message: 'Reset by cron health check — stale qa_processing',
             updated_at: new Date().toISOString(),
           })
-          .eq('id', job.id);
+          .eq('id', job.id)
+          .eq('status', 'qa_processing')
+          .lt('updated_at', staleThreshold)
+          .select('id')
+          .maybeSingle();
+        if (updated) {
+          rescued += 1;
+        } else {
+          aborted += 1;
+          logPipelineEvent(job.id, 'STALE_RESCUE_ABORTED', 'cron health-check: qa_processing already moved by another worker', { batch_id: batch.id });
+        }
       }
-      actions.push(`Reset ${staleQaProcessing!.length} stale qa_processing → qa_pending`);
+      if (rescued > 0) actions.push(`Reset ${rescued} stale qa_processing → qa_pending`);
+      if (aborted > 0) actions.push(`Skipped ${aborted} qa_processing — already moved`);
     }
 
-    // Reset stale generating → pending
+    // Reset stale generating → pending (optimistic lock — Sprint 5 #0a)
     if (!batchIsNowHalted && (staleGenerating?.length || 0) > 0) {
+      let rescued = 0;
+      let aborted = 0;
       for (const job of staleGenerating!) {
-        await supabase
+        const { data: updated } = await supabase
           .from('generation_jobs')
           .update({
             status: 'pending',
             error_message: 'Reset by cron health check — stale generating',
             updated_at: new Date().toISOString(),
           })
-          .eq('id', job.id);
+          .eq('id', job.id)
+          .eq('status', 'generating')
+          .lt('updated_at', staleThreshold)
+          .select('id')
+          .maybeSingle();
+        if (updated) {
+          rescued += 1;
+        } else {
+          aborted += 1;
+          logPipelineEvent(job.id, 'STALE_RESCUE_ABORTED', 'cron health-check: worker still owns claim — skipping reset', { batch_id: batch.id });
+        }
       }
-      actions.push(`Reset ${staleGenerating!.length} stale generating jobs`);
+      if (rescued > 0) actions.push(`Reset ${rescued} stale generating jobs`);
+      if (aborted > 0) actions.push(`Skipped ${aborted} stale generating — claim still owned`);
     }
 
     // Relaunch generation chain
