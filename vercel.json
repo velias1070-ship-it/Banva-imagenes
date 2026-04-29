@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/retry-rate-limited",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/refresh-model-performance",
+      "schedule": "0 0 * * *"
     }
   ]
 }
