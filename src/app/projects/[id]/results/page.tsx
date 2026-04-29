@@ -1290,6 +1290,32 @@ export default function ResultsPage() {
     const isApproved = job.status === 'approved' && job.output_storage_path;
     const group = groups.find((g) => g.swatch.id === swatchId);
     const hasListing = !!group?.ml_listing;
+    // Hermanos (otras variantes del mismo diseño con publicación ML)
+    const designSlug = group ? designForGroup(group) : null;
+    const siblings = (groupByDesign && designSlug)
+      ? groups.filter(
+          (g) => g.swatch.id !== swatchId && designForGroup(g) === designSlug && g.ml_listing
+        )
+      : [];
+
+    function pushToSibling(targetSwatchId: string) {
+      addJobToMlPanel(targetSwatchId, job);
+      setMlPanelOpen((prev) => {
+        const next = new Set(prev);
+        next.add(targetSwatchId);
+        return next;
+      });
+    }
+
+    function pushToAllSiblings() {
+      for (const s of siblings) addJobToMlPanel(s.swatch.id, job);
+      setMlPanelOpen((prev) => {
+        const next = new Set(prev);
+        for (const s of siblings) next.add(s.swatch.id);
+        return next;
+      });
+      toast.success(`Copiado a ${siblings.length} variante(s) del diseño`);
+    }
 
     return (
       <Card className="overflow-hidden">
@@ -1436,6 +1462,38 @@ export default function ResultsPage() {
                   <Pencil className="h-3 w-3 mr-1" />
                   Editar
                 </Button>
+              )}
+              {/* Copiar a otras variantes del mismo diseño */}
+              {isApproved && siblings.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs text-indigo-600 border-indigo-200"
+                    >
+                      <Copy className="h-3 w-3 mr-1" />
+                      → {siblings.length}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="text-xs">
+                    <DropdownMenuItem onSelect={pushToAllSiblings}>
+                      <Copy className="h-3.5 w-3.5 mr-2" />
+                      Copiar a todas ({siblings.length})
+                    </DropdownMenuItem>
+                    {siblings.map((s) => {
+                      const size = sizeForGroup(s);
+                      return (
+                        <DropdownMenuItem key={s.swatch.id} onSelect={() => pushToSibling(s.swatch.id)}>
+                          <span className="font-mono text-[10px] mr-2 text-muted-foreground">
+                            {size || s.swatch.sku_suffix || '—'}
+                          </span>
+                          {s.swatch.name}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               {/* Add to ML / Swap buttons when panel is open */}
               {isPanelOpen && isApproved && hasListing && (
