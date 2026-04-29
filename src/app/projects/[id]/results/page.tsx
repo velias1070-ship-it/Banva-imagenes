@@ -16,6 +16,7 @@ import {
   Palette, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { extractSizeFromSku, type ProjectVariant } from '@/lib/sku-parser';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
@@ -114,6 +115,8 @@ export default function ResultsPage() {
   const [groups, setGroups] = useState<SwatchResultGroup[]>([]);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
+  const [groupByDesign, setGroupByDesign] = useState(false);
+  const [variantes, setVariantes] = useState<ProjectVariant[]>([]);
   const [editingJob, setEditingJob] = useState<string | null>(null);
   // Lifted to parent because JobCard is defined inside ResultsPage and
   // re-creates its function reference on every poll (every 10s). That
@@ -234,6 +237,8 @@ export default function ResultsPage() {
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         if (data?.brand_id) setProjectBrandId(data.brand_id);
+        const v = (data?.metadata as { variantes?: ProjectVariant[] } | undefined)?.variantes;
+        if (Array.isArray(v)) setVariantes(v);
       })
       .catch(() => {});
   }, [id]);
@@ -256,27 +261,61 @@ export default function ResultsPage() {
     };
   }, [hasActiveJobs, fetchResults, id]);
 
+  // ── Helper: derive design (color_slug) + size for a group from its swatch SKU ──
+  const variantBySku = useMemo(
+    () => new Map(variantes.map((v) => [v.sku.toUpperCase(), v])),
+    [variantes]
+  );
+
+  function designForGroup(group: SwatchResultGroup): string | null {
+    const sku = (group.swatch.sku_suffix || '').toUpperCase();
+    if (!sku) return null;
+    const variant = variantBySku.get(sku);
+    return variant?.color_slug ?? null;
+  }
+
+  function sizeForGroup(group: SwatchResultGroup): string | null {
+    return extractSizeFromSku(group.swatch.sku_suffix || '');
+  }
+
   // ── Filter groups ──
   const filteredGroups = useMemo<SwatchResultGroup[]>(() => {
-    if (activeTab === 'all') return groups;
-
-    if (activeTab === 'ml_active') {
-      return groups.filter((g) => g.ml_listing?.status === 'active');
+    let base: SwatchResultGroup[];
+    if (activeTab === 'all') {
+      base = groups;
+    } else if (activeTab === 'ml_active') {
+      base = groups.filter((g) => g.ml_listing?.status === 'active');
+    } else if (activeTab === 'ml_paused') {
+      base = groups.filter((g) => g.ml_listing?.status === 'paused');
+    } else {
+      base = groups
+        .map((g) => ({
+          ...g,
+          jobs:
+            activeTab === 'qa_pending'
+              ? g.jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing')
+              : g.jobs.filter((j) => j.status === activeTab),
+        }))
+        .filter((g) => g.jobs.length > 0);
     }
 
-    if (activeTab === 'ml_paused') {
-      return groups.filter((g) => g.ml_listing?.status === 'paused');
+    if (groupByDesign && variantBySku.size > 0) {
+      // Sort by (design_slug, size, swatch.display_order)
+      const SIZE_ORDER: Record<string, number> = { '40x60': 0, '45x75': 1, '60x120': 2, '80x120': 3, '57x90': 4 };
+      base = [...base].sort((a, b) => {
+        const dA = designForGroup(a) || 'zzz';
+        const dB = designForGroup(b) || 'zzz';
+        if (dA !== dB) return dA.localeCompare(dB);
+        const sA = sizeForGroup(a);
+        const sB = sizeForGroup(b);
+        const oA = sA ? SIZE_ORDER[sA] ?? 99 : 99;
+        const oB = sB ? SIZE_ORDER[sB] ?? 99 : 99;
+        if (oA !== oB) return oA - oB;
+        return a.swatch.display_order - b.swatch.display_order;
+      });
     }
-
-    return groups
-      .map((g) => ({
-        ...g,
-        jobs: activeTab === 'qa_pending'
-          ? g.jobs.filter((j) => j.status === 'qa_pending' || j.status === 'qa_processing')
-          : g.jobs.filter((j) => j.status === activeTab),
-      }))
-      .filter((g) => g.jobs.length > 0);
-  }, [groups, activeTab]);
+    return base;
+  }, [groups, activeTab, groupByDesign, variantBySku]);
 
   // ── Counts ──
   const approvedCount = allJobs.filter((j) => j.status === 'approved').length;
@@ -1683,22 +1722,33 @@ export default function ResultsPage() {
             <TabsTrigger value="error">Errores ({errorCount})</TabsTrigger>
           </TabsList>
 
-          {filteredGroups.length > 1 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => {
-                if (collapsed.size === filteredGroups.length) {
-                  setCollapsedSwatches(new Set());
-                } else {
-                  setCollapsedSwatches(new Set(filteredGroups.map((g) => g.swatch.id)));
-                }
-              }}
-            >
-              {collapsed.size === filteredGroups.length ? 'Expandir todo' : 'Colapsar todo'}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {variantBySku.size > 0 && (
+              <Button
+                variant={groupByDesign ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setGroupByDesign((v) => !v)}
+              >
+                {groupByDesign ? '✓ Por diseño' : 'Agrupar por diseño'}
+              </Button>
+            )}
+            {filteredGroups.length > 1 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() => {
+                  if (collapsed.size === filteredGroups.length) {
+                    setCollapsedSwatches(new Set());
+                  } else {
+                    setCollapsedSwatches(new Set(filteredGroups.map((g) => g.swatch.id)));
+                  }
+                }}
+              >
+                {collapsed.size === filteredGroups.length ? 'Expandir todo' : 'Colapsar todo'}
+              </Button>
+            )}
+          </div>
         </div>
 
         <TabsContent value={activeTab}>
@@ -1717,16 +1767,29 @@ export default function ResultsPage() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {filteredGroups.map((group) => {
+              {filteredGroups.map((group, idx) => {
                 const swatchId = group.swatch.id;
                 const isCollapsed = collapsed.has(swatchId);
                 const isPanelOpen = mlPanelOpen.has(swatchId);
                 const approvedInGroup = group.jobs.filter((j) => j.status === 'approved').length;
                 const mlPicCount = (mlPictures.get(swatchId) || []).length;
                 const isDirty = mlDirty.get(swatchId) || false;
+                const groupDesign = groupByDesign ? designForGroup(group) : null;
+                const prev = idx > 0 ? filteredGroups[idx - 1] : null;
+                const prevDesign = prev && groupByDesign ? designForGroup(prev) : null;
+                const showDesignHeader = groupByDesign && groupDesign !== prevDesign;
 
                 return (
-                  <div key={swatchId} className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''}`}>
+                  <div key={swatchId}>
+                    {showDesignHeader && (
+                      <div className="mt-6 mb-2 flex items-center gap-2 border-b pb-1">
+                        <h2 className="text-base font-semibold capitalize">{groupDesign || 'Sin diseño'}</h2>
+                        <span className="text-xs text-muted-foreground">
+                          {filteredGroups.filter((g) => designForGroup(g) === groupDesign).length} swatch(es)
+                        </span>
+                      </div>
+                    )}
+                    <div className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''}`}>
                     {/* Section header */}
                     <div className="flex items-center gap-3 px-4 py-3">
                       {/* Clickable area for collapse */}
@@ -1918,6 +1981,7 @@ export default function ResultsPage() {
                         </div>
                       </div>
                     )}
+                    </div>
                   </div>
                 );
               })}
