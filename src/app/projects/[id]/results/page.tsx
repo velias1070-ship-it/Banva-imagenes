@@ -1307,15 +1307,6 @@ export default function ResultsPage() {
       });
     }
 
-    function pushToAllSiblings() {
-      for (const s of siblings) addJobToMlPanel(s.swatch.id, job);
-      setMlPanelOpen((prev) => {
-        const next = new Set(prev);
-        for (const s of siblings) next.add(s.swatch.id);
-        return next;
-      });
-      toast.success(`Copiado a ${siblings.length} variante(s) del diseño`);
-    }
 
     return (
       <Card className="overflow-hidden">
@@ -1477,10 +1468,9 @@ export default function ResultsPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="text-xs">
-                    <DropdownMenuItem onSelect={pushToAllSiblings}>
-                      <Copy className="h-3.5 w-3.5 mr-2" />
-                      Copiar a todas ({siblings.length})
-                    </DropdownMenuItem>
+                    <div className="px-2 py-1 text-[10px] text-muted-foreground">
+                      Copiar a una variante (abre el panel para reordenar)
+                    </div>
                     {siblings.map((s) => {
                       const size = sizeForGroup(s);
                       return (
