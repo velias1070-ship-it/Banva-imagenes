@@ -13,6 +13,12 @@ import { ArrowLeft, Play, Loader2, CheckCircle, AlertTriangle, XCircle, ImageIco
 import type { Swatch, GenerationBatch } from '@/types/database';
 import { COST_PER_IMAGE_USD } from '@/lib/constants';
 import { toast } from 'sonner';
+import {
+  anyHeroHasTags,
+  extractSizeFromSku,
+  resolveHeroForVariant,
+  type ProjectVariant,
+} from '@/lib/sku-parser';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
@@ -29,12 +35,15 @@ interface HeroWithStatus {
   total_jobs: number;
   approved_jobs: number;
   swatches_count: number;
+  applies_to_designs: string[] | null;
+  applies_to_sizes: string[] | null;
 }
 
 export default function GeneratePage() {
   const { id } = useParams<{ id: string }>();
   const [heroesWithStatus, setHeroesWithStatus] = useState<HeroWithStatus[]>([]);
   const [swatches, setSwatches] = useState<Swatch[]>([]);
+  const [variantes, setVariantes] = useState<ProjectVariant[]>([]);
   const [selectedHeroIds, setSelectedHeroIds] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState<GenerationBatch | null>(null);
@@ -49,12 +58,16 @@ export default function GeneratePage() {
 
   const fetchData = useCallback(async () => {
     const [heroStatusRes, swatchRes] = await Promise.all([
-      fetch(`/api/projects/${id}/generate`),
+      fetch(`/api/projects/${id}/generate?with_meta=1`),
       fetch(`/api/projects/${id}/swatches`),
     ]);
     if (heroStatusRes.ok) {
-      const heroData: HeroWithStatus[] = await heroStatusRes.json();
+      const payload = await heroStatusRes.json();
+      const heroData: HeroWithStatus[] = Array.isArray(payload) ? payload : payload.heroes;
       setHeroesWithStatus(heroData);
+      if (!Array.isArray(payload) && Array.isArray(payload.variantes)) {
+        setVariantes(payload.variantes as ProjectVariant[]);
+      }
       // Auto-select heroes that have NOT been fully processed
       const newSelected = new Set<string>();
       for (const hero of heroData) {
@@ -164,7 +177,40 @@ export default function GeneratePage() {
 
   const selectedCount = selectedHeroIds.size;
   const selectedSwatchCount = selectedSwatchIds.size;
-  const totalCombinations = selectedCount * selectedSwatchCount;
+
+  const resolverPreview = useMemo(() => {
+    const selectedHeroes = heroesWithStatus.filter((h) => selectedHeroIds.has(h.id));
+    const useResolver = variantes.length > 0 && anyHeroHasTags(selectedHeroes);
+    if (!useResolver) {
+      return {
+        useResolver: false,
+        total: selectedCount * selectedSwatchCount,
+        skipped: [] as { sku?: string; name: string }[],
+        breakdown: { exact: 0, design_only: 0, size_only: 0, generic: 0 },
+      };
+    }
+    const variantBySku = new Map(variantes.map((v) => [v.sku.toUpperCase(), v]));
+    const selectedSwatches = swatches.filter((s) => selectedSwatchIds.has(s.id));
+    const breakdown = { exact: 0, design_only: 0, size_only: 0, generic: 0 };
+    const skipped: { sku?: string; name: string }[] = [];
+    let total = 0;
+    for (const sw of selectedSwatches) {
+      const sku = (sw.sku_suffix || '').toUpperCase();
+      const variant = sku ? variantBySku.get(sku) : undefined;
+      const design = variant?.color_slug || null;
+      const size = sku ? extractSizeFromSku(sku) : null;
+      const r = resolveHeroForVariant(selectedHeroes, design, size);
+      if (!r) {
+        skipped.push({ sku: sw.sku_suffix || undefined, name: sw.name });
+        continue;
+      }
+      if (r.tier !== 'none') breakdown[r.tier as keyof typeof breakdown]++;
+      total++;
+    }
+    return { useResolver: true, total, skipped, breakdown };
+  }, [heroesWithStatus, swatches, variantes, selectedHeroIds, selectedSwatchIds, selectedCount, selectedSwatchCount]);
+
+  const totalCombinations = resolverPreview.total;
   const estimatedCost = (totalCombinations * COST_PER_IMAGE_USD).toFixed(2);
   const estimatedTime = Math.ceil((totalCombinations * 7) / 60);
 
@@ -554,6 +600,28 @@ export default function GeneratePage() {
             <div className="text-4xl font-bold">{totalCombinations}</div>
             <p className="text-sm text-muted-foreground">imagenes a generar</p>
           </div>
+
+          {resolverPreview.useResolver && (
+            <div className="mt-4 rounded border border-indigo-200 bg-indigo-50 p-3 text-xs">
+              <div className="font-medium text-indigo-900">
+                Modo resolver activo · 1 hero por swatch (no cross product)
+              </div>
+              <div className="mt-1 text-indigo-800">
+                Match por SKU →{' '}
+                <span className="font-medium">{resolverPreview.breakdown.exact}</span> exact ·{' '}
+                <span className="font-medium">{resolverPreview.breakdown.design_only}</span> solo diseño ·{' '}
+                <span className="font-medium">{resolverPreview.breakdown.size_only}</span> solo tamaño ·{' '}
+                <span className="font-medium">{resolverPreview.breakdown.generic}</span> genérico
+              </div>
+              {resolverPreview.skipped.length > 0 && (
+                <div className="mt-2 text-amber-800">
+                  <span className="font-medium">{resolverPreview.skipped.length}</span> swatch(es) sin hero
+                  compatible (saltean): {resolverPreview.skipped.slice(0, 5).map((s) => s.name).join(', ')}
+                  {resolverPreview.skipped.length > 5 ? '…' : ''}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="mt-4 flex justify-between text-sm text-muted-foreground">
             <span>Costo estimado: ~${estimatedCost} USD</span>

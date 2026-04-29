@@ -56,7 +56,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   // Get all heroes for this project
   const { data: heroes } = await supabase
     .from('hero_shots')
-    .select('id, filename, shot_type, storage_path, display_order')
+    .select('id, filename, shot_type, storage_path, display_order, applies_to_designs, applies_to_sizes')
     .eq('project_id', id)
     .order('display_order');
 
@@ -106,6 +106,20 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     approved_jobs: jobsByHero[hero.id]?.approved || 0,
     swatches_count: swatchCount || 0,
   }));
+
+  // Backward-compatible: clients that send ?with_meta=1 also receive the
+  // resolver metadata (project variantes) so they can preview combinations.
+  const url = new URL(_request.url);
+  if (url.searchParams.get('with_meta') === '1') {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('metadata')
+      .eq('id', id)
+      .single();
+    const variantes =
+      ((project?.metadata as { variantes?: unknown } | null)?.variantes as unknown[]) || [];
+    return NextResponse.json({ heroes: heroesWithStatus, variantes });
+  }
 
   return NextResponse.json(heroesWithStatus);
 }
