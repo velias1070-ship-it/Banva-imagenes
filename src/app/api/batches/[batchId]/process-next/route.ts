@@ -1254,15 +1254,17 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
     // ── Pixel-perfect overlay restore ──
-    // Gemini edit mode re-renders text/logos with subtle font drift even when
-    // the prompt explicitly says "preserve overlays". For detail shots whose
-    // hero carries infographic overlays (BANVA branding, dimension cotas,
-    // headlines), copy the original hero pixels into the result for each
-    // detected text bbox. Cached in hero_shots.text_bboxes after first run.
+    // Gemini edit mode re-renders text/logos with subtle font drift (and
+    // sometimes outright color changes — e.g. white BANVA HOME® logo
+    // re-rendered in blue) even when the prompt explicitly says "preserve
+    // overlays". For any edit-mode shot whose hero carries infographic
+    // overlays (BANVA branding, dimension cotas, headlines), copy the
+    // original hero pixels into the result for each detected text bbox.
+    // Safe across shot types because edit mode preserves composition and
+    // the composite is a no-op when no overlays exist.
     const heroHasOverlays = (job.hero_shot?.text_elements as unknown[] | null)?.length ?? 0;
     if (
       !isBrandOnly &&
-      effectiveShotType === 'detail' &&
       effectiveMode === 'edit' &&
       heroHasOverlays > 0 &&
       job.hero_shot?.id

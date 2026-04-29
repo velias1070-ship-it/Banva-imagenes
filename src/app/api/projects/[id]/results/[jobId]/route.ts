@@ -1211,13 +1211,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     let imageBuffer = await ensureOutputSpec(rawBuffer, 1200);
 
     // ── Pixel-perfect overlay restore (mirror of process-next) ──
-    // For detail edit-mode jobs whose hero has infographic overlays, copy the
+    // For any edit-mode job whose hero has infographic overlays, copy the
     // original hero pixels into the result for each detected text bbox so
-    // overlays are byte-identical instead of Gemini-rerendered.
+    // overlays are byte-identical instead of Gemini-rerendered. Applies
+    // across shot types (detail, lifestyle, etc.) because edit mode
+    // preserves composition; no-op when no overlays exist.
     const heroOverlaysCount = ((heroShot as unknown as { text_elements?: unknown[] } | null)?.text_elements?.length) ?? 0;
     if (
       !isBrandOnly &&
-      effectiveShotType === 'detail' &&
       mode === 'edit' &&
       heroOverlaysCount > 0 &&
       heroShot &&
