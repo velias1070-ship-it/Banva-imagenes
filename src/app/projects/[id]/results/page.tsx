@@ -886,6 +886,60 @@ export default function ResultsPage() {
     }
   }
 
+  async function handleDeleteJob(jobId: string, swatchName?: string) {
+    const ok = window.confirm(
+      `¿Eliminar esta imagen${swatchName ? ` de ${swatchName}` : ''}? No se puede deshacer.`
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/projects/${id}/results/${jobId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        toast.error(`No se pudo eliminar: ${err.error || res.status}`);
+        return;
+      }
+      // Optimistic remove
+      setGroups((prev) =>
+        prev.map((g) => ({ ...g, jobs: g.jobs.filter((j) => j.id !== jobId) }))
+      );
+      setSelectedJobIds((prev) => {
+        const next = new Set(prev);
+        next.delete(jobId);
+        return next;
+      });
+      toast.success('Imagen eliminada');
+    } catch {
+      toast.error('Error de red');
+    }
+  }
+
+  async function handleDeleteBulk(jobIds: string[]) {
+    if (jobIds.length === 0) return;
+    const ok = window.confirm(
+      `¿Eliminar ${jobIds.length} imagen${jobIds.length !== 1 ? 'es' : ''}? No se puede deshacer.`
+    );
+    if (!ok) return;
+    let okCount = 0;
+    let failCount = 0;
+    for (const jobId of jobIds) {
+      try {
+        const res = await fetch(`/api/projects/${id}/results/${jobId}`, { method: 'DELETE' });
+        if (res.ok) okCount++;
+        else failCount++;
+      } catch {
+        failCount++;
+      }
+    }
+    if (okCount > 0) {
+      setGroups((prev) =>
+        prev.map((g) => ({ ...g, jobs: g.jobs.filter((j) => !jobIds.includes(j.id)) }))
+      );
+      toast.success(`${okCount} imagen${okCount !== 1 ? 'es' : ''} eliminada${okCount !== 1 ? 's' : ''}`);
+    }
+    if (failCount > 0) toast.error(`${failCount} fallaron al eliminar`);
+    setSelectedJobIds(new Set());
+  }
+
   async function handleRegenerateBulk(jobIds: string[]) {
     if (jobIds.length === 0) return;
     setRegeneratingBulk(true);
@@ -1519,6 +1573,15 @@ export default function ResultsPage() {
                   Regenerar
                 </Button>
               )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-red-500 hover:text-red-700 hover:bg-red-50"
+                onClick={() => handleDeleteJob(job.id, job.swatch?.name)}
+                title="Eliminar imagen"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
               {projectBrandId && (
                 <Button
                   variant="outline"
@@ -1930,6 +1993,15 @@ export default function ResultsPage() {
                     <RotateCcw className="mr-1.5 h-3 w-3" />
                   )}
                   Regenerar marcados ({selectedJobIds.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-red-400 text-red-700 hover:bg-red-50"
+                  onClick={() => handleDeleteBulk(Array.from(selectedJobIds))}
+                >
+                  <X className="mr-1.5 h-3 w-3" />
+                  Eliminar marcados ({selectedJobIds.size})
                 </Button>
                 <Button
                   variant="ghost"
