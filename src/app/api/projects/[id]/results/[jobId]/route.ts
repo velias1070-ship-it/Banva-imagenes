@@ -62,6 +62,39 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   return NextResponse.json(job);
 }
 
+export async function DELETE(_request: NextRequest, context: RouteContext) {
+  const { jobId } = await context.params;
+  const supabase = createAdminClient();
+
+  // Read storage path before deleting to clean up the bucket too
+  const { data: job, error: readErr } = await supabase
+    .from('generation_jobs')
+    .select('output_storage_path')
+    .eq('id', jobId)
+    .single();
+
+  if (readErr || !job) {
+    return NextResponse.json({ error: readErr?.message || 'Job not found' }, { status: 404 });
+  }
+
+  if (job.output_storage_path) {
+    const { error: storageErr } = await supabase.storage
+      .from('images')
+      .remove([job.output_storage_path]);
+    if (storageErr) {
+      // Storage failure shouldn't block DB cleanup — log and continue.
+      console.error('[results DELETE] Storage delete failed:', storageErr.message);
+    }
+  }
+
+  const { error: delErr } = await supabase.from('generation_jobs').delete().eq('id', jobId);
+  if (delErr) {
+    return NextResponse.json({ error: delErr.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
+
 // Regenerate a single job
 export async function POST(_request: NextRequest, context: RouteContext) {
   const { id, jobId } = await context.params;
