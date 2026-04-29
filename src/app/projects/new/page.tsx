@@ -26,6 +26,9 @@ interface ProductGroup {
     titulo?: string;
     thumbnail?: string;
     permalink?: string;
+    tipo?: string | null;
+    bed_size?: string | null;
+    label?: string;
   }[];
 }
 
@@ -186,7 +189,7 @@ function ProductCombobox({
                 <div className="mt-1 flex flex-wrap gap-1">
                   {p.variantes.map((v) => (
                     <span key={v.sku} className="rounded bg-background px-1.5 py-0.5 text-[10px]">
-                      {v.color} <span className="text-muted-foreground">({v.sku})</span>
+                      {v.label || v.color} <span className="text-muted-foreground">({v.sku})</span>
                     </span>
                   ))}
                 </div>

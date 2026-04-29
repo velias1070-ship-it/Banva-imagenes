@@ -51,10 +51,34 @@ function fallbackKey(title: string): string {
   return slugify(words.slice(0, -1).join(' '));
 }
 
-function lastWord(title: string): string {
-  if (!title) return '';
-  const words = title.trim().split(/\s+/);
-  return words[words.length - 1] || '';
+const PATTERN_TYPES = new Set([
+  'estampado', 'estampados', 'liso', 'lisos',
+  'estampada', 'estampadas', 'lisa', 'lisas',
+  'bordado', 'bordados', 'jacquard',
+]);
+
+// Splits the variant suffix of an ML title into { color, tipo }.
+// e.g. "Sabanas Polar … Cala Estampado" → { color: "Cala", tipo: "Estampado" }
+//      "… Azul Liso"                    → { color: "Azul", tipo: "Liso" }
+//      "… Cobre"                        → { color: "Cobre", tipo: null }
+function parseVariantLabel(title: string, familyName: string | null): { color: string; tipo: string | null } {
+  if (!title) return { color: '', tipo: null };
+  let tail = title.trim();
+  // Strip the family_name prefix if present so we only parse the variant suffix
+  if (familyName && tail.toLowerCase().startsWith(familyName.toLowerCase())) {
+    tail = tail.slice(familyName.length).trim();
+  }
+  const words = tail.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return { color: '', tipo: null };
+
+  const last = words[words.length - 1];
+  const isType = PATTERN_TYPES.has(last.toLowerCase());
+
+  if (isType && words.length >= 2) {
+    const color = words[words.length - 2];
+    return { color, tipo: last };
+  }
+  return { color: last, tipo: null };
 }
 
 interface Variante {
@@ -66,6 +90,9 @@ interface Variante {
   titulo?: string;
   thumbnail?: string;
   permalink?: string;
+  tipo?: string | null;
+  bed_size?: string | null;
+  label?: string;
 }
 
 interface ProductGroup {
@@ -98,7 +125,7 @@ export async function GET() {
     const [mlItemsRes, productosRes] = await Promise.all([
       supabase
         .from('ml_items_map')
-        .select('item_id, sku_venta, titulo, family_name, thumbnail, permalink')
+        .select('item_id, sku, sku_venta, titulo, family_name, thumbnail, permalink, bed_size')
         .eq('activo', true)
         .is('variation_id', null)
         .limit(2000),
@@ -125,11 +152,17 @@ export async function GET() {
       const key = familyName ? `fam:${familyName}` : `fk:${fallbackKey(titulo)}`;
       if (key === 'fk:') continue; // no titulo to fall back on
 
-      const sku = item.sku_venta || '';
+      const sku = item.sku_venta || item.sku || '';
       const producto = sku ? productosBySku.get(sku) : undefined;
 
-      // Variant label: prefer color from productos, else last word of title
-      const color = producto?.color || lastWord(titulo) || sku || item.item_id;
+      // Parse "{color} {tipo}" out of the title — e.g. "Cala Estampado", "Azul Liso"
+      const parsed = parseVariantLabel(titulo, familyName);
+      const color = producto?.color || parsed.color || sku || item.item_id;
+      const tipo = parsed.tipo || null;
+      const bedSize = item.bed_size || producto?.tamano || null;
+
+      const labelParts = [color, tipo, bedSize].filter(Boolean);
+      const label = labelParts.join(' · ');
 
       if (!groups.has(key)) {
         const baseName = familyName || (titulo ? titulo.split(/\s+/).slice(0, -1).join(' ') : '');
@@ -147,12 +180,15 @@ export async function GET() {
       group.variantes.push({
         sku: sku || item.item_id,
         color,
-        color_slug: slugify(color),
+        color_slug: slugify(`${color}-${tipo || ''}-${bedSize || ''}`),
         source: producto ? 'catalogo' : 'ml',
         item_id: item.item_id,
         titulo: titulo || undefined,
         thumbnail: item.thumbnail || undefined,
         permalink: item.permalink || undefined,
+        tipo,
+        bed_size: bedSize,
+        label,
       });
     }
 
@@ -200,11 +236,19 @@ export async function GET() {
       groups.set(`prod-only:${g.slug}|${g.tamano.toLowerCase()}`, g);
     }
 
-    // Output: only groups with 2+ variants
+    // Output: only groups with 2+ variants. Sort by tipo (Estampado/Liso/etc),
+    // then by color, then by bed_size — that way variants of the same design
+    // line up consecutively in the UI.
     const result: ProductGroup[] = [];
     for (const [, g] of groups) {
       if (g.variantes.length < 2) continue;
-      g.variantes.sort((a, b) => a.color.localeCompare(b.color));
+      g.variantes.sort((a, b) => {
+        const t = (a.tipo || '').localeCompare(b.tipo || '');
+        if (t !== 0) return t;
+        const c = a.color.localeCompare(b.color);
+        if (c !== 0) return c;
+        return (a.bed_size || '').localeCompare(b.bed_size || '');
+      });
       result.push(g);
     }
 
