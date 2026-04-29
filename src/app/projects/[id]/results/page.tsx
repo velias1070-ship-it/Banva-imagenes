@@ -117,6 +117,11 @@ export default function ResultsPage() {
   const [collapsedSwatches, setCollapsedSwatches] = useState<Set<string> | null>(null);
   const [groupByDesign, setGroupByDesign] = useState(false);
   const [variantes, setVariantes] = useState<ProjectVariant[]>([]);
+  // Multi-axis filters (independent — apply on top of activeTab)
+  const [tipoFilter, setTipoFilter] = useState<string>('all');
+  const [colorFilter, setColorFilter] = useState<string>('all');
+  const [sizeFilter, setSizeFilter] = useState<string>('all');
+  const [mlStatusFilter, setMlStatusFilter] = useState<string>('all');
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -293,6 +298,28 @@ export default function ResultsPage() {
     [variantes]
   );
 
+  // Distinct values for filter dropdowns — derived from variantes
+  const filterOptions = useMemo(() => {
+    const tipos = new Set<string>();
+    const colors = new Set<string>();
+    const sizes = new Set<string>();
+    for (const v of variantes) {
+      if (v.tipo) tipos.add(v.tipo);
+      if (v.color) colors.add(v.color);
+      if (v.bed_size) sizes.add(v.bed_size);
+    }
+    const sortSizes = (a: string, b: string) => {
+      const numA = parseFloat(a) || 999;
+      const numB = parseFloat(b) || 999;
+      return numA - numB || a.localeCompare(b);
+    };
+    return {
+      tipos: Array.from(tipos).sort(),
+      colors: Array.from(colors).sort(),
+      sizes: Array.from(sizes).sort(sortSizes),
+    };
+  }, [variantes]);
+
   // Design key = color + tipo (NOT including bed_size). This way "Aba 1 plaza"
   // and "Aba 1.5 plazas" both map to the same design slug "aba-estampado" so
   // the UI groups all sizes of the same design under one header.
@@ -335,6 +362,25 @@ export default function ResultsPage() {
         .filter((g) => g.jobs.length > 0);
     }
 
+    // Apply multi-axis filters (tipo, color, size, ml_status)
+    if (tipoFilter !== 'all' || colorFilter !== 'all' || sizeFilter !== 'all' || mlStatusFilter !== 'all') {
+      base = base.filter((g) => {
+        const sku = (g.swatch.sku_suffix || '').toUpperCase();
+        const v = sku ? variantBySku.get(sku) : undefined;
+        if (tipoFilter !== 'all' && (v?.tipo || '') !== tipoFilter) return false;
+        if (colorFilter !== 'all' && (v?.color || '') !== colorFilter) return false;
+        if (sizeFilter !== 'all') {
+          const size = v?.bed_size || extractSizeFromSku(g.swatch.sku_suffix || '') || '';
+          if (size !== sizeFilter) return false;
+        }
+        if (mlStatusFilter !== 'all') {
+          const status = g.ml_listing?.status || 'none';
+          if (mlStatusFilter === 'none' ? !!g.ml_listing : status !== mlStatusFilter) return false;
+        }
+        return true;
+      });
+    }
+
     if (groupByDesign && variantBySku.size > 0) {
       // Sort by (design_slug, size, swatch.display_order)
       const SIZE_ORDER: Record<string, number> = { '40x60': 0, '45x75': 1, '60x120': 2, '80x120': 3, '57x90': 4 };
@@ -351,7 +397,7 @@ export default function ResultsPage() {
       });
     }
     return base;
-  }, [groups, activeTab, groupByDesign, variantBySku]);
+  }, [groups, activeTab, groupByDesign, variantBySku, tipoFilter, colorFilter, sizeFilter, mlStatusFilter]);
 
   // ── Counts ──
   const approvedCount = allJobs.filter((j) => j.status === 'approved').length;
@@ -2057,6 +2103,67 @@ export default function ResultsPage() {
               >
                 {groupByDesign ? '✓ Por diseño' : 'Agrupar por diseño'}
               </Button>
+            )}
+            {variantBySku.size > 0 && (filterOptions.tipos.length > 1 || filterOptions.colors.length > 1 || filterOptions.sizes.length > 1) && (
+              <>
+                {filterOptions.tipos.length > 1 && (
+                  <Select value={tipoFilter} onValueChange={setTipoFilter}>
+                    <SelectTrigger className="h-9 w-[140px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los tipos</SelectItem>
+                      {filterOptions.tipos.map((t) => (
+                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {filterOptions.colors.length > 1 && (
+                  <Select value={colorFilter} onValueChange={setColorFilter}>
+                    <SelectTrigger className="h-9 w-[150px]"><SelectValue placeholder="Color" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los colores</SelectItem>
+                      {filterOptions.colors.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {filterOptions.sizes.length > 1 && (
+                  <Select value={sizeFilter} onValueChange={setSizeFilter}>
+                    <SelectTrigger className="h-9 w-[140px]"><SelectValue placeholder="Tamaño" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los tamaños</SelectItem>
+                      {filterOptions.sizes.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <Select value={mlStatusFilter} onValueChange={setMlStatusFilter}>
+                  <SelectTrigger className="h-9 w-[140px]"><SelectValue placeholder="ML" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">ML: todos</SelectItem>
+                    <SelectItem value="active">ML: activo</SelectItem>
+                    <SelectItem value="paused">ML: pausado</SelectItem>
+                    <SelectItem value="none">Sin publicación ML</SelectItem>
+                  </SelectContent>
+                </Select>
+                {(tipoFilter !== 'all' || colorFilter !== 'all' || sizeFilter !== 'all' || mlStatusFilter !== 'all') && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    onClick={() => {
+                      setTipoFilter('all');
+                      setColorFilter('all');
+                      setSizeFilter('all');
+                      setMlStatusFilter('all');
+                    }}
+                  >
+                    Limpiar filtros
+                  </Button>
+                )}
+              </>
             )}
             {filteredGroups.length > 1 && (
               <Button
