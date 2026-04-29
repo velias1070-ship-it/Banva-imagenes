@@ -118,6 +118,7 @@ export default function ResultsPage() {
   const [groupByDesign, setGroupByDesign] = useState(false);
   const [variantes, setVariantes] = useState<ProjectVariant[]>([]);
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
+  const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [editingJob, setEditingJob] = useState<string | null>(null);
   // Lifted to parent because JobCard is defined inside ResultsPage and
   // re-creates its function reference on every poll (every 10s). That
@@ -1763,6 +1764,32 @@ export default function ResultsPage() {
           </TabsList>
 
           <div className="flex items-center gap-2">
+            {selectedSwatchIds.size > 0 && (
+              <>
+                <span className="text-xs text-muted-foreground">
+                  {selectedSwatchIds.size} seleccionado{selectedSwatchIds.size !== 1 ? 's' : ''}
+                </span>
+                <Button
+                  size="sm"
+                  className="bg-indigo-600 hover:bg-indigo-700"
+                  onClick={() =>
+                    handleGenerateForSwatches(Array.from(selectedSwatchIds), 'Selección')
+                  }
+                  disabled={Array.from(selectedSwatchIds).some((sid) => generatingSwatches.has(sid))}
+                >
+                  <Play className="mr-1.5 h-3 w-3" />
+                  Generar selección ({selectedSwatchIds.size})
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => setSelectedSwatchIds(new Set())}
+                >
+                  Limpiar
+                </Button>
+              </>
+            )}
             {variantBySku.size > 0 && (
               <Button
                 variant={groupByDesign ? 'default' : 'outline'}
@@ -1825,20 +1852,50 @@ export default function ResultsPage() {
                       const designSwatchIds = filteredGroups
                         .filter((g) => designForGroup(g) === groupDesign)
                         .map((g) => g.swatch.id);
+                      const selectedInDesign = designSwatchIds.filter((sid) => selectedSwatchIds.has(sid));
+                      const allSelected = selectedInDesign.length === designSwatchIds.length && designSwatchIds.length > 0;
                       const generatingThisDesign = designSwatchIds.some((sid) => generatingSwatches.has(sid));
                       return (
                         <div className="mt-6 mb-2 flex items-center gap-3 border-b pb-1">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 cursor-pointer accent-indigo-600"
+                            checked={allSelected}
+                            ref={(el) => {
+                              if (el)
+                                el.indeterminate =
+                                  selectedInDesign.length > 0 && !allSelected;
+                            }}
+                            onChange={() => {
+                              setSelectedSwatchIds((prev) => {
+                                const next = new Set(prev);
+                                if (allSelected) {
+                                  for (const sid of designSwatchIds) next.delete(sid);
+                                } else {
+                                  for (const sid of designSwatchIds) next.add(sid);
+                                }
+                                return next;
+                              });
+                            }}
+                            title={allSelected ? 'Deseleccionar diseño' : 'Seleccionar diseño'}
+                          />
                           <h2 className="text-base font-semibold capitalize">{groupDesign || 'Sin diseño'}</h2>
                           <span className="text-xs text-muted-foreground">
                             {designSwatchIds.length} swatch(es)
+                            {selectedInDesign.length > 0 && ` · ${selectedInDesign.length} seleccionado${selectedInDesign.length !== 1 ? 's' : ''}`}
                           </span>
                           <Button
                             variant="outline"
                             size="sm"
                             className="ml-auto h-7 text-xs"
-                            onClick={() =>
-                              handleGenerateForSwatches(designSwatchIds, `Diseño ${groupDesign}`)
-                            }
+                            onClick={() => {
+                              const target = selectedInDesign.length > 0 ? selectedInDesign : designSwatchIds;
+                              const label =
+                                selectedInDesign.length > 0
+                                  ? `${groupDesign} (selección)`
+                                  : `Diseño ${groupDesign}`;
+                              handleGenerateForSwatches(target, label);
+                            }}
                             disabled={generatingThisDesign}
                           >
                             {generatingThisDesign ? (
@@ -1846,14 +1903,32 @@ export default function ResultsPage() {
                             ) : (
                               <Play className="mr-1.5 h-3 w-3" />
                             )}
-                            Generar diseño completo
+                            {selectedInDesign.length > 0
+                              ? `Generar selección (${selectedInDesign.length})`
+                              : 'Generar diseño completo'}
                           </Button>
                         </div>
                       );
                     })()}
-                    <div className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''}`}>
+                    <div className={`rounded-xl border bg-card shadow-sm overflow-hidden ${isDirty ? 'ring-2 ring-blue-500' : ''} ${selectedSwatchIds.has(swatchId) ? 'ring-2 ring-indigo-400' : ''}`}>
                     {/* Section header */}
                     <div className="flex items-center gap-3 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer accent-indigo-600"
+                        checked={selectedSwatchIds.has(swatchId)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          setSelectedSwatchIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(swatchId)) next.delete(swatchId);
+                            else next.add(swatchId);
+                            return next;
+                          });
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Marcar para generar"
+                      />
                       {/* Clickable area for collapse */}
                       <button
                         onClick={() => toggleSwatchCollapse(swatchId)}
