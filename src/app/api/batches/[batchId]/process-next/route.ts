@@ -975,13 +975,25 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[process-next] BRAND_ONLY mode — reproducing image with brand guidelines`);
     } else {
       // Hero overlays (text/branding/dimensions) need to be preserved by the
-      // edit prompt. Pull from the cached hero_shots.text_elements regardless
-      // of brand processing — when the project has no brand, the brand block
-      // below skips and the overlays would otherwise never reach buildPrompt.
-      const cachedHeroOverlays = job.hero_shot?.text_elements as
+      // edit prompt. Run the analyzer here (independent of brand) so projects
+      // without a brand still get overlay preservation. Cached in
+      // hero_shots.text_elements after first run.
+      let detectedHeroOverlays = job.hero_shot?.text_elements as
         | Array<{ text: string; position?: string; size?: string; role?: string }>
         | null
         | undefined;
+      if ((!detectedHeroOverlays || (Array.isArray(detectedHeroOverlays) && detectedHeroOverlays.length === 0)) && job.hero_shot?.id) {
+        try {
+          const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
+          if (textAnalysis?.elements?.length) {
+            detectedHeroOverlays = textAnalysis.elements;
+            supabase.from('hero_shots').update({ text_elements: detectedHeroOverlays }).eq('id', job.hero_shot.id).then(() => {}, () => {});
+            logPipelineEvent(job.id, 'HERO_OVERLAYS_DETECTED', `${detectedHeroOverlays.length} elements`);
+          }
+        } catch (err) {
+          console.error('[process-next] analyzeTextElements failed (non-blocking):', err);
+        }
+      }
       prompt = buildPromptForMode(
         effectiveMode,
         strategy,
@@ -993,7 +1005,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         projectSettings.generation.resolution,
         swatchHex,
         patternSimilarity === false,
-        cachedHeroOverlays ?? null,
+        detectedHeroOverlays ?? null,
       );
     }
 
@@ -1033,25 +1045,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       if (brandData) {
         brand = brandData as BrandConfig;
 
-        // Detect text elements — use cache from hero_shots if available
-        if (brand && (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color)) {
-          const cachedElements = job.hero_shot.text_elements;
-          if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
-            textElements = cachedElements as import('@/lib/brand').TextElement[];
-            console.log(`[process-next] Using ${textElements.length} cached text elements`);
-          } else {
-            try {
-              const textAnalysis = await analyzeTextElements(heroBase64, job.hero_shot.mime_type || 'image/png');
-              if (textAnalysis?.elements?.length) {
-                textElements = textAnalysis.elements;
-                console.log(`[process-next] Detected ${textElements.length} text elements (caching)`);
-                // Cache in hero_shots (non-blocking)
-                supabase.from('hero_shots').update({ text_elements: textElements }).eq('id', job.hero_shot.id).then(() => {});
-              }
-            } catch (err) {
-              console.error('[process-next] Text element analysis failed (non-blocking):', err);
-            }
-          }
+        // Reuse hero overlays detected/cached above (independent of brand).
+        const cachedElements = job.hero_shot.text_elements;
+        if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
+          textElements = cachedElements as import('@/lib/brand').TextElement[];
         }
 
         // Inject brand prompt: 'full' for BRAND_ONLY (includes logo prohibition), 'light' for normal (colors + typography only)

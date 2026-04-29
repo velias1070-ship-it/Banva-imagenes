@@ -940,7 +940,24 @@ Everything else (product, background, people, objects) must remain as in Image 1
 Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       console.log(`[regenerateJob] BRAND_ONLY mode — reproducing image with brand guidelines`);
     } else {
-      const cachedHeroOverlays = (heroShot as unknown as { text_elements?: Array<{ text: string; position?: string; size?: string; role?: string }> } | null)?.text_elements ?? null;
+      // Hero overlays detection: independent of brand, so projects without
+      // brand_id still get overlay preservation in the prompt + composite.
+      let detectedHeroOverlays = (heroShot as unknown as { text_elements?: Array<{ text: string; position?: string; size?: string; role?: string }> } | null)?.text_elements ?? null;
+      const heroShotId = (heroShot as unknown as { id?: string } | null)?.id;
+      if ((!detectedHeroOverlays || detectedHeroOverlays.length === 0) && heroShotId && heroBuffer.length > 0) {
+        try {
+          const heroB64 = heroBuffer.toString('base64');
+          const heroMime = (heroShot as unknown as { mime_type?: string } | null)?.mime_type || 'image/png';
+          const textAnalysis = await analyzeTextElements(heroB64, heroMime);
+          if (textAnalysis?.elements?.length) {
+            detectedHeroOverlays = textAnalysis.elements;
+            supabase.from('hero_shots').update({ text_elements: detectedHeroOverlays }).eq('id', heroShotId).then(() => {}, () => {});
+            logPipelineEvent(jobId, 'HERO_OVERLAYS_DETECTED', `${detectedHeroOverlays.length} elements`);
+          }
+        } catch (err) {
+          console.error('[regenerateJob] analyzeTextElements failed (non-blocking):', err);
+        }
+      }
       prompt = buildPromptForMode(
         mode,
         strategy,
@@ -952,7 +969,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         projectSettings.generation.resolution,
         null,
         patternsDiffer,
-        cachedHeroOverlays,
+        detectedHeroOverlays,
       );
     }
 
@@ -972,31 +989,11 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       if (brandData) {
         brand = brandData as BrandConfig;
 
-        // Detect text elements — use cache from hero_shots if available
-        if (brand.typography || brand.primary_color || brand.secondary_color || brand.accent_color) {
-          // Read cache directly from job data (avoid type cast issues)
-          const heroData = job.hero_shot as Record<string, unknown>;
-          const cachedElements = heroData?.text_elements;
-          console.log(`[regenerateJob] text_elements cache: ${cachedElements ? JSON.stringify(cachedElements).substring(0, 100) : 'null'}`);
-
-          if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
-            textElements = cachedElements as import('@/lib/brand').TextElement[];
-            console.log(`[regenerateJob] Using ${textElements.length} cached text elements`);
-          } else {
-            try {
-              const heroB64 = heroBuffer.toString('base64');
-              const textAnalysis = await analyzeTextElements(heroB64, heroShot?.mime_type || 'image/png');
-              if (textAnalysis?.elements?.length) {
-                textElements = textAnalysis.elements;
-                console.log(`[regenerateJob] Detected ${textElements.length} text elements (caching)`);
-                if (heroShot?.id) {
-                  supabase.from('hero_shots').update({ text_elements: textElements }).eq('id', heroShot.id).then(() => {});
-                }
-              }
-            } catch (err) {
-              console.error('[regenerateJob] Text analysis failed (non-blocking):', err);
-            }
-          }
+        // Reuse hero overlays detected/cached above (independent of brand).
+        const heroData = job.hero_shot as Record<string, unknown>;
+        const cachedElements = heroData?.text_elements;
+        if (cachedElements && Array.isArray(cachedElements) && cachedElements.length > 0) {
+          textElements = cachedElements as import('@/lib/brand').TextElement[];
         }
 
         // Inject brand prompt: 'full' for BRAND_ONLY (includes logo prohibition), 'light' for normal (colors + typography only)
