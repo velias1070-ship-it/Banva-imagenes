@@ -19,6 +19,7 @@ import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
+import { buildCaseSignature } from '@/lib/case-signature';
 import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } from '@/lib/bed-camera-angle';
 import { logPipelineEvent } from '@/lib/pipeline-log';
 import { generateResizedVariant } from './resize/route';
@@ -615,6 +616,8 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
     // Determine mode — auto-detect edit vs reference by comparing patterns
     let mode: GenerationMode = strategy.generation_mode;
     let patternsDiffer = false;
+    // Tri-state similarity for telemetry: true=similar, false=differ, null=unknown.
+    let patternSimilarity: boolean | null = null;
     if (forceMode) {
       mode = forceMode;
       console.log(`[regenerateJob] Mode forced via API: ${mode}`);
@@ -642,6 +645,7 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
             console.log(`[regenerateJob] Patterns similar → edit mode (color change only)`);
           }
           patternsDiffer = similar === false;
+          patternSimilarity = similar;
           logPipelineEvent(jobId, 'PATTERN_COMPARED', String(similar), { effective_mode: mode });
         } catch (err) {
           console.error('[regenerateJob] Pattern comparison failed:', err);
@@ -997,7 +1001,19 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       manual_regeneration: true,
       detected_shot_type: effectiveShotType,
       swatch_pattern_analyzed: !!swatchPatternDescription,
+      pattern_similarity: patternSimilarity,
+      _telemetry_source: 'sprint_1_runtime',
     };
+
+    // Sprint 2 issue #2 — case_signature for telemetry grouping.
+    const swatchProfileForSig = (swatch.fabric_profile as { opacity?: 'opaque' | 'translucent' | 'sheer' } | null) || null;
+    const caseSignature = buildCaseSignature({
+      category,
+      shotType: effectiveShotType,
+      patternsDiffer: patternSimilarity === null ? null : !patternSimilarity,
+      isDarkSwatch: darkSwatch,
+      opacity: swatchProfileForSig?.opacity || null,
+    });
 
     // Generate — escalate to Pro model. Quilts + cortinas escalate earlier
     // (Flash can't reproduce fine/smooth weave — verifier rejects coarse output).
@@ -1207,6 +1223,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         qa_feedback: `[Delta-E ${dE}] ${feedback}`,
         attempt: attempt + 1,
         prompt_metadata: { ...promptMetadata, color_delta_e: deltaEResult.deltaE },
+        case_signature: caseSignature,
         ...(debugSaved ? { output_storage_path: debugPath } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', jobId);
@@ -1274,6 +1291,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
               qa_feedback: `[Verifier 2.5 Pro] ${feedback}`,
               attempt: attempt + 1,
               prompt_metadata: promptMetadata,
+              case_signature: caseSignature,
               ...(debugSaved ? { output_storage_path: debugPath } : {}),
               updated_at: new Date().toISOString(),
             }).eq('id', jobId);
@@ -1339,6 +1357,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         model_id: modelIdUsed,
         cost_usd_actual: costUsdActual,
         _telemetry_source: 'sprint_1_runtime',
+        case_signature: caseSignature,
         attempt: attempt + 1,
         prompt_text: prompt,
         prompt_metadata: promptMetadata,

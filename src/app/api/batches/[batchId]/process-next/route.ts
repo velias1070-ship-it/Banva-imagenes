@@ -21,6 +21,7 @@ import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { verifySwatch } from '@/lib/swatch-verifier';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
 import { arePatternsSimlar } from '@/lib/pattern-comparator';
+import { buildCaseSignature } from '@/lib/case-signature';
 import { detectStripeVisualAxis, hasDirectionalPattern, type StripeVisualAxis } from '@/lib/bed-camera-angle';
 import { MAX_QA_RETRIES } from '@/lib/constants';
 import { logPipelineEvent } from '@/lib/pipeline-log';
@@ -980,6 +981,19 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       worker_id: workerId,
     };
 
+    // Sprint 2 issue #2 — case_signature for telemetry grouping. Built at
+    // the runtime point where every input is finalized (mode chosen, dark
+    // detected, patterns compared). Sprint-1 telemetry source.
+    const swatchProfileForSig = (job.swatch.fabric_profile as { opacity?: 'opaque' | 'translucent' | 'sheer' } | null) || null;
+    const caseSignature = buildCaseSignature({
+      category,
+      shotType: effectiveShotType,
+      patternsDiffer: patternSimilarity === null ? null : !patternSimilarity,
+      isDarkSwatch: darkSwatch,
+      opacity: swatchProfileForSig?.opacity || null,
+    });
+    promptMetadata._telemetry_source = 'sprint_1_runtime';
+
     // Persist prompt + attempt increment. Status was already set to 'generating'
     // atomically by claim_next_job() at the top of this function.
     await supabase
@@ -988,6 +1002,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         prompt_text: prompt,
         attempt: job.attempt + 1,
         prompt_metadata: promptMetadata,
+        case_signature: caseSignature,
       })
       .eq('id', job.id);
 
