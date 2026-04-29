@@ -15,6 +15,7 @@ import {
   Copy,
   ChevronLeft,
   ChevronRight,
+  ShieldCheck,
 } from 'lucide-react';
 
 const navItems = [
@@ -26,12 +27,15 @@ const navItems = [
   { href: '/performance', label: 'Performance ML', icon: TrendingUp },
 ];
 
+const adminNavItem = { href: '/admin/costos', label: 'Admin', icon: ShieldCheck };
+
 const STORAGE_KEY = 'banva-sidebar-collapsed';
 
 export function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     try {
@@ -39,6 +43,10 @@ export function Sidebar() {
       if (stored === '1') setCollapsed(true);
     } catch {}
     setHydrated(true);
+    fetch('/api/admin/whoami', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j?.isAdmin) setIsAdmin(true); })
+      .catch(() => {});
   }, []);
 
   const toggle = () => {
@@ -82,7 +90,7 @@ export function Sidebar() {
       </div>
 
       <nav className={cn('flex-1 space-y-1', collapsed ? 'p-2' : 'p-4')}>
-        {navItems.map((item) => {
+        {[...navItems, ...(isAdmin ? [adminNavItem] : [])].map((item) => {
           const isActive =
             pathname === item.href ||
             (item.href !== '/' && pathname.startsWith(item.href));
