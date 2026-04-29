@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Upload, Play, ImageIcon, Settings, Globe, Sparkles } from 'lucide-react';
+import { ArrowLeft, Upload, Play, ImageIcon, Settings, Globe, Sparkles, Grid3x3 } from 'lucide-react';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
 import { BrandRegenButton } from './brand-regen-button';
@@ -140,6 +140,22 @@ export default async function ProjectDetailPage({ params }: Props) {
                 {(project.metadata as Record<string, unknown>)?.settings ? 'personalizado' : 'defaults'}
               </p>
             </CardContent>
+          </Card>
+        </Link>
+      </div>
+
+      <div className="mt-6">
+        <Link href={`/projects/${id}/coverage`}>
+          <Card className="cursor-pointer transition-shadow hover:shadow-md">
+            <CardHeader className="flex flex-row items-center gap-3">
+              <Grid3x3 className="h-8 w-8 text-indigo-500" />
+              <div>
+                <CardTitle className="text-base">Cobertura diseño × tamaño</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Ver qué heros aplican a cada combinación de variante
+                </p>
+              </div>
+            </CardHeader>
           </Card>
         </Link>
       </div>
