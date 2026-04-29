@@ -180,7 +180,10 @@ export async function GET() {
       group.variantes.push({
         sku: sku || item.item_id,
         color,
-        color_slug: slugify(`${color}-${tipo || ''}-${bedSize || ''}`),
+        // color_slug identifica el "diseño" — NO incluye bed_size porque el
+        // tamaño es un eje independiente. Si lo metiéramos acá, el resolver
+        // contaría "Aba 1.0 plaza" y "Aba 1.5 plazas" como diseños distintos.
+        color_slug: slugify(`${color}-${tipo || ''}`) || slugify(color),
         source: producto ? 'catalogo' : 'ml',
         item_id: item.item_id,
         titulo: titulo || undefined,
