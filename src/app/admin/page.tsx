@@ -5,7 +5,17 @@ export default function AdminHomePage() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold">Admin</h1>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Link href="/admin/costos">
+          <Card className="hover:bg-gray-50 cursor-pointer h-full">
+            <CardHeader><CardTitle>Costos &amp; Salud</CardTitle></CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Gasto en vivo por proyecto y modelo, jobs colgados, salud del pipeline. Auto-refresh.
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
         <Link href="/admin/models">
           <Card className="hover:bg-gray-50 cursor-pointer h-full">
             <CardHeader><CardTitle>Models & Routing</CardTitle></CardHeader>
