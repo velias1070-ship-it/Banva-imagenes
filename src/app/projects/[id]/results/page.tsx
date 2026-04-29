@@ -568,22 +568,51 @@ export default function ResultsPage() {
       toast.error(`Formato no soportado: ${file.type || 'desconocido'}`);
       return;
     }
-    if (file.size > 15 * 1024 * 1024) {
-      toast.error('Archivo excede 15MB');
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error('Archivo excede 25MB');
       return;
     }
     setUploadingSwatch((prev) => new Set(prev).add(swatchId));
     try {
-      const form = new FormData();
-      form.append('swatch_id', swatchId);
-      form.append('file', file);
-      const res = await fetch(`/api/projects/${id}/upload-result`, { method: 'POST', body: form });
-      const data = await res.json();
-      if (res.ok) {
-        toast.success(`Imagen subida para ${data.swatch}`);
+      const signRes = await fetch(`/api/projects/${id}/upload-result/sign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ swatch_id: swatchId, mime_type: file.type }),
+      });
+      const signData = await signRes.json();
+      if (!signRes.ok) {
+        toast.error(signData.error || 'No se pudo iniciar la subida');
+        return;
+      }
+
+      const putRes = await fetch(signData.signed_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type, 'x-upsert': 'true' },
+        body: file,
+      });
+      if (!putRes.ok) {
+        toast.error(`Subida a Storage falló (${putRes.status})`);
+        return;
+      }
+
+      const finalizeRes = await fetch(`/api/projects/${id}/upload-result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_id: signData.job_id,
+          storage_path: signData.storage_path,
+          swatch_id: swatchId,
+          mime_type: file.type,
+          size_bytes: file.size,
+          original_filename: file.name || null,
+        }),
+      });
+      const finalizeData = await finalizeRes.json();
+      if (finalizeRes.ok) {
+        toast.success(`Imagen subida para ${finalizeData.swatch}`);
         fetchResults();
       } else {
-        toast.error(data.error || 'Error subiendo');
+        toast.error(finalizeData.error || 'Error subiendo');
       }
     } catch {
       toast.error('Error de conexion');
