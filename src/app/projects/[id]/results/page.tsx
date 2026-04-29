@@ -119,6 +119,8 @@ export default function ResultsPage() {
   const [variantes, setVariantes] = useState<ProjectVariant[]>([]);
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [regeneratingBulk, setRegeneratingBulk] = useState(false);
   const [editingJob, setEditingJob] = useState<string | null>(null);
   // Lifted to parent because JobCard is defined inside ResultsPage and
   // re-creates its function reference on every poll (every 10s). That
@@ -828,6 +830,30 @@ export default function ResultsPage() {
     }
   }
 
+  async function handleRegenerateBulk(jobIds: string[]) {
+    if (jobIds.length === 0) return;
+    setRegeneratingBulk(true);
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (const jobId of jobIds) {
+        try {
+          const res = await fetch(`/api/projects/${id}/results/${jobId}`, { method: 'POST' });
+          if (res.ok) ok++;
+          else fail++;
+        } catch {
+          fail++;
+        }
+      }
+      if (ok > 0) toast.success(`Regenerando ${ok} imagen${ok !== 1 ? 'es' : ''} — se actualizarán solas`);
+      if (fail > 0) toast.error(`${fail} fallaron al lanzar`);
+      setSelectedJobIds(new Set());
+      setTimeout(() => fetchResults(), 1500);
+    } finally {
+      setRegeneratingBulk(false);
+    }
+  }
+
   async function handleRegenerate(jobId: string) {
     toast.info('Regenerando imagen...');
     try {
@@ -1233,6 +1259,24 @@ export default function ResultsPage() {
               {job.status === 'error' ? job.error_message || 'Error' : 'Sin imagen'}
             </div>
           )}
+          <div className="absolute top-1 left-1 z-10">
+            <input
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer accent-indigo-600 rounded shadow-sm"
+              checked={selectedJobIds.has(job.id)}
+              onChange={(e) => {
+                e.stopPropagation();
+                setSelectedJobIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(job.id)) next.delete(job.id);
+                  else next.add(job.id);
+                  return next;
+                });
+              }}
+              onClick={(e) => e.stopPropagation()}
+              title="Marcar para regenerar"
+            />
+          </div>
           {/* Drag hint overlay */}
           {isPanelOpen && isApproved && hasListing && (
             <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition-opacity">
@@ -1763,11 +1807,40 @@ export default function ResultsPage() {
             <TabsTrigger value="error">Errores ({errorCount})</TabsTrigger>
           </TabsList>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {selectedJobIds.size > 0 && (
+              <>
+                <span className="text-xs text-muted-foreground">
+                  {selectedJobIds.size} job{selectedJobIds.size !== 1 ? 's' : ''} marcad{selectedJobIds.size !== 1 ? 'os' : 'o'}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-amber-400 text-amber-700 hover:bg-amber-50"
+                  onClick={() => handleRegenerateBulk(Array.from(selectedJobIds))}
+                  disabled={regeneratingBulk}
+                >
+                  {regeneratingBulk ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="mr-1.5 h-3 w-3" />
+                  )}
+                  Regenerar marcados ({selectedJobIds.size})
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => setSelectedJobIds(new Set())}
+                >
+                  Limpiar jobs
+                </Button>
+              </>
+            )}
             {selectedSwatchIds.size > 0 && (
               <>
                 <span className="text-xs text-muted-foreground">
-                  {selectedSwatchIds.size} seleccionado{selectedSwatchIds.size !== 1 ? 's' : ''}
+                  {selectedSwatchIds.size} swatch{selectedSwatchIds.size !== 1 ? 'es' : ''}
                 </span>
                 <Button
                   size="sm"
@@ -1786,7 +1859,7 @@ export default function ResultsPage() {
                   className="text-muted-foreground"
                   onClick={() => setSelectedSwatchIds(new Set())}
                 >
-                  Limpiar
+                  Limpiar swatches
                 </Button>
               </>
             )}

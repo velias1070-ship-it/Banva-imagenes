@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 import {
   anyHeroHasTags,
   extractSizeFromSku,
-  resolveHeroForVariant,
+  resolveHeroesForVariant,
   type ProjectVariant,
 } from '@/lib/sku-parser';
 
@@ -214,15 +214,17 @@ export default function GeneratePage() {
       const variant = sku ? variantBySku.get(sku) : undefined;
       const design = variant?.color_slug || null;
       const size = sku ? extractSizeFromSku(sku) : null;
-      const r = resolveHeroForVariant(selectedHeroes, design, size);
-      if (!r) {
+      const list = resolveHeroesForVariant(selectedHeroes, design, size);
+      if (list.length === 0) {
         skipped.push({ sku: sw.sku_suffix || undefined, name: sw.name });
         assignments.push({ swatch: sw, hero: null, tier: 'none', design, size });
         continue;
       }
-      if (r.tier !== 'none') breakdown[r.tier as keyof typeof breakdown]++;
-      total++;
-      assignments.push({ swatch: sw, hero: r.hero, tier: r.tier, design, size });
+      for (const r of list) {
+        if (r.tier !== 'none') breakdown[r.tier as keyof typeof breakdown]++;
+        total++;
+        assignments.push({ swatch: sw, hero: r.hero, tier: r.tier, design, size });
+      }
     }
     return { useResolver: true, total, skipped, breakdown, assignments };
   }, [heroesWithStatus, swatches, variantes, selectedHeroIds, selectedSwatchIds, selectedCount, selectedSwatchCount]);
@@ -622,7 +624,7 @@ export default function GeneratePage() {
             <div className="mt-4 rounded border border-indigo-200 bg-indigo-50 p-3 text-xs">
               <div className="flex items-center justify-between">
                 <div className="font-medium text-indigo-900">
-                  Modo resolver activo · 1 hero por swatch (no cross product)
+                  Modo resolver activo · solo heros compatibles por swatch
                 </div>
                 <button
                   type="button"

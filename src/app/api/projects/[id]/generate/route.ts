@@ -5,7 +5,7 @@ import { COST_PER_IMAGE_USD } from '@/lib/constants';
 import {
   anyHeroHasTags,
   extractSizeFromSku,
-  resolveHeroForVariant,
+  resolveHeroesForVariant,
   type ProjectVariant,
 } from '@/lib/sku-parser';
 
@@ -216,8 +216,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const variant = sku ? variantBySku.get(sku) : undefined;
       const design = variant?.color_slug || null;
       const size = sku ? extractSizeFromSku(sku) : null;
-      const resolved = resolveHeroForVariant(selectedHeroes, design, size);
-      if (!resolved) {
+      const resolvedList = resolveHeroesForVariant(selectedHeroes, design, size);
+      if (resolvedList.length === 0) {
         skippedSwatches.push({
           sku: swatch.sku_suffix,
           name: swatch.name,
@@ -225,15 +225,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
         });
         continue;
       }
-      resolverDecisions[resolved.tier] = (resolverDecisions[resolved.tier] || 0) + 1;
-      jobs.push({
-        batch_id: '',
-        hero_shot_id: resolved.hero.id,
-        swatch_id: swatch.id,
-        status: 'pending',
-        attempt: 0,
-        ...(skipBrandSet.has(resolved.hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
-      });
+      // Multi-hero: 1 job por cada hero compatible con el swatch (todos los
+      // tiers != none). Asi se mantiene la variedad de shot types.
+      for (const resolved of resolvedList) {
+        resolverDecisions[resolved.tier] = (resolverDecisions[resolved.tier] || 0) + 1;
+        jobs.push({
+          batch_id: '',
+          hero_shot_id: resolved.hero.id,
+          swatch_id: swatch.id,
+          status: 'pending',
+          attempt: 0,
+          ...(skipBrandSet.has(resolved.hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
+        });
+      }
     }
     totalCombinations = jobs.length;
   } else {
