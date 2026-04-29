@@ -671,7 +671,7 @@ export default function GeneratePage() {
                             exact: 'bg-emerald-100 text-emerald-900',
                             design_only: 'bg-cyan-100 text-cyan-900',
                             size_only: 'bg-amber-100 text-amber-900',
-                            generic: 'bg-gray-100 text-gray-700',
+                            generic: 'bg-indigo-100 text-indigo-900',
                             none: 'bg-rose-100 text-rose-900',
                           }[a.tier];
                           return (
