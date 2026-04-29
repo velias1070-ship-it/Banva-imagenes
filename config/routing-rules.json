@@ -49,7 +49,7 @@
     },
     "sabanas": {
       "attempts": [
-        "gpt-image-2",
+        "gemini-flash",
         "gemini-pro",
         "gpt-image-2"
       ]
