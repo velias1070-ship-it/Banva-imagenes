@@ -1,50 +1,81 @@
 {
   "$schema_note": "Validated at runtime by src/lib/models/routing-rules.schema.ts. Model ids must exist in MODEL_REGISTRY. Order in 'attempts' arrays is the chain order: index 0 = attempt 0.",
-
   "default_chain": [
     "gemini-flash",
     "gemini-pro",
     "gpt-image-2"
   ],
-
   "categories": {
     "quilts": {
-      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"]
+      "attempts": [
+        "gemini-flash",
+        "gemini-pro",
+        "gpt-image-2"
+      ]
     },
     "cortinas": {
-      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"],
+      "attempts": [
+        "gemini-flash",
+        "gemini-pro",
+        "gpt-image-2"
+      ],
       "swatch_overrides": {
-        "sheer": ["gpt-image-2", "gemini-pro"],
-        "translucent": ["gpt-image-2", "gemini-pro"]
+        "sheer": [
+          "gpt-image-2",
+          "gemini-pro"
+        ],
+        "translucent": [
+          "gpt-image-2",
+          "gemini-pro"
+        ]
       }
     },
     "alfombras": {
-      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"],
+      "attempts": [
+        "gemini-flash",
+        "gemini-pro",
+        "gpt-image-2"
+      ],
       "swatch_overrides": {
-        "printed_illustration": ["gpt-image-2", "gemini-pro"],
-        "photographic": ["gpt-image-2", "gemini-pro"]
+        "printed_illustration": [
+          "gpt-image-2",
+          "gemini-pro"
+        ],
+        "photographic": [
+          "gpt-image-2",
+          "gemini-pro"
+        ]
       }
     },
     "sabanas": {
-      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"]
+      "attempts": [
+        "gemini-flash",
+        "gemini-pro",
+        "gpt-image-2"
+      ]
     },
     "toallas": {
-      "attempts": ["gemini-flash", "gemini-pro", "gpt-image-2"]
+      "attempts": [
+        "gemini-flash",
+        "gemini-pro",
+        "gpt-image-2"
+      ]
     },
-
     "brand": {
-      "attempts": ["gemini-flash", "gemini-flash"],
+      "attempts": [
+        "gemini-flash",
+        "gemini-flash"
+      ],
       "_review_when": "model_performance view tenga >30 brand jobs",
       "_decision_basis": "n=3, approval 66.7%, avg_score 0.867, abr-2026 (1 fail con Pro por product_fidelity=0.0, no por modelo)"
     }
   },
-
   "max_cost_per_job_usd": {
-    "default": 0.30,
-    "sabanas": 0.40,
-    "quilts": 0.50,
-    "cortinas": 0.50,
-    "alfombras": 0.50,
-    "brand": 0.20
+    "default": 0.3,
+    "sabanas": 0.4,
+    "quilts": 0.5,
+    "cortinas": 0.5,
+    "alfombras": 0.5,
+    "brand": 0.2
   }
 }
