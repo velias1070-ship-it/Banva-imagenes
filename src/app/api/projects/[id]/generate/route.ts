@@ -2,6 +2,12 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { COST_PER_IMAGE_USD } from '@/lib/constants';
+import {
+  anyHeroHasTags,
+  extractSizeFromSku,
+  resolveHeroForVariant,
+  type ProjectVariant,
+} from '@/lib/sku-parser';
 
 // Vercel serverless: max execution time (free=60s, pro=300s)
 export const maxDuration = 60;
@@ -156,7 +162,92 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'No matching swatches found' }, { status: 400 });
   }
 
-  const totalCombinations = selectedHeroes.length * selectedSwatches.length;
+  // Decide job creation strategy:
+  //   - If at least one selected hero has design/size tags AND the project has
+  //     resolved variantes (multi-tamano like limpiapies/alfombras), use the
+  //     resolver: 1 job per swatch with the best-matching hero.
+  //   - Otherwise, fall back to legacy cross product (heroes x swatches).
+  const useResolver =
+    anyHeroHasTags(selectedHeroes) &&
+    Array.isArray((project.metadata as { variantes?: ProjectVariant[] } | null)?.variantes);
+
+  const variantes = useResolver
+    ? ((project.metadata as { variantes: ProjectVariant[] }).variantes)
+    : [];
+  const variantBySku = new Map(variantes.map((v) => [v.sku.toUpperCase(), v]));
+
+  const skipBrandSet = new Set(skipBrandHeroIds);
+
+  type JobInsert = {
+    batch_id: string;
+    hero_shot_id: string;
+    swatch_id: string;
+    status: 'pending';
+    attempt: 0;
+    prompt_adjustment?: string;
+  };
+  let jobs: JobInsert[] = [];
+  let totalCombinations = 0;
+  const skippedSwatches: { sku?: string; name: string; reason: string }[] = [];
+  const resolverDecisions: Record<string, number> = {
+    exact: 0,
+    design_only: 0,
+    size_only: 0,
+    generic: 0,
+  };
+
+  if (useResolver) {
+    for (const swatch of selectedSwatches) {
+      const sku = (swatch.sku_suffix || '').toUpperCase();
+      const variant = sku ? variantBySku.get(sku) : undefined;
+      const design = variant?.color_slug || null;
+      const size = sku ? extractSizeFromSku(sku) : null;
+      const resolved = resolveHeroForVariant(selectedHeroes, design, size);
+      if (!resolved) {
+        skippedSwatches.push({
+          sku: swatch.sku_suffix,
+          name: swatch.name,
+          reason: 'no hero matches design+size tags',
+        });
+        continue;
+      }
+      resolverDecisions[resolved.tier] = (resolverDecisions[resolved.tier] || 0) + 1;
+      jobs.push({
+        batch_id: '',
+        hero_shot_id: resolved.hero.id,
+        swatch_id: swatch.id,
+        status: 'pending',
+        attempt: 0,
+        ...(skipBrandSet.has(resolved.hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
+      });
+    }
+    totalCombinations = jobs.length;
+  } else {
+    for (const hero of selectedHeroes) {
+      for (const swatch of selectedSwatches) {
+        jobs.push({
+          batch_id: '',
+          hero_shot_id: hero.id,
+          swatch_id: swatch.id,
+          status: 'pending',
+          attempt: 0,
+          ...(skipBrandSet.has(hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
+        });
+      }
+    }
+    totalCombinations = jobs.length;
+  }
+
+  if (totalCombinations === 0) {
+    return NextResponse.json(
+      {
+        error: 'No jobs created',
+        reason: 'resolver could not match any swatch to a hero',
+        skipped: skippedSwatches,
+      },
+      { status: 400 }
+    );
+  }
 
   // Create batch
   const { data: batch, error: batchError } = await supabase
@@ -179,18 +270,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: batchError?.message || 'Failed to create batch' }, { status: 500 });
   }
 
-  // Create individual jobs for selected heroes x selected swatches
-  const skipBrandSet = new Set(skipBrandHeroIds);
-  const jobs = selectedHeroes.flatMap((hero) =>
-    selectedSwatches.map((swatch) => ({
-      batch_id: batch.id,
-      hero_shot_id: hero.id,
-      swatch_id: swatch.id,
-      status: 'pending' as const,
-      attempt: 0,
-      ...(skipBrandSet.has(hero.id) ? { prompt_adjustment: 'SKIP_BRAND' } : {}),
-    }))
-  );
+  jobs = jobs.map((j) => ({ ...j, batch_id: batch.id }));
 
   const { error: jobsError } = await supabase
     .from('generation_jobs')
@@ -209,5 +289,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
   });
 
-  return NextResponse.json(batch, { status: 201 });
+  return NextResponse.json(
+    {
+      ...batch,
+      _resolver: useResolver
+        ? { mode: 'resolver', decisions: resolverDecisions, skipped: skippedSwatches }
+        : { mode: 'cross_product' },
+    },
+    { status: 201 }
+  );
 }
