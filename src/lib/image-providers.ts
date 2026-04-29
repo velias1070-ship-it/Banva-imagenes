@@ -40,6 +40,16 @@ export interface ProviderSelectionContext {
   attempt: number;
   /** Legacy: prefer the Pro Gemini model when GPT-2 isn't picked. */
   useProModel?: boolean;
+  /**
+   * BENCHMARKING ONLY (Sprint 3 golden set).
+   * When set, generateImageSmart skips routing-rules entirely and dispatches
+   * the request directly to MODEL_REGISTRY[forcedModelId].adapter. The
+   * legacy fallback to GPT-2 is also skipped — the benchmark is supposed
+   * to test exactly the model it was told to test.
+   * Do NOT use this in production code paths. Routing decisions belong in
+   * routing-rules.json, not in callers.
+   */
+  forcedModelId?: ProviderId;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -224,7 +234,10 @@ export async function generateImageSmart(
   req: GeminiGenerateRequest,
   ctx: ProviderSelectionContext,
 ): Promise<GeminiGenerateResult & SmartGenerateExtras> {
-  const modelId = selectModelId(ctx);
+  // forcedModelId (Sprint 3 golden set) bypasses routing AND the GPT-2
+  // safety-net fallback. Benchmark callers must see the result of the
+  // model they asked for, not a recovery substitute.
+  const modelId = ctx.forcedModelId ?? selectModelId(ctx);
   const entry = resolveModelEntry(modelId);
   const unifiedReq = toUnifiedRequest(req, ctx.category);
 
@@ -233,8 +246,10 @@ export async function generateImageSmart(
 
   // Recoverable-error fallback to GPT-2 — preserve the existing safety net.
   // Only triggers when the failed attempt was a Gemini model AND ENABLE_GPT_IMAGE_2=1.
+  // Skipped under forcedModelId so benchmarks measure the requested model.
   if (
-    !result.success
+    !ctx.forcedModelId
+    && !result.success
     && entry.providerFamily === 'gemini'
     && process.env.ENABLE_GPT_IMAGE_2 === '1'
     && isRecoverable(result.error)
