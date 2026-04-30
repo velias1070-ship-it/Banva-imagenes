@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { COST_PER_IMAGE_USD } from '@/lib/constants';
 
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+function getBaseUrl() {
+  return (
+    process.env.APP_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+    'http://localhost:3000'
+  );
+}
 
 interface RouteContext {
   params: Promise<{ id: string; swatchId: string }>;
@@ -14,13 +22,21 @@ interface RouteContext {
 // reutilizando los mismos output_storage_path (mismas imagenes ya generadas).
 // No genera nada nuevo en Gemini — solo copia filas de generation_jobs.
 //
-// Body: { target_swatch_ids: string[] }
+// Body:
+//   { target_swatch_ids: string[],
+//     also_publish_to_ml?: boolean,    // default false — cuando true, sube las
+//                                       // fotos clonadas a las publicaciones ML
+//                                       // de cada swatch destino
+//     publish_mode?: 'prepend' | 'append' | 'replace' }
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id: projectId, swatchId } = await context.params;
   const body = await request.json().catch(() => ({}));
   const targetIds: string[] = Array.isArray(body.target_swatch_ids)
     ? body.target_swatch_ids.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
     : [];
+  const alsoPublishToMl: boolean = body.also_publish_to_ml === true;
+  const publishMode: 'prepend' | 'append' | 'replace' =
+    body.publish_mode === 'append' || body.publish_mode === 'replace' ? body.publish_mode : 'prepend';
 
   if (targetIds.length === 0) {
     return NextResponse.json({ error: 'target_swatch_ids requerido' }, { status: 400 });
@@ -95,15 +111,38 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
   }
 
-  const { error: insErr } = await supabase.from('generation_jobs').insert(newJobs);
+  const { data: insertedJobs, error: insErr } = await supabase
+    .from('generation_jobs')
+    .insert(newJobs)
+    .select('id');
   if (insErr) {
     // rollback the batch
     await supabase.from('generation_batches').delete().eq('id', batch.id);
     return NextResponse.json({ error: insErr.message }, { status: 500 });
   }
 
-  // estimated_cost_usd was 0 because we don't pay Gemini, but we keep the value field for traceability
   void COST_PER_IMAGE_USD;
+
+  // Optionally push the cloned images to MercadoLibre right after cloning.
+  // Reuses /api/ml/publish so all the merge/dedupe/order logic stays in one
+  // place. Each target swatch with an ML listing gets its pictures updated.
+  let publishResult: unknown = null;
+  if (alsoPublishToMl && insertedJobs?.length) {
+    try {
+      const publishRes = await fetch(`${getBaseUrl()}/api/ml/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId,
+          job_ids: insertedJobs.map((j) => j.id),
+          mode: publishMode,
+        }),
+      });
+      publishResult = await publishRes.json().catch(() => ({ error: 'invalid json' }));
+    } catch (err) {
+      publishResult = { error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   return NextResponse.json({
     ok: true,
@@ -111,5 +150,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     source_jobs: sourceJobs.length,
     targets: targets.length,
     jobs_inserted: newJobs.length,
+    publish: publishResult,
   });
 }

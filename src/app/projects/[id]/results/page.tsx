@@ -131,6 +131,7 @@ export default function ResultsPage() {
   const [siblingReplicateSource, setSiblingReplicateSource] = useState<SwatchResultGroup | null>(null);
   const [siblingReplicateTargets, setSiblingReplicateTargets] = useState<Set<string>>(new Set());
   const [siblingReplicateRunning, setSiblingReplicateRunning] = useState(false);
+  const [siblingReplicateAlsoPublish, setSiblingReplicateAlsoPublish] = useState(false);
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -979,7 +980,7 @@ export default function ResultsPage() {
     setSiblingReplicateOpen(true);
   }
 
-  async function submitSiblingReplicate() {
+  async function submitSiblingReplicate(alsoPublish: boolean) {
     if (!siblingReplicateSource || siblingReplicateTargets.size === 0) return;
     setSiblingReplicateRunning(true);
     try {
@@ -988,7 +989,10 @@ export default function ResultsPage() {
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ target_swatch_ids: Array.from(siblingReplicateTargets) }),
+          body: JSON.stringify({
+            target_swatch_ids: Array.from(siblingReplicateTargets),
+            also_publish_to_ml: alsoPublish,
+          }),
         }
       );
       const data = await res.json();
@@ -996,12 +1000,21 @@ export default function ResultsPage() {
         toast.error(data.error || 'No se pudo replicar');
         return;
       }
-      toast.success(
-        `Replicado ${data.source_jobs} fotos a ${data.targets} swatch${data.targets !== 1 ? 'es' : ''}`
-      );
+      const baseMsg = `Replicado ${data.source_jobs} fotos a ${data.targets} swatch${data.targets !== 1 ? 'es' : ''}`;
+      if (alsoPublish && data.publish) {
+        const p = data.publish as { success?: number; errors?: number; total_new_images?: number };
+        if (p.success !== undefined) {
+          toast.success(`${baseMsg} · ${p.total_new_images ?? 0} fotos subidas a ${p.success} publicaciones ML${p.errors ? ` (${p.errors} errores)` : ''}`);
+        } else {
+          toast.success(`${baseMsg} (publicación ML: ver consola)`);
+        }
+      } else {
+        toast.success(baseMsg);
+      }
       setSiblingReplicateOpen(false);
       setSiblingReplicateSource(null);
       setSiblingReplicateTargets(new Set());
+      setSiblingReplicateAlsoPublish(false);
       fetchResults();
     } catch {
       toast.error('Error de red');
@@ -3169,6 +3182,36 @@ export default function ResultsPage() {
               </div>
             );
           })()}
+          {/* Targets con publicación ML — cuántas se subirían */}
+          {siblingReplicateSource && siblingReplicateTargets.size > 0 && (() => {
+            const targetsWithMl = Array.from(siblingReplicateTargets).filter((sid) => {
+              const tg = groups.find((g) => g.swatch.id === sid);
+              return !!tg?.ml_listing;
+            });
+            const sourceApproved = siblingReplicateSource.jobs.filter((j) => j.status === 'approved').length;
+            return (
+              <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs">
+                <div className="flex items-start gap-2">
+                  <input
+                    id="sibling-also-publish"
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-purple-600"
+                    checked={siblingReplicateAlsoPublish}
+                    onChange={(e) => setSiblingReplicateAlsoPublish(e.target.checked)}
+                  />
+                  <label htmlFor="sibling-also-publish" className="cursor-pointer flex-1">
+                    <div className="font-medium text-purple-900">
+                      También subir a MercadoLibre ({targetsWithMl.length} de {siblingReplicateTargets.size} con publicación)
+                    </div>
+                    <p className="text-purple-700 mt-0.5">
+                      Sube las {sourceApproved} fotos a las publicaciones ML de los swatches con `MLC` activo.
+                      Modo: prepend (nuevas primero). Las que no tengan publicación ML se replican igual pero no se suben.
+                    </p>
+                  </label>
+                </div>
+              </div>
+            );
+          })()}
           <DialogFooter>
             <Button
               variant="ghost"
@@ -3195,22 +3238,27 @@ export default function ResultsPage() {
                 setSiblingReplicateOpen(false);
                 setSiblingReplicateSource(null);
                 setSiblingReplicateTargets(new Set());
+                setSiblingReplicateAlsoPublish(false);
               }}
               disabled={siblingReplicateRunning}
             >
               Cancelar
             </Button>
             <Button
-              onClick={submitSiblingReplicate}
+              onClick={() => submitSiblingReplicate(siblingReplicateAlsoPublish)}
               disabled={siblingReplicateRunning || siblingReplicateTargets.size === 0}
-              className="bg-purple-600 hover:bg-purple-700"
+              className={siblingReplicateAlsoPublish ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'}
             >
               {siblingReplicateRunning ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : siblingReplicateAlsoPublish ? (
+                <Upload className="mr-2 h-4 w-4" />
               ) : (
                 <Copy className="mr-2 h-4 w-4" />
               )}
-              Replicar a {siblingReplicateTargets.size}
+              {siblingReplicateAlsoPublish
+                ? `Replicar y publicar a ML (${siblingReplicateTargets.size})`
+                : `Solo replicar (${siblingReplicateTargets.size})`}
             </Button>
           </DialogFooter>
         </DialogContent>
