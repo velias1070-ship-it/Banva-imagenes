@@ -126,6 +126,11 @@ export default function ResultsPage() {
   // When false (default), swatches marked as done are hidden from the main list.
   const [showDone, setShowDone] = useState(false);
   const [markingDoneIds, setMarkingDoneIds] = useState<Set<string>>(new Set());
+  // Replicate-to-siblings dialog state
+  const [siblingReplicateOpen, setSiblingReplicateOpen] = useState(false);
+  const [siblingReplicateSource, setSiblingReplicateSource] = useState<SwatchResultGroup | null>(null);
+  const [siblingReplicateTargets, setSiblingReplicateTargets] = useState<Set<string>>(new Set());
+  const [siblingReplicateRunning, setSiblingReplicateRunning] = useState(false);
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -953,6 +958,55 @@ export default function ResultsPage() {
       }
     } catch {
       toast.error('Error de conexion');
+    }
+  }
+
+  function openSiblingReplicate(source: SwatchResultGroup) {
+    // Pre-select empty siblings of the same design
+    const sourceDesign = designForGroup(source);
+    if (!sourceDesign) {
+      toast.error('Este swatch no tiene diseño identificable');
+      return;
+    }
+    const candidates = groups
+      .filter((g) => g.swatch.id !== source.swatch.id)
+      .filter((g) => designForGroup(g) === sourceDesign);
+    const empties = candidates
+      .filter((g) => g.jobs.filter((j) => j.status === 'approved').length === 0)
+      .map((g) => g.swatch.id);
+    setSiblingReplicateSource(source);
+    setSiblingReplicateTargets(new Set(empties));
+    setSiblingReplicateOpen(true);
+  }
+
+  async function submitSiblingReplicate() {
+    if (!siblingReplicateSource || siblingReplicateTargets.size === 0) return;
+    setSiblingReplicateRunning(true);
+    try {
+      const res = await fetch(
+        `/api/projects/${id}/swatches/${siblingReplicateSource.swatch.id}/replicate-to-siblings`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ target_swatch_ids: Array.from(siblingReplicateTargets) }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'No se pudo replicar');
+        return;
+      }
+      toast.success(
+        `Replicado ${data.source_jobs} fotos a ${data.targets} swatch${data.targets !== 1 ? 'es' : ''}`
+      );
+      setSiblingReplicateOpen(false);
+      setSiblingReplicateSource(null);
+      setSiblingReplicateTargets(new Set());
+      fetchResults();
+    } catch {
+      toast.error('Error de red');
+    } finally {
+      setSiblingReplicateRunning(false);
     }
   }
 
@@ -2482,6 +2536,30 @@ export default function ResultsPage() {
                         )}
                       </Button>
 
+                      {/* Replicar a hermanos (solo cuando hay aprobadas + hay hermanos) */}
+                      {approvedInGroup > 0 && (() => {
+                        const designKey = designForGroup(group);
+                        if (!designKey) return null;
+                        const siblingCount = groups.filter(
+                          (g) => g.swatch.id !== swatchId && designForGroup(g) === designKey
+                        ).length;
+                        if (siblingCount === 0) return null;
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-purple-600 hover:text-purple-800 hover:bg-purple-50"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openSiblingReplicate(group);
+                            }}
+                            title={`Replicar fotos a ${siblingCount} hermano${siblingCount !== 1 ? 's' : ''} del mismo diseño`}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        );
+                      })()}
+
                       {/* Import/upload actions (icon-only with tooltip) */}
                       <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
                           {(() => {
@@ -3000,6 +3078,139 @@ export default function ResultsPage() {
                 <Play className="mr-2 h-4 w-4" />
               )}
               Generar {genPreview ? genPreview.pairs.length - genPreview.excluded.size : 0}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Replicate to siblings dialog */}
+      <Dialog open={siblingReplicateOpen} onOpenChange={(open) => {
+        if (!open && !siblingReplicateRunning) {
+          setSiblingReplicateOpen(false);
+          setSiblingReplicateSource(null);
+          setSiblingReplicateTargets(new Set());
+        }
+      }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Replicar a hermanos del mismo diseño</DialogTitle>
+            <DialogDescription>
+              Clona las {siblingReplicateSource?.jobs.filter((j) => j.status === 'approved').length || 0} fotos aprobadas de
+              <span className="font-mono mx-1">{siblingReplicateSource?.swatch.sku_suffix}</span>
+              a los swatches que selecciones. Es instantáneo (no regenera).
+            </DialogDescription>
+          </DialogHeader>
+          {siblingReplicateSource && (() => {
+            const sourceDesign = designForGroup(siblingReplicateSource);
+            const siblings = groups.filter(
+              (g) =>
+                g.swatch.id !== siblingReplicateSource.swatch.id &&
+                designForGroup(g) === sourceDesign
+            );
+            if (siblings.length === 0) {
+              return <p className="text-sm text-muted-foreground py-4">No hay otros swatches del mismo diseño.</p>;
+            }
+            return (
+              <div className="max-h-[400px] overflow-y-auto space-y-2">
+                {siblings.map((g) => {
+                  const sku = (g.swatch.sku_suffix || '').toUpperCase();
+                  const v = sku ? variantBySku.get(sku) : undefined;
+                  const approvedCount = g.jobs.filter((j) => j.status === 'approved').length;
+                  const checked = siblingReplicateTargets.has(g.swatch.id);
+                  return (
+                    <label
+                      key={g.swatch.id}
+                      className={`flex items-center gap-3 rounded border p-2 cursor-pointer hover:bg-muted/50 ${checked ? 'border-purple-400 bg-purple-50' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSiblingReplicateTargets((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(g.swatch.id)) next.delete(g.swatch.id);
+                            else next.add(g.swatch.id);
+                            return next;
+                          });
+                        }}
+                        className="h-4 w-4 accent-purple-600"
+                      />
+                      {g.swatch.storage_path && (
+                        <img
+                          src={getStorageUrl(g.swatch.storage_path)}
+                          alt=""
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm truncate">
+                            {v?.bed_size || g.swatch.name}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] font-mono h-5 px-1.5">
+                            {g.swatch.sku_suffix}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {approvedCount > 0
+                            ? `${approvedCount} aprobada${approvedCount !== 1 ? 's' : ''} (se sumarán las nuevas)`
+                            : 'vacío'}
+                          {g.ml_listing && (
+                            <span className="ml-2 inline-flex items-center gap-1">
+                              · <span className={`inline-block h-1.5 w-1.5 rounded-full ${mlStatusDot(g.ml_listing.status)}`} />
+                              {g.ml_listing.status}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (!siblingReplicateSource) return;
+                const sourceDesign = designForGroup(siblingReplicateSource);
+                const all = groups
+                  .filter(
+                    (g) =>
+                      g.swatch.id !== siblingReplicateSource.swatch.id &&
+                      designForGroup(g) === sourceDesign
+                  )
+                  .map((g) => g.swatch.id);
+                setSiblingReplicateTargets(new Set(all));
+              }}
+              disabled={siblingReplicateRunning}
+            >
+              Marcar todos
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSiblingReplicateOpen(false);
+                setSiblingReplicateSource(null);
+                setSiblingReplicateTargets(new Set());
+              }}
+              disabled={siblingReplicateRunning}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={submitSiblingReplicate}
+              disabled={siblingReplicateRunning || siblingReplicateTargets.size === 0}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {siblingReplicateRunning ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Copy className="mr-2 h-4 w-4" />
+              )}
+              Replicar a {siblingReplicateTargets.size}
             </Button>
           </DialogFooter>
         </DialogContent>
