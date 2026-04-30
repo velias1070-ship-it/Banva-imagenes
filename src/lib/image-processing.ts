@@ -854,25 +854,108 @@ export async function compositeHeroOverlays(
         .png()
         .toBuffer();
 
-  const PAD = 4;
+  // Filter invalid bboxes once.
+  const valid = bboxes.filter(
+    (b) => Number.isFinite(b.x) && Number.isFinite(b.y) && Number.isFinite(b.width) && Number.isFinite(b.height) && b.width > 0 && b.height > 0,
+  );
+  if (valid.length === 0) return baseBuffer;
+
+  // ── Cluster bboxes by Y-proximity ──
+  // Bboxes within 200px vertical gap are part of the same UI element (a
+  // logo block, a cartel, a header bar). Compositing the *cluster* as one
+  // alpha-masked region eliminates per-word rectangular halos that the
+  // earlier per-bbox approach produced.
+  const sorted = [...valid].sort((a, b) => a.y - b.y);
+  const clusters: typeof sorted[] = [];
+  let current: typeof sorted = [];
+  let lastBottom = -Infinity;
+  for (const b of sorted) {
+    const gap = b.y - lastBottom;
+    if (gap > 200 && current.length > 0) {
+      clusters.push(current);
+      current = [];
+    }
+    current.push(b);
+    lastBottom = Math.max(lastBottom, b.y + b.height);
+  }
+  if (current.length > 0) clusters.push(current);
+
+  // Tunables — kept aggressive enough to remove fabric halos without eating
+  // soft anti-aliased text edges. NEAR/FAR define the chroma-key ramp.
+  const GROUP_PAD = 30;
+  const NEAR_DIST = 14;
+  const FAR_DIST = 50;
+  const CORNER_SAMPLE = 12;
+
   const composites: import('sharp').OverlayOptions[] = [];
-  for (const b of bboxes) {
-    if (!Number.isFinite(b.x) || !Number.isFinite(b.y) || !Number.isFinite(b.width) || !Number.isFinite(b.height)) continue;
-    const x = Math.max(0, Math.round(b.x - PAD));
-    const y = Math.max(0, Math.round(b.y - PAD));
-    const w = Math.min(W - x, Math.round(b.width + PAD * 2));
-    const h = Math.min(H - y, Math.round(b.height + PAD * 2));
-    if (w <= 0 || h <= 0) continue;
-    const region = await sharp(heroBuffer)
-      .extract({ left: x, top: y, width: w, height: h })
-      .png()
-      .toBuffer();
-    composites.push({ input: region, left: x, top: y });
+
+  for (const group of clusters) {
+    // Union bbox + pad — the corners of this rect should land outside the
+    // panel/logo and inside the hero's surrounding fabric, so they sample
+    // the "background to remove" cleanly.
+    const ux = Math.min(...group.map((b) => b.x));
+    const uy = Math.min(...group.map((b) => b.y));
+    const ur = Math.max(...group.map((b) => b.x + b.width));
+    const ub = Math.max(...group.map((b) => b.y + b.height));
+    const left = Math.max(0, Math.round(ux - GROUP_PAD));
+    const top = Math.max(0, Math.round(uy - GROUP_PAD));
+    const right = Math.min(W, Math.round(ur + GROUP_PAD));
+    const bottom = Math.min(H, Math.round(ub + GROUP_PAD));
+    const cw = right - left;
+    const ch = bottom - top;
+    if (cw <= 0 || ch <= 0) continue;
+
+    // Sample BG from the four corners (each CORNER_SAMPLE × CORNER_SAMPLE).
+    const cs = Math.min(CORNER_SAMPLE, Math.floor(Math.min(cw, ch) / 2));
+    if (cs <= 0) continue;
+    const cornerRects = [
+      { left, top, width: cs, height: cs },
+      { left: right - cs, top, width: cs, height: cs },
+      { left, top: bottom - cs, width: cs, height: cs },
+      { left: right - cs, top: bottom - cs, width: cs, height: cs },
+    ];
+    let bgR = 0, bgG = 0, bgB = 0;
+    for (const c of cornerRects) {
+      const stats = await sharp(heroBuffer).extract(c).stats();
+      bgR += stats.channels[0].mean;
+      bgG += stats.channels[1].mean;
+      bgB += stats.channels[2].mean;
+    }
+    bgR /= 4; bgG /= 4; bgB /= 4;
+
+    // Build alpha-masked patch by chroma-keying the sampled BG.
+    const { data, info } = await sharp(heroBuffer)
+      .extract({ left, top, width: cw, height: ch })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const inCh = info.channels;
+    const out = Buffer.alloc(cw * ch * 4);
+    for (let i = 0; i < cw * ch; i++) {
+      const idx = i * inCh;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const dr = r - bgR;
+      const dg = g - bgG;
+      const db = b - bgB;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+      let alpha: number;
+      if (dist <= NEAR_DIST) alpha = 0;
+      else if (dist >= FAR_DIST) alpha = 255;
+      else alpha = Math.round(((dist - NEAR_DIST) / (FAR_DIST - NEAR_DIST)) * 255);
+      out[i * 4] = r;
+      out[i * 4 + 1] = g;
+      out[i * 4 + 2] = b;
+      out[i * 4 + 3] = alpha;
+    }
+    const patch = await sharp(out, { raw: { width: cw, height: ch, channels: 4 } }).png().toBuffer();
+    composites.push({ input: patch, left, top });
   }
 
   if (composites.length === 0) return baseBuffer;
 
   const composited = await sharp(baseBuffer).composite(composites).png().toBuffer();
-  console.log(`[image-processing] Restored ${composites.length} hero overlay regions onto generated output`);
+  console.log(`[image-processing] Restored ${composites.length} clustered overlay regions (alpha-masked) onto generated output`);
   return composited;
 }
