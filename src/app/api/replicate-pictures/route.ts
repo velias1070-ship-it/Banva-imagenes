@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
   const targetSkus: string[] | undefined = body.target_skus;
   const targetItemIds: string[] | undefined = body.target_item_ids;
   const selectedPictureIds: string[] | undefined = body.selected_picture_ids;
-  const mode: 'replace_all' | 'swap_positions' | 'append' = body.mode || 'replace_all';
+  const mode: 'replace_all' | 'swap_positions' | 'keep_cover' | 'append' = body.mode || 'replace_all';
   const positionMappings: Array<{ source_index: number; target_index: number }> | undefined = body.position_mappings;
   const deletedTargetPictureIds: string[] | undefined = body.deleted_target_picture_ids;
 
@@ -362,6 +362,49 @@ export async function POST(request: NextRequest) {
           title: targetItem.title,
           status: 'ok',
           pictures_set: swappedCount,
+        });
+      } else if (mode === 'keep_cover') {
+        // --- Keep cover mode ---
+        // Preserve target's first picture (cover), then replace ALL the rest
+        // with the selected source pictures (FE excludes source[0] from the
+        // selection — same effect as "todas menos la portada del source").
+        const targetItem = await mlGet<MlItemResponse>(
+          `/items/${targetItemId}?attributes=id,title,pictures`
+        );
+        if (!targetItem?.pictures?.length) {
+          results.push({ sku: target.label, item_id: targetItemId, title: targetItem?.title || null, status: 'error', pictures_set: 0, error: 'Target has no pictures' });
+          continue;
+        }
+
+        // Selected source pics in source order
+        const selectedSourcePics = (selectedPictureIds && selectedPictureIds.length > 0)
+          ? sourceItem.pictures.filter((p) => selectedPictureIds.includes(p.id))
+          : sourceItem.pictures.slice(1); // fallback: skip source's cover by default
+        if (selectedSourcePics.length === 0) {
+          results.push({ sku: target.label, item_id: targetItemId, title: targetItem.title, status: 'error', pictures_set: 0, error: 'Sin fotos del source para replicar' });
+          continue;
+        }
+
+        const uploadedPictures: Array<{ id: string }> = [];
+        for (const sp of selectedSourcePics) {
+          const url = sp.secure_url.replace(/-O\.(\w+)$/, '-F.$1');
+          const uploaded = await mlUploadImageFromUrl(url);
+          uploadedPictures.push({ id: uploaded.id });
+        }
+
+        const mergedPictures = [
+          { id: targetItem.pictures[0].id },
+          ...uploadedPictures,
+        ];
+
+        await mlPut(`/items/${targetItemId}`, { pictures: mergedPictures });
+
+        results.push({
+          sku: target.label,
+          item_id: targetItemId,
+          title: targetItem.title,
+          status: 'ok',
+          pictures_set: mergedPictures.length,
         });
       } else {
         // --- Replace all mode ---

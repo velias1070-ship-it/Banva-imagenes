@@ -1004,10 +1004,10 @@ export default function ResultsPage() {
   async function submitSiblingReplicate() {
     if (!siblingReplicateSource?.ml_listing) return;
     if (siblingReplicateTargets.size === 0) return;
-    // keep_cover is a UX-only mode → we always send swap_positions to the
-    // backend, and additionally drop the source's position 0 from the
-    // selected list so target's cover stays put.
-    const backendMode = siblingReplicateMode === 'keep_cover' ? 'swap_positions' : siblingReplicateMode;
+    // keep_cover preserves target's cover and replaces the rest with ALL the
+    // selected source pictures (FE auto-excludes source[0] from the selection
+    // so el "resto" no incluye la portada del source).
+    const backendMode = siblingReplicateMode;
     const selectedPictureIds = siblingReplicateMlOrder.filter((id, idx) => {
       if (siblingReplicateMlExcluded.has(id)) return false;
       if (siblingReplicateMode === 'keep_cover' && idx === 0) return false;
@@ -1069,6 +1069,13 @@ export default function ResultsPage() {
               .map((pid) => sourceById.get(pid))
               .filter((p): p is (typeof sourcePics)[number] => !!p)
               .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+          } else if (backendMode === 'keep_cover') {
+            // target.cover preservada + todas las del source seleccionadas
+            const adds = selectedPictureIds
+              .map((pid) => sourceById.get(pid))
+              .filter((p): p is (typeof sourcePics)[number] => !!p)
+              .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+            nextPics = existing.length > 0 ? [existing[0], ...adds] : adds;
           } else if (backendMode === 'swap_positions') {
             // same-position swap: source[i] reemplaza target[i] cuando i está
             // en selectedPositionMap. Las posiciones que no, quedan como están.
@@ -3499,7 +3506,7 @@ export default function ResultsPage() {
               <p className="text-[11px] text-purple-700">
                 {siblingReplicateMode === 'replace_all' && 'El destino queda SOLO con las fotos seleccionadas, en el orden natural del ML del source.'}
                 {siblingReplicateMode === 'swap_positions' && 'Cada posición seleccionada del source reemplaza la misma posición en el destino. Las posiciones que destildés se quedan como están en el destino. Ej: para mantener portada del destino, destildá la portada del source.'}
-                {siblingReplicateMode === 'keep_cover' && 'Conserva la portada (posición 1) del destino. La portada del source se descarta automáticamente y el resto de las posiciones se swappean. Atajo de "swap por posición" sin la portada.'}
+                {siblingReplicateMode === 'keep_cover' && 'Conserva la portada (posición 1) del destino y reemplaza TODO el resto con las fotos seleccionadas del source (su portada se descarta automáticamente). El destino queda con [portada propia + todas las del source menos la portada].'}
                 {siblingReplicateMode === 'append' && 'Las fotos seleccionadas se suman al final de las existentes del destino, sin tocar las que ya están.'}
               </p>
             </div>
