@@ -76,8 +76,9 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
         .order('display_order'),
       supabase
         .from('hero_shots')
-        .select('id, slot_position, shot_type, display_order, applies_to_designs, applies_to_sizes')
-        .eq('project_id', projectId),
+        .select('id, filename, storage_path, slot_position, shot_type, display_order, applies_to_designs, applies_to_sizes')
+        .eq('project_id', projectId)
+        .order('display_order'),
       supabase.from('generation_batches').select('id').eq('project_id', projectId),
     ]);
 
@@ -189,6 +190,8 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
     swatches: swatchEntries,
     heroes: (heroes || []).map((h) => ({
       id: h.id,
+      filename: h.filename,
+      storage_path: h.storage_path,
       shot_type: h.shot_type,
       display_order: h.display_order,
       slot_position: h.slot_position,

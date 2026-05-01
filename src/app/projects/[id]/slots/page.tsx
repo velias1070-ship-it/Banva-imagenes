@@ -37,6 +37,8 @@ interface SwatchEntry {
 
 interface Hero {
   id: string;
+  filename: string;
+  storage_path: string;
   shot_type: string | null;
   display_order: number;
   slot_position: number | null;
@@ -275,6 +277,15 @@ export default function ProjectSlotsPage() {
             </Button>
           )}
         </div>
+      )}
+
+      {hasSlots && state.heroes.length > 0 && (
+        <HeroSlotAssigner
+          projectId={id}
+          heroes={state.heroes}
+          slots={state.slots}
+          onUpdated={load}
+        />
       )}
 
       {!hasSlots && (
@@ -539,3 +550,104 @@ function SlotEditorDialog({
     </Dialog>
   );
 }
+
+// ── Hero → Slot assignment panel ──
+
+function HeroSlotAssigner({
+  projectId,
+  heroes,
+  slots,
+  onUpdated,
+}: {
+  projectId: string;
+  heroes: Hero[];
+  slots: Slot[];
+  onUpdated: () => void;
+}) {
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+
+  async function setSlot(heroId: string, slotPos: number | null) {
+    setSavingId(heroId);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/heroes/${heroId}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slot_position: slotPos }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Error guardando');
+        return;
+      }
+      toast.success(slotPos ? `Hero asignado al slot ${slotPos}` : 'Hero sin slot');
+      onUpdated();
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  const assigned = heroes.filter((h) => h.slot_position).length;
+  const total = heroes.length;
+  const supabaseBase = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  return (
+    <div className="rounded-lg border bg-white">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50"
+      >
+        <div className="flex items-center gap-2 text-sm">
+          <Settings2 className="h-4 w-4 text-muted-foreground" />
+          <span className="font-semibold">Heroes → Slots</span>
+          <Badge variant="outline" className="text-[10px]">
+            {assigned}/{total} asignados
+          </Badge>
+        </div>
+        <span className="text-xs text-muted-foreground">{collapsed ? '▸ expandir' : '▾ colapsar'}</span>
+      </button>
+      {!collapsed && (
+        <div className="border-t p-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {heroes.map((h) => (
+            <div key={h.id} className="flex items-center gap-2 rounded border p-2">
+              <div className="h-12 w-12 flex-shrink-0 rounded overflow-hidden bg-gray-100">
+                {h.storage_path && (
+                  <img
+                    src={`${supabaseBase}/storage/v1/object/public/images/${h.storage_path}`}
+                    alt={h.filename}
+                    className="h-full w-full object-cover"
+                  />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium truncate" title={h.filename}>
+                  {h.filename}
+                </p>
+                <p className="text-[10px] text-muted-foreground">{h.shot_type || '—'}</p>
+              </div>
+              <Select
+                value={h.slot_position ? String(h.slot_position) : 'none'}
+                onValueChange={(v) => setSlot(h.id, v === 'none' ? null : parseInt(v, 10))}
+                disabled={savingId === h.id}
+              >
+                <SelectTrigger className="h-7 w-[100px] text-xs">
+                  <SelectValue placeholder="Slot" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— ninguno —</SelectItem>
+                  {slots.map((s) => (
+                    <SelectItem key={s.id} value={String(s.position)}>
+                      #{s.position} {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {savingId === h.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
