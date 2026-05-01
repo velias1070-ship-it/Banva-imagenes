@@ -172,6 +172,27 @@ export default function ProjectSlotsPage() {
     });
   }
 
+  function toggleColumn(position: number) {
+    if (!state) return;
+    const cellsInCol = visibleSwatches
+      .map((s) => ({ key: `${s.id}|${position}`, hasMl: !!cellByKey.get(`${s.id}|${position}`)?.ml }))
+      .filter((c) => c.hasMl);
+    if (cellsInCol.length === 0) {
+      toast.info('No hay fotos ML en esta columna');
+      return;
+    }
+    const allSelected = cellsInCol.every((c) => selected.has(c.key));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const c of cellsInCol) next.delete(c.key);
+      } else {
+        for (const c of cellsInCol) next.add(c.key);
+      }
+      return next;
+    });
+  }
+
   function clearSelection() {
     setSelected(new Set());
   }
@@ -341,7 +362,7 @@ export default function ProjectSlotsPage() {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        💡 <span className="font-medium">Click</span> en una celda con foto ML para moverla de slot · <span className="font-medium">Shift+Click</span> para seleccionar varias y moverlas en bloque
+        💡 <span className="font-medium">Click</span> en celda con foto ML = mover · <span className="font-medium">Shift+Click</span> = multi-seleccionar · <span className="font-medium">Click en header de columna</span> = seleccionar toda la columna
       </p>
 
       {/* Filters */}
@@ -422,17 +443,36 @@ export default function ProjectSlotsPage() {
                 <th className="sticky left-0 z-20 bg-muted border-r border-b px-3 py-2 text-left font-medium min-w-[200px]">
                   Variante
                 </th>
-                {state.slots.map((slot) => (
-                  <th key={slot.id} className="border-b border-r px-2 py-2 text-center font-medium min-w-[80px]">
-                    <div className="font-semibold">#{slot.position}</div>
-                    <div className="font-normal text-muted-foreground truncate max-w-[100px]" title={slot.name}>
-                      {slot.name}
-                    </div>
-                    {slot.size_dependent && (
-                      <Badge variant="outline" className="mt-0.5 text-[8px] h-3 px-1">por-tamaño</Badge>
-                    )}
-                  </th>
-                ))}
+                {state.slots.map((slot) => {
+                  const colCells = visibleSwatches
+                    .map((s) => ({ key: `${s.id}|${slot.position}`, hasMl: !!cellByKey.get(`${s.id}|${slot.position}`)?.ml }))
+                    .filter((c) => c.hasMl);
+                  const colSelectedCount = colCells.filter((c) => selected.has(c.key)).length;
+                  const allColSelected = colCells.length > 0 && colSelectedCount === colCells.length;
+                  return (
+                    <th
+                      key={slot.id}
+                      className={`border-b border-r px-2 py-2 text-center font-medium min-w-[80px] cursor-pointer select-none transition ${
+                        allColSelected ? 'bg-blue-200' : colSelectedCount > 0 ? 'bg-blue-100' : 'hover:bg-muted/70'
+                      }`}
+                      onClick={() => toggleColumn(slot.position)}
+                      title={`Click: ${allColSelected ? 'deseleccionar' : 'seleccionar'} ${colCells.length} foto(s) ML de esta columna`}
+                    >
+                      <div className="font-semibold">#{slot.position}</div>
+                      <div className="font-normal text-muted-foreground truncate max-w-[100px]" title={slot.name}>
+                        {slot.name}
+                      </div>
+                      {slot.size_dependent && (
+                        <Badge variant="outline" className="mt-0.5 text-[8px] h-3 px-1">por-tamaño</Badge>
+                      )}
+                      {colCells.length > 0 && (
+                        <div className="text-[9px] text-muted-foreground mt-0.5">
+                          {colSelectedCount > 0 ? `${colSelectedCount}/` : ''}{colCells.length} ML
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
