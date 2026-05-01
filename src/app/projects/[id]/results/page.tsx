@@ -998,7 +998,12 @@ export default function ResultsPage() {
 
   async function submitSiblingReplicate() {
     if (!siblingReplicateSource || siblingReplicateTargets.size === 0) return;
-    const selectedPictureIds = siblingReplicateMlOrder.filter((id) => !siblingReplicateMlExcluded.has(id));
+    const selectedPictureIds = siblingReplicateMlOrder.filter((id, idx) => {
+      if (siblingReplicateMlExcluded.has(id)) return false;
+      // keep_cover: source position 0 (its own cover) is auto-skipped
+      if (siblingReplicateMode === 'keep_cover' && idx === 0) return false;
+      return true;
+    });
     if (selectedPictureIds.length === 0) {
       toast.error('Seleccioná al menos una foto');
       return;
@@ -3254,7 +3259,13 @@ export default function ResultsPage() {
                 return next;
               });
             };
-            const includedCount = siblingReplicateMlOrder.filter((pid) => !siblingReplicateMlExcluded.has(pid)).length;
+            // In keep_cover mode the source's position 0 (its own cover) is
+            // auto-excluded — pushing it would just shove it into the dest's
+            // position 2, which is rarely what the user wants.
+            const isAutoExcluded = (idx: number) => siblingReplicateMode === 'keep_cover' && idx === 0;
+            const isEffectivelyExcluded = (pid: string, idx: number) =>
+              siblingReplicateMlExcluded.has(pid) || isAutoExcluded(idx);
+            const includedCount = siblingReplicateMlOrder.filter((pid, idx) => !isEffectivelyExcluded(pid, idx)).length;
             return (
               <div className="rounded-md border p-3 space-y-2">
                 <div className="flex items-center justify-between">
@@ -3287,10 +3298,11 @@ export default function ResultsPage() {
                   {siblingReplicateMlOrder.map((pid, idx) => {
                     const pic = picMap.get(pid);
                     if (!pic) return null;
-                    const excluded = siblingReplicateMlExcluded.has(pid);
+                    const autoExcluded = isAutoExcluded(idx);
+                    const excluded = isEffectivelyExcluded(pid, idx);
                     const includedIdx = siblingReplicateMlOrder
                       .slice(0, idx + 1)
-                      .filter((id) => !siblingReplicateMlExcluded.has(id)).length;
+                      .filter((id, i) => !isEffectivelyExcluded(id, i)).length;
                     return (
                       <div
                         key={pid}
@@ -3308,7 +3320,8 @@ export default function ResultsPage() {
                             });
                           }}
                           className="h-4 w-4 accent-purple-600"
-                          disabled={siblingReplicateRunning}
+                          disabled={siblingReplicateRunning || autoExcluded}
+                          title={autoExcluded ? 'En modo "Mantener portada del destino" la portada del source no se replica' : undefined}
                         />
                         <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-mono ${excluded ? 'bg-muted text-muted-foreground' : 'bg-purple-100 text-purple-900'}`}>
                           {excluded ? '—' : includedIdx}
@@ -3321,6 +3334,11 @@ export default function ResultsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="text-xs font-medium truncate">
                             Posición ML {idx + 1}
+                            {autoExcluded && (
+                              <span className="ml-1 text-[10px] font-normal text-amber-700">
+                                · portada del source (auto-descartada)
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-muted-foreground truncate font-mono">
                             {pid}
@@ -3379,7 +3397,7 @@ export default function ResultsPage() {
               </div>
               <p className="text-[11px] text-purple-700">
                 {siblingReplicateMode === 'replace' && 'El destino quedará SOLO con las fotos seleccionadas, en el orden definido.'}
-                {siblingReplicateMode === 'keep_cover' && 'Conserva la posición 1 (portada) actual del destino y reemplaza el resto con las fotos seleccionadas. Tip: deseleccioná la portada del source si no querés que se duplique.'}
+                {siblingReplicateMode === 'keep_cover' && 'Conserva la portada (posición 1) actual del destino y reemplaza el resto. La portada del source se descarta automáticamente — solo se replican las que vienen después.'}
                 {siblingReplicateMode === 'prepend' && 'Las fotos seleccionadas se agregan al inicio. Las existentes del destino quedan después.'}
                 {siblingReplicateMode === 'append' && 'Las fotos seleccionadas se agregan al final, después de las existentes del destino.'}
               </p>
@@ -3420,7 +3438,11 @@ export default function ResultsPage() {
               Cancelar
             </Button>
             {(() => {
-              const includedCount = siblingReplicateMlOrder.filter((id) => !siblingReplicateMlExcluded.has(id)).length;
+              const includedCount = siblingReplicateMlOrder.filter((id, idx) => {
+                if (siblingReplicateMlExcluded.has(id)) return false;
+                if (siblingReplicateMode === 'keep_cover' && idx === 0) return false;
+                return true;
+              }).length;
               return (
                 <Button
                   onClick={submitSiblingReplicate}
