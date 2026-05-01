@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
-  ImageIcon, RotateCcw, ChevronDown, ChevronRight,
+  ImageIcon, RotateCcw, ChevronDown, ChevronUp, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
   Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
   Palette, Copy, Play,
@@ -130,6 +130,10 @@ export default function ResultsPage() {
   const [siblingReplicateOpen, setSiblingReplicateOpen] = useState(false);
   const [siblingReplicateSource, setSiblingReplicateSource] = useState<SwatchResultGroup | null>(null);
   const [siblingReplicateTargets, setSiblingReplicateTargets] = useState<Set<string>>(new Set());
+  // Source photo selection — ordered list of source job IDs to clone. Drives both
+  // the order of cloned rows and the order of pictures pushed to ML on the target.
+  const [siblingReplicateJobOrder, setSiblingReplicateJobOrder] = useState<string[]>([]);
+  const [siblingReplicateJobExcluded, setSiblingReplicateJobExcluded] = useState<Set<string>>(new Set());
   const [siblingReplicateRunning, setSiblingReplicateRunning] = useState(false);
   const [siblingReplicateAlsoPublish, setSiblingReplicateAlsoPublish] = useState(false);
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
@@ -975,13 +979,29 @@ export default function ResultsPage() {
     const empties = candidates
       .filter((g) => g.jobs.filter((j) => j.status === 'approved').length === 0)
       .map((g) => g.swatch.id);
+    // Seed the source-photo order with approved jobs sorted by ML's natural priority
+    // (main → lifestyle → detail → doblada → flatlay). User can reorder/exclude.
+    const SHOT_PRIORITY: Record<string, number> = { main: 0, lifestyle: 1, detail: 2, doblada: 3, flatlay: 4 };
+    const orderedJobs = [...source.jobs.filter((j) => j.status === 'approved')].sort((a, b) => {
+      const pa = SHOT_PRIORITY[a.hero_shot?.shot_type || ''] ?? 99;
+      const pb = SHOT_PRIORITY[b.hero_shot?.shot_type || ''] ?? 99;
+      if (pa !== pb) return pa - pb;
+      return a.id.localeCompare(b.id);
+    });
     setSiblingReplicateSource(source);
     setSiblingReplicateTargets(new Set(empties));
+    setSiblingReplicateJobOrder(orderedJobs.map((j) => j.id));
+    setSiblingReplicateJobExcluded(new Set());
     setSiblingReplicateOpen(true);
   }
 
   async function submitSiblingReplicate(alsoPublish: boolean) {
     if (!siblingReplicateSource || siblingReplicateTargets.size === 0) return;
+    const selectedJobIds = siblingReplicateJobOrder.filter((id) => !siblingReplicateJobExcluded.has(id));
+    if (selectedJobIds.length === 0) {
+      toast.error('Seleccioná al menos una foto');
+      return;
+    }
     setSiblingReplicateRunning(true);
     try {
       const res = await fetch(
@@ -991,6 +1011,7 @@ export default function ResultsPage() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             target_swatch_ids: Array.from(siblingReplicateTargets),
+            source_job_ids: selectedJobIds,
             also_publish_to_ml: alsoPublish,
           }),
         }
@@ -1015,6 +1036,8 @@ export default function ResultsPage() {
       setSiblingReplicateSource(null);
       setSiblingReplicateTargets(new Set());
       setSiblingReplicateAlsoPublish(false);
+      setSiblingReplicateJobOrder([]);
+      setSiblingReplicateJobExcluded(new Set());
       fetchResults();
     } catch {
       toast.error('Error de red');
@@ -3132,15 +3155,17 @@ export default function ResultsPage() {
           setSiblingReplicateOpen(false);
           setSiblingReplicateSource(null);
           setSiblingReplicateTargets(new Set());
+          setSiblingReplicateJobOrder([]);
+          setSiblingReplicateJobExcluded(new Set());
         }
       }}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Replicar a hermanos del mismo diseño</DialogTitle>
             <DialogDescription>
-              Clona las {siblingReplicateSource?.jobs.filter((j) => j.status === 'approved').length || 0} fotos aprobadas de
+              Clona las fotos aprobadas de
               <span className="font-mono mx-1">{siblingReplicateSource?.swatch.sku_suffix}</span>
-              a los swatches que selecciones. Es instantáneo (no regenera).
+              a los swatches que selecciones, en el orden que definas. Es instantáneo (no regenera).
             </DialogDescription>
           </DialogHeader>
           {siblingReplicateSource && (() => {
@@ -3212,13 +3237,123 @@ export default function ResultsPage() {
               </div>
             );
           })()}
+          {/* Source photo selector — pick which approved jobs to clone, and in
+              what order. Order drives both the cloned rows and the ML upload order. */}
+          {siblingReplicateSource && siblingReplicateJobOrder.length > 0 && (() => {
+            const jobMap = new Map(siblingReplicateSource.jobs.map((j) => [j.id, j]));
+            const move = (idx: number, delta: number) => {
+              setSiblingReplicateJobOrder((prev) => {
+                const next = [...prev];
+                const target = idx + delta;
+                if (target < 0 || target >= next.length) return prev;
+                [next[idx], next[target]] = [next[target], next[idx]];
+                return next;
+              });
+            };
+            const includedCount = siblingReplicateJobOrder.filter((id) => !siblingReplicateJobExcluded.has(id)).length;
+            return (
+              <div className="rounded-md border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium">Fotos a replicar ({includedCount} de {siblingReplicateJobOrder.length})</div>
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground underline"
+                      onClick={() => setSiblingReplicateJobExcluded(new Set())}
+                      disabled={siblingReplicateRunning}
+                    >
+                      Todas
+                    </button>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground underline"
+                      onClick={() => setSiblingReplicateJobExcluded(new Set(siblingReplicateJobOrder))}
+                      disabled={siblingReplicateRunning}
+                    >
+                      Ninguna
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  El orden define cómo se publicarán en las publicaciones ML del destino.
+                </p>
+                <div className="space-y-1 max-h-[280px] overflow-y-auto">
+                  {siblingReplicateJobOrder.map((jobId, idx) => {
+                    const job = jobMap.get(jobId);
+                    if (!job?.output_storage_path) return null;
+                    const excluded = siblingReplicateJobExcluded.has(jobId);
+                    const includedIdx = siblingReplicateJobOrder
+                      .slice(0, idx + 1)
+                      .filter((id) => !siblingReplicateJobExcluded.has(id)).length;
+                    return (
+                      <div
+                        key={jobId}
+                        className={`flex items-center gap-2 rounded border p-1.5 ${excluded ? 'opacity-40 bg-muted/30' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!excluded}
+                          onChange={() => {
+                            setSiblingReplicateJobExcluded((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(jobId)) next.delete(jobId);
+                              else next.add(jobId);
+                              return next;
+                            });
+                          }}
+                          className="h-4 w-4 accent-purple-600"
+                          disabled={siblingReplicateRunning}
+                        />
+                        <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-mono ${excluded ? 'bg-muted text-muted-foreground' : 'bg-purple-100 text-purple-900'}`}>
+                          {excluded ? '—' : includedIdx}
+                        </span>
+                        <img
+                          src={getStorageUrl(job.output_storage_path)}
+                          alt=""
+                          className="h-10 w-10 rounded object-cover bg-muted"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium truncate">
+                            {job.hero_shot?.shot_type || 'sin shot type'}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground truncate font-mono">
+                            {job.hero_shot?.filename || job.id.slice(0, 8)}
+                          </div>
+                        </div>
+                        <div className="flex flex-col">
+                          <button
+                            type="button"
+                            className="h-5 w-6 inline-flex items-center justify-center rounded hover:bg-muted disabled:opacity-30"
+                            onClick={() => move(idx, -1)}
+                            disabled={idx === 0 || siblingReplicateRunning}
+                            aria-label="Mover arriba"
+                          >
+                            <ChevronUp className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            className="h-5 w-6 inline-flex items-center justify-center rounded hover:bg-muted disabled:opacity-30"
+                            onClick={() => move(idx, 1)}
+                            disabled={idx === siblingReplicateJobOrder.length - 1 || siblingReplicateRunning}
+                            aria-label="Mover abajo"
+                          >
+                            <ChevronDown className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
           {/* Targets con publicación ML — cuántas se subirían */}
           {siblingReplicateSource && siblingReplicateTargets.size > 0 && (() => {
             const targetsWithMl = Array.from(siblingReplicateTargets).filter((sid) => {
               const tg = groups.find((g) => g.swatch.id === sid);
               return !!tg?.ml_listing;
             });
-            const sourceApproved = siblingReplicateSource.jobs.filter((j) => j.status === 'approved').length;
+            const includedCount = siblingReplicateJobOrder.filter((id) => !siblingReplicateJobExcluded.has(id)).length;
             return (
               <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs">
                 <div className="flex items-start gap-2">
@@ -3234,8 +3369,9 @@ export default function ResultsPage() {
                       También subir a MercadoLibre ({targetsWithMl.length} de {siblingReplicateTargets.size} con publicación)
                     </div>
                     <p className="text-purple-700 mt-0.5">
-                      Sube las {sourceApproved} fotos a las publicaciones ML de los swatches con `MLC` activo.
-                      Modo: prepend (nuevas primero). Las que no tengan publicación ML se replican igual pero no se suben.
+                      Sube las {includedCount} fotos seleccionadas a las publicaciones ML de los swatches con `MLC` activo,
+                      respetando el orden definido. Modo: prepend (nuevas primero).
+                      Las que no tengan publicación ML se replican igual pero no se suben.
                     </p>
                   </label>
                 </div>
@@ -3269,27 +3405,35 @@ export default function ResultsPage() {
                 setSiblingReplicateSource(null);
                 setSiblingReplicateTargets(new Set());
                 setSiblingReplicateAlsoPublish(false);
+                setSiblingReplicateJobOrder([]);
+                setSiblingReplicateJobExcluded(new Set());
               }}
               disabled={siblingReplicateRunning}
             >
               Cancelar
             </Button>
-            <Button
-              onClick={() => submitSiblingReplicate(siblingReplicateAlsoPublish)}
-              disabled={siblingReplicateRunning || siblingReplicateTargets.size === 0}
-              className={siblingReplicateAlsoPublish ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'}
-            >
-              {siblingReplicateRunning ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : siblingReplicateAlsoPublish ? (
-                <Upload className="mr-2 h-4 w-4" />
-              ) : (
-                <Copy className="mr-2 h-4 w-4" />
-              )}
-              {siblingReplicateAlsoPublish
-                ? `Replicar y publicar a ML (${siblingReplicateTargets.size})`
-                : `Solo replicar (${siblingReplicateTargets.size})`}
-            </Button>
+            {(() => {
+              const includedCount = siblingReplicateJobOrder.filter((id) => !siblingReplicateJobExcluded.has(id)).length;
+              const total = includedCount * siblingReplicateTargets.size;
+              return (
+                <Button
+                  onClick={() => submitSiblingReplicate(siblingReplicateAlsoPublish)}
+                  disabled={siblingReplicateRunning || siblingReplicateTargets.size === 0 || includedCount === 0}
+                  className={siblingReplicateAlsoPublish ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'}
+                >
+                  {siblingReplicateRunning ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : siblingReplicateAlsoPublish ? (
+                    <Upload className="mr-2 h-4 w-4" />
+                  ) : (
+                    <Copy className="mr-2 h-4 w-4" />
+                  )}
+                  {siblingReplicateAlsoPublish
+                    ? `Replicar y publicar a ML (${total})`
+                    : `Solo replicar (${total})`}
+                </Button>
+              );
+            })()}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -24,6 +24,10 @@ interface RouteContext {
 //
 // Body:
 //   { target_swatch_ids: string[],
+//     source_job_ids?: string[],       // optional, ordered. When provided, only
+//                                       // these source jobs are cloned, in this
+//                                       // exact order. The order is preserved
+//                                       // when uploading to ML on the targets.
 //     also_publish_to_ml?: boolean,    // default false — cuando true, sube las
 //                                       // fotos clonadas a las publicaciones ML
 //                                       // de cada swatch destino
@@ -34,6 +38,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const targetIds: string[] = Array.isArray(body.target_swatch_ids)
     ? body.target_swatch_ids.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
     : [];
+  const sourceJobIdsInput: string[] | null = Array.isArray(body.source_job_ids)
+    ? body.source_job_ids.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
+    : null;
   const alsoPublishToMl: boolean = body.also_publish_to_ml === true;
   const publishMode: 'prepend' | 'append' | 'replace' =
     body.publish_mode === 'append' || body.publish_mode === 'replace' ? body.publish_mode : 'prepend';
@@ -55,15 +62,30 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (tgtErr) return NextResponse.json({ error: tgtErr.message }, { status: 500 });
   if (!targets?.length) return NextResponse.json({ error: 'targets no encontrados' }, { status: 404 });
 
-  const { data: sourceJobs, error: srcErr } = await supabase
+  const { data: sourceJobsRaw, error: srcErr } = await supabase
     .from('generation_jobs')
-    .select('hero_shot_id, prompt_text, prompt_metadata, output_storage_path, qa_score, qa_detail, qa_feedback, gemini_model_used, generation_time_ms, prompt_adjustment, status, attempt')
+    .select('id, hero_shot_id, prompt_text, prompt_metadata, output_storage_path, qa_score, qa_detail, qa_feedback, gemini_model_used, generation_time_ms, prompt_adjustment, status, attempt')
     .eq('swatch_id', swatchId)
     .eq('status', 'approved')
     .not('output_storage_path', 'is', null);
   if (srcErr) return NextResponse.json({ error: srcErr.message }, { status: 500 });
-  if (!sourceJobs?.length) {
+  if (!sourceJobsRaw?.length) {
     return NextResponse.json({ error: 'el swatch fuente no tiene jobs aprobados' }, { status: 400 });
+  }
+
+  // If source_job_ids was provided, filter + preserve that order.
+  // Otherwise use all approved jobs (order arbitrary — DB return order).
+  let sourceJobs: typeof sourceJobsRaw;
+  if (sourceJobIdsInput && sourceJobIdsInput.length > 0) {
+    const byId = new Map(sourceJobsRaw.map((j) => [j.id, j]));
+    sourceJobs = sourceJobIdsInput
+      .map((id) => byId.get(id))
+      .filter((j): j is (typeof sourceJobsRaw)[number] => j !== undefined);
+    if (sourceJobs.length === 0) {
+      return NextResponse.json({ error: 'ningun source_job_id valido para este swatch' }, { status: 400 });
+    }
+  } else {
+    sourceJobs = sourceJobsRaw;
   }
 
   const total = sourceJobs.length * targets.length;
@@ -136,6 +158,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
           project_id: projectId,
           job_ids: insertedJobs.map((j) => j.id),
           mode: publishMode,
+          // Cloned jobs were inserted in the user-defined order — preserve it
+          // through publish so each target's ML photos appear in that order.
+          preserve_input_order: true,
         }),
       });
       publishResult = await publishRes.json().catch(() => ({ error: 'invalid json' }));

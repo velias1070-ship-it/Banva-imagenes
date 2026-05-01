@@ -20,6 +20,10 @@ interface PublishRequest {
   dry_run?: boolean;
   mode?: InsertMode;        // default: 'prepend'
   max_pictures?: number;    // default: 10 (ML max varies by category)
+  // When true, ignore the shot_type/display_order sort and publish jobs in the
+  // exact order they appear in `job_ids`. Used by replicate-to-siblings so the
+  // user-defined order survives all the way to ML.
+  preserve_input_order?: boolean;
 }
 
 interface PublishResult {
@@ -60,7 +64,12 @@ export async function POST(request: NextRequest) {
     dry_run = false,
     mode = 'prepend',
     max_pictures = 10,
+    preserve_input_order = false,
   } = body;
+
+  const inputOrder = preserve_input_order && job_ids?.length
+    ? new Map(job_ids.map((id, idx) => [id, idx]))
+    : null;
 
   if (!project_id) {
     return NextResponse.json({ error: 'project_id is required' }, { status: 400 });
@@ -159,16 +168,22 @@ export async function POST(request: NextRequest) {
     bySwatch.set(groupKey, group.jobs);
   }
 
-  // Sort each group by shot type priority
+  // Sort each group. Default: by shot type priority (main → lifestyle → ...).
+  // When preserve_input_order is set, use the position in the inputOrder map
+  // instead — that's the order the caller passed via job_ids.
   for (const [, swatchJobs] of bySwatch) {
-    swatchJobs.sort((a, b) => {
-      const heroA = heroMap.get(a.hero_shot_id);
-      const heroB = heroMap.get(b.hero_shot_id);
-      const orderA = SHOT_ORDER[heroA?.shot_type || ''] ?? 99;
-      const orderB = SHOT_ORDER[heroB?.shot_type || ''] ?? 99;
-      if (orderA !== orderB) return orderA - orderB;
-      return (heroA?.display_order ?? 99) - (heroB?.display_order ?? 99);
-    });
+    if (inputOrder) {
+      swatchJobs.sort((a, b) => (inputOrder.get(a.id) ?? 9999) - (inputOrder.get(b.id) ?? 9999));
+    } else {
+      swatchJobs.sort((a, b) => {
+        const heroA = heroMap.get(a.hero_shot_id);
+        const heroB = heroMap.get(b.hero_shot_id);
+        const orderA = SHOT_ORDER[heroA?.shot_type || ''] ?? 99;
+        const orderB = SHOT_ORDER[heroB?.shot_type || ''] ?? 99;
+        if (orderA !== orderB) return orderA - orderB;
+        return (heroA?.display_order ?? 99) - (heroB?.display_order ?? 99);
+      });
+    }
   }
 
   // 6. Get ML item mappings
