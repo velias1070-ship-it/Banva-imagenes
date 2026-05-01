@@ -3,13 +3,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, RefreshCw, Settings2, Loader2, ImageIcon, ExternalLink, Download } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Settings2, Loader2, ImageIcon, ExternalLink, Download, MoveRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 interface Slot {
   id: string;
@@ -91,6 +92,9 @@ export default function ProjectSlotsPage() {
   const [filterTipo, setFilterTipo] = useState<string>('all');
   const [filterColor, setFilterColor] = useState<string>('all');
   const [filterSize, setFilterSize] = useState<string>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMoving, setBulkMoving] = useState(false);
+  const [singleMoving, setSingleMoving] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,6 +159,68 @@ export default function ProjectSlotsPage() {
       }
     } finally {
       setAdopting(false);
+    }
+  }
+
+  function toggleSelected(swatchId: string, position: number) {
+    const key = `${swatchId}|${position}`;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
+  }
+
+  async function moveCells(moves: Array<{ swatch_id: string; from_position: number; to_position: number }>) {
+    const res = await fetch(`/api/projects/${id}/slots/move-ml`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ moves }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast.error(data.error || 'Error moviendo');
+      return false;
+    }
+    const total = (data.moved || 0) + (data.swapped || 0);
+    toast.success(
+      `${total} celda(s) actualizada(s)${data.swapped ? ` · ${data.swapped} swap` : ''}${
+        data.error_count ? ` · ${data.error_count} error(es)` : ''
+      }`
+    );
+    return true;
+  }
+
+  async function handleSingleMove(swatchId: string, fromPos: number, toPos: number) {
+    const key = `${swatchId}|${fromPos}`;
+    setSingleMoving(key);
+    try {
+      const ok = await moveCells([{ swatch_id: swatchId, from_position: fromPos, to_position: toPos }]);
+      if (ok) await load();
+    } finally {
+      setSingleMoving(null);
+    }
+  }
+
+  async function handleBulkMove(toPos: number) {
+    const moves = Array.from(selected).map((key) => {
+      const [swatch_id, posStr] = key.split('|');
+      return { swatch_id, from_position: parseInt(posStr, 10), to_position: toPos };
+    });
+    setBulkMoving(true);
+    try {
+      const ok = await moveCells(moves);
+      if (ok) {
+        clearSelection();
+        await load();
+      }
+    } finally {
+      setBulkMoving(false);
     }
   }
 
@@ -274,6 +340,10 @@ export default function ProjectSlotsPage() {
         ))}
       </div>
 
+      <p className="text-[11px] text-muted-foreground">
+        💡 <span className="font-medium">Click</span> en una celda con foto ML para moverla de slot · <span className="font-medium">Shift+Click</span> para seleccionar varias y moverlas en bloque
+      </p>
+
       {/* Filters */}
       {(filterOptions.tipos.length > 1 || filterOptions.colors.length > 1 || filterOptions.sizes.length > 1) && (
         <div className="flex gap-2 flex-wrap">
@@ -392,23 +462,31 @@ export default function ProjectSlotsPage() {
                     const cell = cellByKey.get(`${swatch.id}|${slot.position}`);
                     const status = cell?.status || 'empty';
                     const thumb = cell?.system?.url || cell?.ml?.url;
+                    const cellKey = `${swatch.id}|${slot.position}`;
+                    const isSelected = selected.has(cellKey);
+                    const isMoving = singleMoving === cellKey;
+                    const hasMl = !!cell?.ml;
+                    const otherSlots = state.slots.filter((s) => s.position !== slot.position);
                     return (
                       <td
                         key={slot.id}
-                        className="border-r border-b p-1 text-center"
-                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}`}
+                        className={`border-r border-b p-1 text-center ${isSelected ? 'bg-blue-100' : ''}`}
+                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}${hasMl ? ' · click para mover' : ''}`}
                         onMouseEnter={(e) => {
                           if (thumb) setHoverCell({ url: thumb, x: e.clientX, y: e.clientY });
                         }}
                         onMouseLeave={() => setHoverCell(null)}
                       >
-                        <div className={`relative h-12 w-12 mx-auto rounded ${STATUS_COLOR[status]} ${thumb ? 'overflow-hidden' : ''}`}>
-                          {thumb && (
-                            <img src={thumb} alt="" className="h-full w-full object-cover" />
-                          )}
-                          {!thumb && <div className="h-full w-full" />}
-                          <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white ${STATUS_COLOR[status]}`} />
-                        </div>
+                        <CellAction
+                          hasMl={hasMl}
+                          isSelected={isSelected}
+                          isMoving={isMoving}
+                          status={status}
+                          thumb={thumb}
+                          onShiftClick={() => toggleSelected(swatch.id, slot.position)}
+                          onMoveTo={(toPos) => handleSingleMove(swatch.id, slot.position, toPos)}
+                          slots={otherSlots}
+                        />
                       </td>
                     );
                   })}
@@ -426,6 +504,33 @@ export default function ProjectSlotsPage() {
           style={{ left: hoverCell.x + 16, top: hoverCell.y + 16, maxWidth: '320px' }}
         >
           <img src={hoverCell.url} alt="" className="rounded max-h-[300px]" />
+        </div>
+      )}
+
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-full border bg-white shadow-2xl px-4 py-2">
+          <span className="text-sm font-medium">{selected.size} celda{selected.size !== 1 ? 's' : ''} seleccionada{selected.size !== 1 ? 's' : ''}</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={bulkMoving}>
+                {bulkMoving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <MoveRight className="mr-1.5 h-3.5 w-3.5" />}
+                Mover a slot…
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="max-h-[300px] overflow-y-auto">
+              <DropdownMenuLabel>Mover a…</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {state.slots.map((s) => (
+                <DropdownMenuItem key={s.id} onClick={() => handleBulkMove(s.position)}>
+                  #{s.position} — {s.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm" variant="ghost" onClick={clearSelection}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
       )}
 
@@ -694,3 +799,69 @@ function HeroSlotAssigner({
   );
 }
 
+// ── Per-cell click action: dropdown for "mover a slot" ──
+
+function CellAction({
+  hasMl,
+  isSelected,
+  isMoving,
+  status,
+  thumb,
+  onShiftClick,
+  onMoveTo,
+  slots,
+}: {
+  hasMl: boolean;
+  isSelected: boolean;
+  isMoving: boolean;
+  status: CellStatus;
+  thumb: string | null | undefined;
+  onShiftClick: () => void;
+  onMoveTo: (toPos: number) => void;
+  slots: Slot[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  const visual = (
+    <div className={`relative h-12 w-12 mx-auto rounded ${STATUS_COLOR[status]} ${thumb ? 'overflow-hidden' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''} ${hasMl ? 'cursor-pointer' : 'cursor-default'}`}>
+      {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" />}
+      {!thumb && <div className="h-full w-full" />}
+      <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white ${STATUS_COLOR[status]}`} />
+      {isMoving && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/60">
+          <Loader2 className="h-3 w-3 animate-spin" />
+        </div>
+      )}
+    </div>
+  );
+
+  if (!hasMl) return visual;
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger
+        asChild
+        onClick={(e) => {
+          if (e.shiftKey) {
+            e.preventDefault();
+            onShiftClick();
+          }
+        }}
+      >
+        <button type="button" className="block">{visual}</button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center" className="max-h-[300px] overflow-y-auto">
+        <DropdownMenuLabel>Mover a slot…</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {slots.length === 0 && (
+          <DropdownMenuItem disabled>(sin otros slots)</DropdownMenuItem>
+        )}
+        {slots.map((s) => (
+          <DropdownMenuItem key={s.id} onClick={() => { onMoveTo(s.position); setOpen(false); }}>
+            #{s.position} — {s.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
