@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, RefreshCw, Settings2, Loader2, ImageIcon, ExternalLink } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Settings2, Loader2, ImageIcon, ExternalLink, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -84,6 +84,7 @@ export default function ProjectSlotsPage() {
   const [state, setState] = useState<State | null>(null);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [adopting, setAdopting] = useState(false);
   const [editingSlots, setEditingSlots] = useState(false);
   const [hoverCell, setHoverCell] = useState<{ url: string; x: number; y: number } | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | CellStatus>('all');
@@ -122,6 +123,38 @@ export default function ProjectSlotsPage() {
       }
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleAdoptFromMl() {
+    const onlyMlCount = state?.cells.filter((c) => c.status === 'only_ml').length || 0;
+    if (onlyMlCount === 0) {
+      toast.info('No hay fotos en ML pendientes de adoptar');
+      return;
+    }
+    if (!confirm(`Adoptar ${onlyMlCount} foto(s) de ML al sistema?\n\nSe descargan y quedan como jobs aprobados (sin gastar Gemini). Después podés replicar a hermanos, marcar listo, etc.`)) {
+      return;
+    }
+    setAdopting(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/slots/adopt-from-ml`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scope: 'only_ml' }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.adopted > 0) {
+          toast.success(`${data.adopted} foto(s) adoptadas al sistema${data.error_count ? ` · ${data.error_count} con error` : ''}`);
+        } else {
+          toast.info(data.message || 'Nada para adoptar');
+        }
+        await load();
+      } else {
+        toast.error(data.error || 'Error adoptando');
+      }
+    } finally {
+      setAdopting(false);
     }
   }
 
@@ -211,6 +244,16 @@ export default function ProjectSlotsPage() {
           <Button variant="outline" size="sm" onClick={handleImportMl} disabled={importing}>
             {importing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
             Importar ML
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAdoptFromMl}
+            disabled={adopting || counts.only_ml === 0}
+            title={counts.only_ml === 0 ? 'No hay fotos solo-ML para adoptar' : `Adoptar ${counts.only_ml} foto(s) ML al sistema`}
+          >
+            {adopting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+            Adoptar 🔵 al sistema {counts.only_ml > 0 ? `(${counts.only_ml})` : ''}
           </Button>
         </div>
       </div>
