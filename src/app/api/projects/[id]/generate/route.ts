@@ -239,7 +239,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const sku = (swatch.sku_suffix || '').toUpperCase();
       const variant = sku ? variantBySku.get(sku) : undefined;
       const design = variant?.color_slug || null;
-      const size = sku ? extractSizeFromSku(sku) : null;
+      // Preferir bed_size del variante (formato ML "2 plazas") sobre el SKU
+      // (formato "2.0 Plazas") — heroes traen tags en formato ML.
+      const size = variant?.bed_size || (sku ? extractSizeFromSku(sku) : null);
       const resolvedList = resolveHeroesForVariant(selectedHeroes, design, size);
       if (resolvedList.length === 0) {
         skippedSwatches.push({
