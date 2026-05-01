@@ -78,11 +78,18 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
     if (v.sku) variantBySku.set(v.sku.toUpperCase(), v);
   }
 
+  // Mismo dedup-key que /slots/generate: color+tipo (proyectos legacy guardan
+  // color_slug INCLUYENDO bed_size, lo que rompe el agrupamiento).
   const designOf = (sId: string): string | null => {
     const s = (swatches || []).find((x) => x.id === sId);
     if (!s) return null;
     const v = variantBySku.get((s.sku_suffix || '').toUpperCase());
-    return v?.color_slug || null;
+    if (!v) return null;
+    if (v.color || v.tipo) {
+      return `${(v.color || '').trim().toLowerCase()}|${(v.tipo || '').trim().toLowerCase()}`;
+    }
+    if (v.color_slug) return v.color_slug.replace(/-(\d+(-\d+)?-plazas?)$/i, '');
+    return null;
   };
 
   // 3. Cargar jobs existentes en esta columna
