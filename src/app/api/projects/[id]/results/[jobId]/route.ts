@@ -1250,13 +1250,21 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // overlays are byte-identical instead of Gemini-rerendered. Applies
     // across shot types (detail, lifestyle, etc.) because edit mode
     // preserves composition; no-op when no overlays exist.
+    //
+    // Excepción: sabanas. Flash en edit-mode ya preserva panel/logo/badge
+    // del hero sin ayuda, y el chroma-key del overlay sobre tela polar con
+    // highlights blancos los pega como smudges sobre la sabana teñida.
+    // Job 115caddb (mayo 2026): mismo hero+swatch que Job 13396077 (clean),
+    // pero overlay introdujo manchas blancas curvas siguiendo los pliegues.
+    // Ver scripts/test-overlay-old-vs-new.ts para reproducción.
     const heroOverlaysCount = ((heroShot as unknown as { text_elements?: unknown[] } | null)?.text_elements?.length) ?? 0;
     if (
       !isBrandOnly &&
       mode === 'edit' &&
       heroOverlaysCount > 0 &&
       heroShot &&
-      heroBuffer.length > 0
+      heroBuffer.length > 0 &&
+      category !== 'sabanas'
     ) {
       try {
         type Bbox = { text?: string; x: number; y: number; width: number; height: number };

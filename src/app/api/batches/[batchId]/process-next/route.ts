@@ -1263,12 +1263,20 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // original hero pixels into the result for each detected text bbox.
     // Safe across shot types because edit mode preserves composition and
     // the composite is a no-op when no overlays exist.
+    //
+    // Excepción: sabanas. Flash en edit-mode ya preserva panel/logo/badge
+    // del hero sin ayuda, y el chroma-key del overlay sobre tela polar con
+    // highlights blancos los pega como smudges sobre la sabana teñida.
+    // Job 115caddb (mayo 2026): mismo hero+swatch que Job 13396077 (clean),
+    // pero overlay introdujo manchas blancas curvas siguiendo los pliegues.
+    // Ver scripts/test-overlay-old-vs-new.ts para reproducción.
     const heroHasOverlays = (job.hero_shot?.text_elements as unknown[] | null)?.length ?? 0;
     if (
       !isBrandOnly &&
       effectiveMode === 'edit' &&
       heroHasOverlays > 0 &&
-      job.hero_shot?.id
+      job.hero_shot?.id &&
+      category !== 'sabanas'
     ) {
       try {
         type Bbox = { text?: string; x: number; y: number; width: number; height: number };
