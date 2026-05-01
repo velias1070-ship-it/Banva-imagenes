@@ -256,17 +256,53 @@ export default function ProjectSlotsPage() {
         return;
       }
       const cost = (preview.estimated_cost_usd as number).toFixed(2);
+      const dedup = preview.dedup_siblings || 0;
       const ok = confirm(
         `Generar slot #${position}?\n\n` +
-          `→ ${preview.generable} celda(s) a generar\n` +
-          `→ ${preview.skipped_count} skip (ya tienen contenido o sin hero match)\n` +
-          `→ Costo estimado: ~$${cost} USD\n\n` +
-          `Se encolan como batch normal — podés ver el progreso en /results.`
+          `→ ${preview.generable} celda(s) a generar con Gemini\n` +
+          (dedup > 0
+            ? `→ ${dedup} hermano(s) de mismo color → cubrir despues con "Replicar a hermanos" ($0)\n`
+            : '') +
+          `→ ${preview.skipped_count - dedup} skip (ya tienen contenido o sin hero match)\n` +
+          `→ Costo estimado Gemini: ~$${cost} USD\n\n` +
+          `Se encolan como batch normal — progreso en /results.`
       );
       if (!ok) return;
       const result = await generateRequest({ position }, false);
       if (!result) return;
-      toast.success(`${result.queued} jobs encolados (batch ${result.batch_id.slice(0, 8)})`);
+      toast.success(
+        `${result.queued} jobs encolados (batch ${result.batch_id.slice(0, 8)})${
+          (result.dedup_siblings || 0) > 0
+            ? ` · ${result.dedup_siblings} hermano(s) listos para replicar despues`
+            : ''
+        }`
+      );
+      await load();
+    } finally {
+      setGeneratingSlot(null);
+    }
+  }
+
+  async function handleReplicateSiblings(position: number) {
+    setGeneratingSlot(position);
+    try {
+      const res = await fetch(`/api/projects/${id}/slots/replicate-siblings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ position }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error replicando');
+        return;
+      }
+      if ((data.replicated || 0) === 0) {
+        toast.info(data.message || 'Nada para replicar');
+        return;
+      }
+      toast.success(
+        `${data.replicated} hermano(s) cubiertos desde ${data.sources} fuente(s) ($0 Gemini)`
+      );
       await load();
     } finally {
       setGeneratingSlot(null);
@@ -508,14 +544,20 @@ export default function ProjectSlotsPage() {
                 {state.slots.map((slot) => {
                   const colCellsAll = visibleSwatches.map((s) => {
                     const c = cellByKey.get(`${s.id}|${slot.position}`);
-                    return { key: `${s.id}|${slot.position}`, hasMl: !!c?.ml, isEmpty: (c?.status || 'empty') === 'empty' };
+                    return { key: `${s.id}|${slot.position}`, hasMl: !!c?.ml, isEmpty: (c?.status || 'empty') === 'empty', hasSystem: !!c?.system };
                   });
                   const colCells = colCellsAll.filter((c) => c.hasMl);
                   const emptyCount = colCellsAll.filter((c) => c.isEmpty).length;
+                  const filledSystemCount = colCellsAll.filter((c) => c.hasSystem).length;
                   const colSelectedCount = colCells.filter((c) => selected.has(c.key)).length;
                   const allColSelected = colCells.length > 0 && colSelectedCount === colCells.length;
                   const heroAssigned = state.heroes.some((h) => h.slot_position === slot.position);
                   const isGenerating = generatingSlot === slot.position;
+                  // "Replicar a hermanos" tiene sentido solo si:
+                  //   - el slot NO es por-tamaño (sino cada hermano es legitimamente distinto)
+                  //   - hay al menos un job aprobado en la columna
+                  //   - hay al menos un sibling vacio que cubrir
+                  const canReplicate = !slot.size_dependent && filledSystemCount > 0 && emptyCount > 0;
                   return (
                     <th
                       key={slot.id}
@@ -546,9 +588,23 @@ export default function ProjectSlotsPage() {
                           onClick={(e) => { e.stopPropagation(); handleGenerateColumn(slot.position); }}
                           disabled={isGenerating}
                           className="mt-1 w-full text-[9px] rounded bg-purple-100 hover:bg-purple-200 text-purple-900 px-1 py-0.5 disabled:opacity-50 transition"
-                          title={`Generar las ${emptyCount} celda(s) vacias usando el hero asignado`}
+                          title={
+                            slot.size_dependent
+                              ? `Generar las ${emptyCount} celda(s) vacías (slot por-tamaño: 1 job por celda)`
+                              : `Generar (1 job por color, los hermanos se cubren después con Replicar)`
+                          }
                         >
-                          {isGenerating ? '⏳ generando…' : `⚡ Generar (${emptyCount})`}
+                          {isGenerating ? '⏳ procesando…' : `⚡ Generar (${emptyCount})`}
+                        </button>
+                      )}
+                      {canReplicate && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReplicateSiblings(slot.position); }}
+                          disabled={isGenerating}
+                          className="mt-1 w-full text-[9px] rounded bg-emerald-100 hover:bg-emerald-200 text-emerald-900 px-1 py-0.5 disabled:opacity-50 transition"
+                          title={`Copiar fotos a hermanos del mismo color que estén vacíos en este slot ($0)`}
+                        >
+                          {isGenerating ? '⏳' : `↻ Replicar`}
                         </button>
                       )}
                       {emptyCount > 0 && !heroAssigned && (
