@@ -880,16 +880,18 @@ export async function compositeHeroOverlays(
   }
   if (current.length > 0) clusters.push(current);
 
-  // Tunables — kept aggressive enough to remove fabric halos without eating
-  // soft anti-aliased text edges. NEAR/FAR define the chroma-key ramp.
-  // ALPHA_BINARIZE_THRESHOLD: any ramp pixel below this becomes fully
-  // transparent — eliminates the partial-alpha halo strip that ramp output
-  // leaves around panels and logo blocks (visible as a lighter rectangle).
+  // Chroma-key tunables. Only pixels with RGB distance > effective threshold
+  // from the corner-sampled BG survive as opaque. With NEAR=14, FAR=80, BIN=100,
+  // the effective threshold is ~40 — aggressive enough to drop near-fabric
+  // panel backdrops *and* near-wall lamp/cabinet pixels that would otherwise
+  // get pasted as floating shapes on contrasting bases (e.g. malva on white).
+  // Trade-off: panel "container" rectangles are removed; text floats on the
+  // generated fabric color directly. Acceptable for the typical use case.
   const GROUP_PAD = 30;
   const NEAR_DIST = 14;
-  const FAR_DIST = 50;
+  const FAR_DIST = 80;
   const CORNER_SAMPLE = 12;
-  const ALPHA_BINARIZE_THRESHOLD = 60;
+  const ALPHA_BINARIZE_THRESHOLD = 100;
 
   const composites: import('sharp').OverlayOptions[] = [];
 
@@ -918,9 +920,12 @@ export async function compositeHeroOverlays(
       { left, top: bottom - cs, width: cs, height: cs },
       { left: right - cs, top: bottom - cs, width: cs, height: cs },
     ];
+    // sharp quirk: .extract(...).stats() returns stats of the SOURCE image,
+    // not the cropped region — must materialize to a buffer first.
     let bgR = 0, bgG = 0, bgB = 0;
     for (const c of cornerRects) {
-      const stats = await sharp(heroBuffer).extract(c).stats();
+      const cornerBuf = await sharp(heroBuffer).extract(c).toBuffer();
+      const stats = await sharp(cornerBuf).stats();
       bgR += stats.channels[0].mean;
       bgG += stats.channels[1].mean;
       bgB += stats.channels[2].mean;
