@@ -22,6 +22,10 @@ interface GenerateBody {
   cells?: CellTarget[];
   // dry_run=true: no crea batch, solo devuelve el plan (cuantas celdas, cost)
   dry_run?: boolean;
+  // force_regenerate=true: ignora el filtro de "celda ya ocupada" y regenera
+  // incluso celdas con job aprobado existente. Util cuando se redefine el slot
+  // con heroes nuevos y los jobs viejos quedan stale.
+  force_regenerate?: boolean;
 }
 
 interface PreviewItem {
@@ -140,9 +144,12 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
   // 3. Cargar celdas que ya tienen contenido (sistema aprobado/pending) para
   // saltarlas. Cargamos TODAS para que el dedup pueda chequear si algun hermano
   // del mismo design ya esta cubierto.
+  // Cuando force_regenerate=true, el set queda vacio (todas las celdas se
+  // consideran candidatas, y los jobs nuevos quedan como mas recientes).
   const batchIds = (batches || []).map((b) => b.id);
   const occupied = new Set<string>(); // `${swatch_id}|${position}` con job
-  if (batchIds.length > 0) {
+  const force = !!body.force_regenerate;
+  if (batchIds.length > 0 && !force) {
     const { data: jobs } = await supabase
       .from('generation_jobs')
       .select('swatch_id, hero_shot_id, status, output_storage_path')
@@ -362,7 +369,11 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     swatch_id: p.swatch_id,
     status: 'pending',
     attempt: 0,
-    prompt_metadata: { triggered_from: 'slots_grid', target_slot_position: p.position },
+    prompt_metadata: {
+      triggered_from: 'slots_grid',
+      target_slot_position: p.position,
+      ...(force ? { force_regenerate: true } : {}),
+    },
   }));
 
   const { error: jobsErr } = await supabase.from('generation_jobs').insert(jobs);

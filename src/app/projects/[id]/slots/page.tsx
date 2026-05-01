@@ -230,7 +230,10 @@ export default function ProjectSlotsPage() {
     }
   }
 
-  async function generateRequest(body: { position?: number; cells?: Array<{ swatch_id: string; position: number }> }, dryRun: boolean) {
+  async function generateRequest(
+    body: { position?: number; cells?: Array<{ swatch_id: string; position: number }>; force_regenerate?: boolean },
+    dryRun: boolean
+  ) {
     const res = await fetch(`/api/projects/${id}/slots/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -242,6 +245,34 @@ export default function ProjectSlotsPage() {
       return null;
     }
     return data;
+  }
+
+  async function handleRegenerateColumn(position: number) {
+    setGeneratingSlot(position);
+    try {
+      const preview = await generateRequest({ position, force_regenerate: true }, true);
+      if (!preview) return;
+      if (preview.generable === 0) {
+        toast.info('Ningun swatch matchea con los heroes del slot');
+        return;
+      }
+      const cost = (preview.estimated_cost_usd as number).toFixed(2);
+      const dedup = preview.dedup_siblings || 0;
+      const ok = confirm(
+        `⚠️ RE-GENERAR slot #${position} (sobreescribe lo existente)?\n\n` +
+          `→ ${preview.generable} jobs nuevos con Gemini (los anteriores quedan en historial)\n` +
+          (dedup > 0 ? `→ ${dedup} hermanos a replicar después ($0)\n` : '') +
+          `→ Costo estimado Gemini: ~$${cost} USD\n\n` +
+          `Las celdas existentes mostrarán las nuevas fotos cuando terminen (la celda toma el job más reciente).`
+      );
+      if (!ok) return;
+      const result = await generateRequest({ position, force_regenerate: true }, false);
+      if (!result) return;
+      toast.success(`${result.queued} jobs encolados (re-generación) — batch ${result.batch_id.slice(0, 8)}`);
+      await load();
+    } finally {
+      setGeneratingSlot(null);
+    }
   }
 
   async function handleGenerateColumn(position: number) {
@@ -595,6 +626,16 @@ export default function ProjectSlotsPage() {
                           }
                         >
                           {isGenerating ? '⏳ procesando…' : `⚡ Generar (${emptyCount})`}
+                        </button>
+                      )}
+                      {filledSystemCount > 0 && heroAssigned && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRegenerateColumn(slot.position); }}
+                          disabled={isGenerating}
+                          className="mt-1 w-full text-[9px] rounded bg-orange-100 hover:bg-orange-200 text-orange-900 px-1 py-0.5 disabled:opacity-50 transition"
+                          title={`Re-generar TODA la columna con los heroes actuales (sobreescribe las ${filledSystemCount} ya generadas)`}
+                        >
+                          {isGenerating ? '⏳' : `⟳ Re-generar`}
                         </button>
                       )}
                       {canReplicate && (
