@@ -340,17 +340,20 @@ export default function ProjectSlotsPage() {
     }
   }
 
-  async function handleGenerateCell(swatchId: string, position: number) {
+  async function handleGenerateCell(swatchId: string, position: number, force = false) {
     const key = `${swatchId}|${position}`;
     setSingleGenerating(key);
     try {
-      const result = await generateRequest({ cells: [{ swatch_id: swatchId, position }] }, false);
+      const result = await generateRequest(
+        { cells: [{ swatch_id: swatchId, position }], force_regenerate: force },
+        false
+      );
       if (!result) return;
       if (result.queued === 0) {
-        toast.info('No se pudo generar (sin hero match o ya existe)');
+        toast.info('No se pudo generar (sin hero match)');
         return;
       }
-      toast.success('Job encolado — se procesa en background');
+      toast.success(force ? 'Re-generación encolada — la celda se actualiza al terminar' : 'Job encolado — se procesa en background');
       await load();
     } finally {
       setSingleGenerating(null);
@@ -491,7 +494,7 @@ export default function ProjectSlotsPage() {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        💡 <span className="font-medium">Click</span> en celda con ML = mover · <span className="font-medium">Click en celda vacía</span> ⚡ = generar · <span className="font-medium">Shift+Click</span> = multi-seleccionar · <span className="font-medium">Click en header</span> = seleccionar columna · <span className="font-medium">⚡ Generar (N)</span> en header = generar columna entera
+        💡 Celda <span className="font-medium">vacía</span> = ⚡ generar · <span className="font-medium">con sistema</span> = ⟳ re-generar · <span className="font-medium">con ML</span> = mover slot · <span className="font-medium">Shift+Click</span> = multi-seleccionar · <span className="font-medium">Header</span> = seleccionar columna o ⚡⟳↻ por columna
       </p>
 
       {/* Filters */}
@@ -690,15 +693,17 @@ export default function ProjectSlotsPage() {
                     const isMoving = singleMoving === cellKey;
                     const isGenerating = singleGenerating === cellKey;
                     const hasMl = !!cell?.ml;
+                    const hasSystem = !!cell?.system;
                     const isEmpty = status === 'empty';
                     const heroForSlot = state.heroes.some((h) => h.slot_position === slot.position);
                     const canGenerate = isEmpty && heroForSlot;
+                    const canRegenerate = hasSystem && heroForSlot;
                     const otherSlots = state.slots.filter((s) => s.position !== slot.position);
                     return (
                       <td
                         key={slot.id}
                         className={`border-r border-b p-1 text-center ${isSelected ? 'bg-blue-100' : ''}`}
-                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}${hasMl ? ' · click para mover' : canGenerate ? ' · click para generar' : ''}`}
+                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}${hasMl ? ' · click = mover' : canRegenerate ? ' · click = re-generar' : canGenerate ? ' · click = generar' : ''}`}
                         onMouseEnter={(e) => {
                           if (thumb) setHoverCell({ url: thumb, x: e.clientX, y: e.clientY });
                         }}
@@ -706,7 +711,9 @@ export default function ProjectSlotsPage() {
                       >
                         <CellAction
                           hasMl={hasMl}
+                          hasSystem={hasSystem}
                           canGenerate={canGenerate}
+                          canRegenerate={canRegenerate}
                           isSelected={isSelected}
                           isMoving={isMoving}
                           isGenerating={isGenerating}
@@ -714,7 +721,8 @@ export default function ProjectSlotsPage() {
                           thumb={thumb}
                           onShiftClick={() => toggleSelected(swatch.id, slot.position)}
                           onMoveTo={(toPos) => handleSingleMove(swatch.id, slot.position, toPos)}
-                          onGenerate={() => handleGenerateCell(swatch.id, slot.position)}
+                          onGenerate={() => handleGenerateCell(swatch.id, slot.position, false)}
+                          onRegenerate={() => handleGenerateCell(swatch.id, slot.position, true)}
                           slots={otherSlots}
                         />
                       </td>
@@ -1033,7 +1041,9 @@ function HeroSlotAssigner({
 
 function CellAction({
   hasMl,
+  hasSystem,
   canGenerate,
+  canRegenerate,
   isSelected,
   isMoving,
   isGenerating,
@@ -1042,10 +1052,13 @@ function CellAction({
   onShiftClick,
   onMoveTo,
   onGenerate,
+  onRegenerate,
   slots,
 }: {
   hasMl: boolean;
+  hasSystem: boolean;
   canGenerate: boolean;
+  canRegenerate: boolean;
   isSelected: boolean;
   isMoving: boolean;
   isGenerating: boolean;
@@ -1054,14 +1067,15 @@ function CellAction({
   onShiftClick: () => void;
   onMoveTo: (toPos: number) => void;
   onGenerate: () => void;
+  onRegenerate: () => void;
   slots: Slot[];
 }) {
   const [open, setOpen] = useState(false);
-  const interactive = hasMl || canGenerate;
+  const interactive = hasMl || canGenerate || canRegenerate;
 
   const visual = (
     <div className={`relative h-12 w-12 mx-auto rounded ${STATUS_COLOR[status]} ${thumb ? 'overflow-hidden' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''} ${interactive ? 'cursor-pointer' : 'cursor-default'} group`}>
-      {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" />}
+      {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.2'; }} />}
       {!thumb && <div className="h-full w-full" />}
       <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white ${STATUS_COLOR[status]}`} />
       {canGenerate && !isGenerating && (
@@ -1077,10 +1091,10 @@ function CellAction({
     </div>
   );
 
-  if (!hasMl && !canGenerate) return visual;
+  if (!interactive) return visual;
 
   // Empty cell with hero assigned → click directly generates (no menu)
-  if (!hasMl && canGenerate) {
+  if (!hasMl && !hasSystem && canGenerate) {
     return (
       <button
         type="button"
@@ -1094,7 +1108,7 @@ function CellAction({
     );
   }
 
-  // Has ML photo → dropdown to move
+  // Has ML or system → dropdown with all available actions
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
@@ -1108,17 +1122,34 @@ function CellAction({
       >
         <button type="button" className="block">{visual}</button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="center" className="max-h-[300px] overflow-y-auto">
-        <DropdownMenuLabel>Mover a slot…</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {slots.length === 0 && (
-          <DropdownMenuItem disabled>(sin otros slots)</DropdownMenuItem>
+      <DropdownMenuContent align="center" className="max-h-[320px] overflow-y-auto">
+        {hasMl && (
+          <>
+            <DropdownMenuLabel>Mover foto ML a…</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {slots.length === 0 && (
+              <DropdownMenuItem disabled>(sin otros slots)</DropdownMenuItem>
+            )}
+            {slots.map((s) => (
+              <DropdownMenuItem key={s.id} onClick={() => { onMoveTo(s.position); setOpen(false); }}>
+                #{s.position} — {s.name}
+              </DropdownMenuItem>
+            ))}
+          </>
         )}
-        {slots.map((s) => (
-          <DropdownMenuItem key={s.id} onClick={() => { onMoveTo(s.position); setOpen(false); }}>
-            #{s.position} — {s.name}
-          </DropdownMenuItem>
-        ))}
+        {canRegenerate && (
+          <>
+            {hasMl && <DropdownMenuSeparator />}
+            <DropdownMenuLabel>Sistema</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => { onRegenerate(); setOpen(false); }}
+              className="text-orange-700"
+            >
+              ⟳ Re-generar esta foto
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
