@@ -696,7 +696,10 @@ export default function ResultsPage() {
       const sku = (sw.sku_suffix || '').toUpperCase();
       const variant = sku ? variantBySkuLocal.get(sku) : undefined;
       const design = variant?.color_slug || null;
-      const size = sku ? extractSizeFromSku(sku) : null;
+      // Preferir bed_size del variante (formato ML "2 plazas") sobre el parseo
+      // del SKU (formato "2.0 Plazas") — los heroes traen sus tags en formato
+      // ML, asi que si usamos extractSizeFromSku no matchean y se excluyen.
+      const size = variant?.bed_size || (sku ? extractSizeFromSku(sku) : null);
       const matched = resolveHeroesForVariant(projectHeroes, design, size);
       const list = matched.length > 0
         ? matched

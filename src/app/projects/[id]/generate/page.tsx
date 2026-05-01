@@ -213,7 +213,10 @@ export default function GeneratePage() {
       const sku = (sw.sku_suffix || '').toUpperCase();
       const variant = sku ? variantBySku.get(sku) : undefined;
       const design = variant?.color_slug || null;
-      const size = sku ? extractSizeFromSku(sku) : null;
+      // Preferir bed_size del variante (formato ML "2 plazas") sobre el parseo
+      // del SKU (formato "2.0 Plazas"). Los heroes etiquetados con tamaño
+      // traen el formato ML, asi que si usamos extractSizeFromSku no matchean.
+      const size = variant?.bed_size || (sku ? extractSizeFromSku(sku) : null);
       const list = resolveHeroesForVariant(selectedHeroes, design, size);
       if (list.length === 0) {
         skipped.push({ sku: sw.sku_suffix || undefined, name: sw.name });
