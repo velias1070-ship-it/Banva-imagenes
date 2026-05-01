@@ -15,7 +15,7 @@ function getInventorySupabase() {
   return createClient(url, key);
 }
 
-type Mode = 'replace' | 'prepend' | 'append';
+type Mode = 'replace' | 'prepend' | 'append' | 'keep_cover';
 
 interface MlPicture {
   id: string;
@@ -52,7 +52,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     ? body.picture_ids.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
     : [];
   const mode: Mode =
-    body.mode === 'prepend' || body.mode === 'append' || body.mode === 'replace' ? body.mode : 'replace';
+    body.mode === 'prepend' || body.mode === 'append' || body.mode === 'replace' || body.mode === 'keep_cover'
+      ? body.mode
+      : 'replace';
   const maxPictures: number = typeof body.max_pictures === 'number' && body.max_pictures > 0 ? body.max_pictures : 10;
 
   if (targetIds.length === 0) {
@@ -114,6 +116,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
           const newIds = new Set(newEntries.map((e) => e.id));
           const dedupedExisting = existing.filter((e) => !newIds.has(e.id));
           merged = [...newEntries, ...dedupedExisting].slice(0, maxPictures);
+        } else if (mode === 'keep_cover') {
+          // Preserve destination's cover (position 0) and replace everything
+          // after it with the new entries. If destination has no pictures yet,
+          // this collapses to plain replace.
+          const cover = existing.length > 0 ? [existing[0]] : [];
+          const dedupedNew = newEntries.filter((e) => e.id !== cover[0]?.id);
+          merged = [...cover, ...dedupedNew].slice(0, maxPictures);
         } else {
           // append
           const existingIds = new Set(existing.map((e) => e.id));

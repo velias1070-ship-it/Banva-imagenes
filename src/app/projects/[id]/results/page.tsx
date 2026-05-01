@@ -136,7 +136,7 @@ export default function ResultsPage() {
   const [siblingReplicateMlOrder, setSiblingReplicateMlOrder] = useState<string[]>([]);
   const [siblingReplicateMlExcluded, setSiblingReplicateMlExcluded] = useState<Set<string>>(new Set());
   const [siblingReplicateRunning, setSiblingReplicateRunning] = useState(false);
-  const [siblingReplicateMode, setSiblingReplicateMode] = useState<'prepend' | 'append' | 'replace'>('replace');
+  const [siblingReplicateMode, setSiblingReplicateMode] = useState<'prepend' | 'append' | 'replace' | 'keep_cover'>('replace');
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -3357,29 +3357,31 @@ export default function ResultsPage() {
           {siblingReplicateSource && siblingReplicateTargets.size > 0 && (
             <div className="rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
               <div className="text-xs font-medium text-purple-900">Modo de inserción en el destino</div>
-              <div className="flex gap-3 text-xs">
-                {(['replace', 'prepend', 'append'] as const).map((m) => (
-                  <label key={m} className="inline-flex items-center gap-1.5 cursor-pointer">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                {(['replace', 'keep_cover', 'prepend', 'append'] as const).map((m) => (
+                  <label key={m} className="inline-flex items-start gap-1.5 cursor-pointer">
                     <input
                       type="radio"
                       name="sibling-mode"
                       value={m}
                       checked={siblingReplicateMode === m}
                       onChange={() => setSiblingReplicateMode(m)}
-                      className="accent-purple-600"
+                      className="mt-0.5 accent-purple-600"
                     />
                     <span className="text-purple-900">
-                      {m === 'replace' ? 'Reemplazar todo' : m === 'prepend' ? 'Adelante (nuevas primero)' : 'Atrás (al final)'}
+                      {m === 'replace' && 'Reemplazar todo'}
+                      {m === 'keep_cover' && 'Mantener portada del destino'}
+                      {m === 'prepend' && 'Adelante (nuevas primero)'}
+                      {m === 'append' && 'Atrás (al final)'}
                     </span>
                   </label>
                 ))}
               </div>
               <p className="text-[11px] text-purple-700">
-                {siblingReplicateMode === 'replace'
-                  ? 'El destino quedará SOLO con las fotos seleccionadas, en el orden definido.'
-                  : siblingReplicateMode === 'prepend'
-                  ? 'Las fotos seleccionadas se agregan al inicio. Las existentes del destino quedan después.'
-                  : 'Las fotos seleccionadas se agregan al final, después de las existentes del destino.'}
+                {siblingReplicateMode === 'replace' && 'El destino quedará SOLO con las fotos seleccionadas, en el orden definido.'}
+                {siblingReplicateMode === 'keep_cover' && 'Conserva la posición 1 (portada) actual del destino y reemplaza el resto con las fotos seleccionadas. Tip: deseleccioná la portada del source si no querés que se duplique.'}
+                {siblingReplicateMode === 'prepend' && 'Las fotos seleccionadas se agregan al inicio. Las existentes del destino quedan después.'}
+                {siblingReplicateMode === 'append' && 'Las fotos seleccionadas se agregan al final, después de las existentes del destino.'}
               </p>
             </div>
           )}
