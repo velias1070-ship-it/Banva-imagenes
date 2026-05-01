@@ -95,6 +95,8 @@ export default function ProjectSlotsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMoving, setBulkMoving] = useState(false);
   const [singleMoving, setSingleMoving] = useState<string | null>(null);
+  const [generatingSlot, setGeneratingSlot] = useState<number | null>(null);
+  const [singleGenerating, setSingleGenerating] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -225,6 +227,66 @@ export default function ProjectSlotsPage() {
       if (ok) await load();
     } finally {
       setSingleMoving(null);
+    }
+  }
+
+  async function generateRequest(body: { position?: number; cells?: Array<{ swatch_id: string; position: number }> }, dryRun: boolean) {
+    const res = await fetch(`/api/projects/${id}/slots/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, dry_run: dryRun }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast.error(data.error || 'Error');
+      return null;
+    }
+    return data;
+  }
+
+  async function handleGenerateColumn(position: number) {
+    setGeneratingSlot(position);
+    try {
+      const preview = await generateRequest({ position }, true);
+      if (!preview) return;
+      if (preview.generable === 0) {
+        toast.info(
+          `Nada para generar en slot #${position} (${preview.skipped_count} ya tienen contenido o sin hero asignado)`
+        );
+        return;
+      }
+      const cost = (preview.estimated_cost_usd as number).toFixed(2);
+      const ok = confirm(
+        `Generar slot #${position}?\n\n` +
+          `→ ${preview.generable} celda(s) a generar\n` +
+          `→ ${preview.skipped_count} skip (ya tienen contenido o sin hero match)\n` +
+          `→ Costo estimado: ~$${cost} USD\n\n` +
+          `Se encolan como batch normal — podés ver el progreso en /results.`
+      );
+      if (!ok) return;
+      const result = await generateRequest({ position }, false);
+      if (!result) return;
+      toast.success(`${result.queued} jobs encolados (batch ${result.batch_id.slice(0, 8)})`);
+      await load();
+    } finally {
+      setGeneratingSlot(null);
+    }
+  }
+
+  async function handleGenerateCell(swatchId: string, position: number) {
+    const key = `${swatchId}|${position}`;
+    setSingleGenerating(key);
+    try {
+      const result = await generateRequest({ cells: [{ swatch_id: swatchId, position }] }, false);
+      if (!result) return;
+      if (result.queued === 0) {
+        toast.info('No se pudo generar (sin hero match o ya existe)');
+        return;
+      }
+      toast.success('Job encolado — se procesa en background');
+      await load();
+    } finally {
+      setSingleGenerating(null);
     }
   }
 
@@ -362,7 +424,7 @@ export default function ProjectSlotsPage() {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        💡 <span className="font-medium">Click</span> en celda con foto ML = mover · <span className="font-medium">Shift+Click</span> = multi-seleccionar · <span className="font-medium">Click en header de columna</span> = seleccionar toda la columna
+        💡 <span className="font-medium">Click</span> en celda con ML = mover · <span className="font-medium">Click en celda vacía</span> ⚡ = generar · <span className="font-medium">Shift+Click</span> = multi-seleccionar · <span className="font-medium">Click en header</span> = seleccionar columna · <span className="font-medium">⚡ Generar (N)</span> en header = generar columna entera
       </p>
 
       {/* Filters */}
@@ -444,30 +506,54 @@ export default function ProjectSlotsPage() {
                   Variante
                 </th>
                 {state.slots.map((slot) => {
-                  const colCells = visibleSwatches
-                    .map((s) => ({ key: `${s.id}|${slot.position}`, hasMl: !!cellByKey.get(`${s.id}|${slot.position}`)?.ml }))
-                    .filter((c) => c.hasMl);
+                  const colCellsAll = visibleSwatches.map((s) => {
+                    const c = cellByKey.get(`${s.id}|${slot.position}`);
+                    return { key: `${s.id}|${slot.position}`, hasMl: !!c?.ml, isEmpty: (c?.status || 'empty') === 'empty' };
+                  });
+                  const colCells = colCellsAll.filter((c) => c.hasMl);
+                  const emptyCount = colCellsAll.filter((c) => c.isEmpty).length;
                   const colSelectedCount = colCells.filter((c) => selected.has(c.key)).length;
                   const allColSelected = colCells.length > 0 && colSelectedCount === colCells.length;
+                  const heroAssigned = state.heroes.some((h) => h.slot_position === slot.position);
+                  const isGenerating = generatingSlot === slot.position;
                   return (
                     <th
                       key={slot.id}
-                      className={`border-b border-r px-2 py-2 text-center font-medium min-w-[80px] cursor-pointer select-none transition ${
+                      className={`border-b border-r px-2 py-2 text-center font-medium min-w-[80px] select-none transition ${
                         allColSelected ? 'bg-blue-200' : colSelectedCount > 0 ? 'bg-blue-100' : 'hover:bg-muted/70'
                       }`}
-                      onClick={() => toggleColumn(slot.position)}
-                      title={`Click: ${allColSelected ? 'deseleccionar' : 'seleccionar'} ${colCells.length} foto(s) ML de esta columna`}
                     >
-                      <div className="font-semibold">#{slot.position}</div>
-                      <div className="font-normal text-muted-foreground truncate max-w-[100px]" title={slot.name}>
-                        {slot.name}
+                      <div
+                        className="cursor-pointer"
+                        onClick={() => toggleColumn(slot.position)}
+                        title={`Click: ${allColSelected ? 'deseleccionar' : 'seleccionar'} ${colCells.length} foto(s) ML`}
+                      >
+                        <div className="font-semibold">#{slot.position}</div>
+                        <div className="font-normal text-muted-foreground truncate max-w-[100px]" title={slot.name}>
+                          {slot.name}
+                        </div>
+                        {slot.size_dependent && (
+                          <Badge variant="outline" className="mt-0.5 text-[8px] h-3 px-1">por-tamaño</Badge>
+                        )}
+                        {colCells.length > 0 && (
+                          <div className="text-[9px] text-muted-foreground mt-0.5">
+                            {colSelectedCount > 0 ? `${colSelectedCount}/` : ''}{colCells.length} ML
+                          </div>
+                        )}
                       </div>
-                      {slot.size_dependent && (
-                        <Badge variant="outline" className="mt-0.5 text-[8px] h-3 px-1">por-tamaño</Badge>
+                      {emptyCount > 0 && heroAssigned && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleGenerateColumn(slot.position); }}
+                          disabled={isGenerating}
+                          className="mt-1 w-full text-[9px] rounded bg-purple-100 hover:bg-purple-200 text-purple-900 px-1 py-0.5 disabled:opacity-50 transition"
+                          title={`Generar las ${emptyCount} celda(s) vacias usando el hero asignado`}
+                        >
+                          {isGenerating ? '⏳ generando…' : `⚡ Generar (${emptyCount})`}
+                        </button>
                       )}
-                      {colCells.length > 0 && (
-                        <div className="text-[9px] text-muted-foreground mt-0.5">
-                          {colSelectedCount > 0 ? `${colSelectedCount}/` : ''}{colCells.length} ML
+                      {emptyCount > 0 && !heroAssigned && (
+                        <div className="mt-1 text-[9px] text-rose-600" title="Asigná un hero a este slot en el panel Heroes → Slots">
+                          sin hero
                         </div>
                       )}
                     </th>
@@ -505,13 +591,17 @@ export default function ProjectSlotsPage() {
                     const cellKey = `${swatch.id}|${slot.position}`;
                     const isSelected = selected.has(cellKey);
                     const isMoving = singleMoving === cellKey;
+                    const isGenerating = singleGenerating === cellKey;
                     const hasMl = !!cell?.ml;
+                    const isEmpty = status === 'empty';
+                    const heroForSlot = state.heroes.some((h) => h.slot_position === slot.position);
+                    const canGenerate = isEmpty && heroForSlot;
                     const otherSlots = state.slots.filter((s) => s.position !== slot.position);
                     return (
                       <td
                         key={slot.id}
                         className={`border-r border-b p-1 text-center ${isSelected ? 'bg-blue-100' : ''}`}
-                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}${hasMl ? ' · click para mover' : ''}`}
+                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}${hasMl ? ' · click para mover' : canGenerate ? ' · click para generar' : ''}`}
                         onMouseEnter={(e) => {
                           if (thumb) setHoverCell({ url: thumb, x: e.clientX, y: e.clientY });
                         }}
@@ -519,12 +609,15 @@ export default function ProjectSlotsPage() {
                       >
                         <CellAction
                           hasMl={hasMl}
+                          canGenerate={canGenerate}
                           isSelected={isSelected}
                           isMoving={isMoving}
+                          isGenerating={isGenerating}
                           status={status}
                           thumb={thumb}
                           onShiftClick={() => toggleSelected(swatch.id, slot.position)}
                           onMoveTo={(toPos) => handleSingleMove(swatch.id, slot.position, toPos)}
+                          onGenerate={() => handleGenerateCell(swatch.id, slot.position)}
                           slots={otherSlots}
                         />
                       </td>
@@ -843,40 +936,68 @@ function HeroSlotAssigner({
 
 function CellAction({
   hasMl,
+  canGenerate,
   isSelected,
   isMoving,
+  isGenerating,
   status,
   thumb,
   onShiftClick,
   onMoveTo,
+  onGenerate,
   slots,
 }: {
   hasMl: boolean;
+  canGenerate: boolean;
   isSelected: boolean;
   isMoving: boolean;
+  isGenerating: boolean;
   status: CellStatus;
   thumb: string | null | undefined;
   onShiftClick: () => void;
   onMoveTo: (toPos: number) => void;
+  onGenerate: () => void;
   slots: Slot[];
 }) {
   const [open, setOpen] = useState(false);
+  const interactive = hasMl || canGenerate;
 
   const visual = (
-    <div className={`relative h-12 w-12 mx-auto rounded ${STATUS_COLOR[status]} ${thumb ? 'overflow-hidden' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''} ${hasMl ? 'cursor-pointer' : 'cursor-default'}`}>
+    <div className={`relative h-12 w-12 mx-auto rounded ${STATUS_COLOR[status]} ${thumb ? 'overflow-hidden' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''} ${interactive ? 'cursor-pointer' : 'cursor-default'} group`}>
       {thumb && <img src={thumb} alt="" className="h-full w-full object-cover" />}
       {!thumb && <div className="h-full w-full" />}
       <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white ${STATUS_COLOR[status]}`} />
-      {isMoving && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/60">
+      {canGenerate && !isGenerating && (
+        <div className="absolute inset-0 flex items-center justify-center bg-purple-500/0 hover:bg-purple-500/40 transition opacity-0 group-hover:opacity-100">
+          <span className="text-white text-lg drop-shadow">⚡</span>
+        </div>
+      )}
+      {(isMoving || isGenerating) && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/70">
           <Loader2 className="h-3 w-3 animate-spin" />
         </div>
       )}
     </div>
   );
 
-  if (!hasMl) return visual;
+  if (!hasMl && !canGenerate) return visual;
 
+  // Empty cell with hero assigned → click directly generates (no menu)
+  if (!hasMl && canGenerate) {
+    return (
+      <button
+        type="button"
+        className="block"
+        onClick={onGenerate}
+        disabled={isGenerating}
+        title="Generar esta foto con el hero asignado al slot"
+      >
+        {visual}
+      </button>
+    );
+  }
+
+  // Has ML photo → dropdown to move
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
