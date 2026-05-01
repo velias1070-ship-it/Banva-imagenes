@@ -882,10 +882,14 @@ export async function compositeHeroOverlays(
 
   // Tunables — kept aggressive enough to remove fabric halos without eating
   // soft anti-aliased text edges. NEAR/FAR define the chroma-key ramp.
+  // ALPHA_BINARIZE_THRESHOLD: any ramp pixel below this becomes fully
+  // transparent — eliminates the partial-alpha halo strip that ramp output
+  // leaves around panels and logo blocks (visible as a lighter rectangle).
   const GROUP_PAD = 30;
   const NEAR_DIST = 14;
   const FAR_DIST = 50;
   const CORNER_SAMPLE = 12;
+  const ALPHA_BINARIZE_THRESHOLD = 60;
 
   const composites: import('sharp').OverlayOptions[] = [];
 
@@ -944,6 +948,7 @@ export async function compositeHeroOverlays(
       if (dist <= NEAR_DIST) alpha = 0;
       else if (dist >= FAR_DIST) alpha = 255;
       else alpha = Math.round(((dist - NEAR_DIST) / (FAR_DIST - NEAR_DIST)) * 255);
+      alpha = alpha >= ALPHA_BINARIZE_THRESHOLD ? 255 : 0;
       out[i * 4] = r;
       out[i * 4 + 1] = g;
       out[i * 4 + 2] = b;
