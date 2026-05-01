@@ -144,15 +144,28 @@ export default async function ProjectDetailPage({ params }: Props) {
         </Link>
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
         <Link href={`/projects/${id}/coverage`}>
-          <Card className="cursor-pointer transition-shadow hover:shadow-md">
+          <Card className="cursor-pointer transition-shadow hover:shadow-md h-full">
             <CardHeader className="flex flex-row items-center gap-3">
               <Grid3x3 className="h-8 w-8 text-indigo-500" />
               <div>
                 <CardTitle className="text-base">Cobertura diseño × tamaño</CardTitle>
                 <p className="text-sm text-muted-foreground">
                   Ver qué heros aplican a cada combinación de variante
+                </p>
+              </div>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href={`/projects/${id}/slots`}>
+          <Card className="cursor-pointer transition-shadow hover:shadow-md h-full">
+            <CardHeader className="flex flex-row items-center gap-3">
+              <Grid3x3 className="h-8 w-8 text-purple-500" />
+              <div>
+                <CardTitle className="text-base">Posiciones de imagen (slots)</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Grilla pivot variantes × posición ML, con estado vs ML
                 </p>
               </div>
             </CardHeader>
