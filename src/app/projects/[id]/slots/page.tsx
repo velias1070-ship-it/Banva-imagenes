@@ -1,0 +1,541 @@
+'use client';
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { ArrowLeft, RefreshCw, Settings2, Loader2, ImageIcon, ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+interface Slot {
+  id: string;
+  position: number;
+  name: string;
+  expected_shot_type: string | null;
+  size_dependent: boolean;
+  notes: string | null;
+}
+
+interface SwatchEntry {
+  id: string;
+  sku_suffix: string | null;
+  name: string;
+  storage_path: string;
+  display_order: number;
+  marked_done_at: string | null;
+  color: string | null;
+  tipo: string | null;
+  bed_size: string | null;
+  label: string;
+  ml_item_id: string | null;
+  ml_permalink: string | null;
+}
+
+interface Hero {
+  id: string;
+  shot_type: string | null;
+  display_order: number;
+  slot_position: number | null;
+  applies_to_designs: string[] | null;
+  applies_to_sizes: string[] | null;
+}
+
+type CellStatus = 'match' | 'drift' | 'only_ml' | 'only_system' | 'empty';
+
+interface Cell {
+  swatch_id: string;
+  position: number;
+  system: { job_id: string; url: string } | null;
+  ml: { ml_picture_id: string; url: string } | null;
+  status: CellStatus;
+}
+
+interface State {
+  slots: Slot[];
+  swatches: SwatchEntry[];
+  heroes: Hero[];
+  cells: Cell[];
+}
+
+const STATUS_COLOR: Record<CellStatus, string> = {
+  match: 'bg-emerald-500',
+  drift: 'bg-amber-500',
+  only_ml: 'bg-blue-500',
+  only_system: 'bg-orange-500',
+  empty: 'bg-rose-500/30',
+};
+
+const STATUS_LABEL: Record<CellStatus, string> = {
+  match: 'ML = Sistema',
+  drift: 'Drift (sistema nuevo, ML viejo)',
+  only_ml: 'Solo en ML',
+  only_system: 'Solo en sistema',
+  empty: 'Vacío',
+};
+
+export default function ProjectSlotsPage() {
+  const { id } = useParams<{ id: string }>();
+  const [state, setState] = useState<State | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [editingSlots, setEditingSlots] = useState(false);
+  const [hoverCell, setHoverCell] = useState<{ url: string; x: number; y: number } | null>(null);
+  const [filterStatus, setFilterStatus] = useState<'all' | CellStatus>('all');
+  const [filterTipo, setFilterTipo] = useState<string>('all');
+  const [filterColor, setFilterColor] = useState<string>('all');
+  const [filterSize, setFilterSize] = useState<string>('all');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/slots/state`);
+      const data = await res.json();
+      if (res.ok) setState(data);
+      else toast.error(data.error || 'Error cargando estado');
+    } catch {
+      toast.error('Error de red');
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleImportMl() {
+    setImporting(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/slots/import-ml`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`${data.pictures_imported} fotos importadas de ${data.swatches_with_ml} publicaciones ML`);
+        await load();
+      } else {
+        toast.error(data.error || 'Error importando');
+      }
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const cellByKey = useMemo(() => {
+    const map = new Map<string, Cell>();
+    if (state) for (const c of state.cells) map.set(`${c.swatch_id}|${c.position}`, c);
+    return map;
+  }, [state]);
+
+  const filterOptions = useMemo(() => {
+    if (!state) return { tipos: [], colors: [], sizes: [] };
+    const tipos = new Set<string>();
+    const colors = new Set<string>();
+    const sizes = new Set<string>();
+    for (const s of state.swatches) {
+      if (s.tipo) tipos.add(s.tipo);
+      if (s.color) colors.add(s.color);
+      if (s.bed_size) sizes.add(s.bed_size);
+    }
+    const sortSize = (a: string, b: string) => {
+      const na = parseFloat(a) || 999;
+      const nb = parseFloat(b) || 999;
+      return na - nb || a.localeCompare(b);
+    };
+    return {
+      tipos: Array.from(tipos).sort(),
+      colors: Array.from(colors).sort(),
+      sizes: Array.from(sizes).sort(sortSize),
+    };
+  }, [state]);
+
+  const visibleSwatches = useMemo(() => {
+    if (!state) return [];
+    return state.swatches.filter((s) => {
+      if (filterTipo !== 'all' && s.tipo !== filterTipo) return false;
+      if (filterColor !== 'all' && s.color !== filterColor) return false;
+      if (filterSize !== 'all' && s.bed_size !== filterSize) return false;
+      if (filterStatus !== 'all' && state.slots.length > 0) {
+        const hasMatch = state.slots.some((slot) => {
+          const c = cellByKey.get(`${s.id}|${slot.position}`);
+          return c?.status === filterStatus;
+        });
+        if (!hasMatch) return false;
+      }
+      return true;
+    });
+  }, [state, filterTipo, filterColor, filterSize, filterStatus, cellByKey]);
+
+  const counts = useMemo(() => {
+    const c: Record<CellStatus, number> = { match: 0, drift: 0, only_ml: 0, only_system: 0, empty: 0 };
+    if (state) for (const cell of state.cells) c[cell.status]++;
+    return c;
+  }, [state]);
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Cargando estado de slots…
+      </div>
+    );
+  }
+
+  if (!state) {
+    return <div className="p-8 text-muted-foreground">No se pudo cargar.</div>;
+  }
+
+  const hasSlots = state.slots.length > 0;
+
+  return (
+    <div className="p-6 space-y-4">
+      <Link href={`/projects/${id}`} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="mr-1 h-4 w-4" /> Volver al proyecto
+      </Link>
+
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">Posiciones de imagen (slots)</h1>
+          <p className="text-sm text-muted-foreground">
+            {state.slots.length} slot{state.slots.length !== 1 ? 's' : ''} · {state.swatches.length} variantes ·{' '}
+            {state.cells.length} celdas
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setEditingSlots(true)}>
+            <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Editar slots
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleImportMl} disabled={importing}>
+            {importing ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+            Importar ML
+          </Button>
+        </div>
+      </div>
+
+      {/* Status legend + counts */}
+      <div className="flex flex-wrap gap-2 text-xs">
+        {(['match', 'drift', 'only_ml', 'only_system', 'empty'] as CellStatus[]).map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilterStatus(filterStatus === s ? 'all' : s)}
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
+              filterStatus === s ? 'border-foreground bg-foreground text-background' : 'border-border hover:bg-muted'
+            }`}
+          >
+            <span className={`h-2 w-2 rounded-full ${STATUS_COLOR[s]}`} />
+            {STATUS_LABEL[s]} ({counts[s]})
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      {(filterOptions.tipos.length > 1 || filterOptions.colors.length > 1 || filterOptions.sizes.length > 1) && (
+        <div className="flex gap-2 flex-wrap">
+          {filterOptions.tipos.length > 1 && (
+            <Select value={filterTipo} onValueChange={setFilterTipo}>
+              <SelectTrigger className="h-8 w-[140px] text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los tipos</SelectItem>
+                {filterOptions.tipos.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          {filterOptions.colors.length > 1 && (
+            <Select value={filterColor} onValueChange={setFilterColor}>
+              <SelectTrigger className="h-8 w-[150px] text-xs"><SelectValue placeholder="Color" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los colores</SelectItem>
+                {filterOptions.colors.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          {filterOptions.sizes.length > 1 && (
+            <Select value={filterSize} onValueChange={setFilterSize}>
+              <SelectTrigger className="h-8 w-[140px] text-xs"><SelectValue placeholder="Tamaño" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los tamaños</SelectItem>
+                {filterOptions.sizes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          {(filterTipo !== 'all' || filterColor !== 'all' || filterSize !== 'all' || filterStatus !== 'all') && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => {
+                setFilterTipo('all');
+                setFilterColor('all');
+                setFilterSize('all');
+                setFilterStatus('all');
+              }}
+            >
+              Limpiar filtros
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!hasSlots && (
+        <div className="rounded-lg border border-dashed p-8 text-center">
+          <ImageIcon className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
+          <p className="text-sm font-medium">No hay slots definidos todavia</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Definí las posiciones de imagen del proyecto (ej: 1=Packshot, 2=Medidas, 3=Lifestyle…)
+          </p>
+          <Button onClick={() => setEditingSlots(true)} size="sm" className="mt-4">
+            <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Definir slots
+          </Button>
+        </div>
+      )}
+
+      {hasSlots && (
+        <div className="rounded-lg border bg-white overflow-auto">
+          <table className="text-xs border-collapse">
+            <thead className="bg-muted sticky top-0 z-10">
+              <tr>
+                <th className="sticky left-0 z-20 bg-muted border-r border-b px-3 py-2 text-left font-medium min-w-[200px]">
+                  Variante
+                </th>
+                {state.slots.map((slot) => (
+                  <th key={slot.id} className="border-b border-r px-2 py-2 text-center font-medium min-w-[80px]">
+                    <div className="font-semibold">#{slot.position}</div>
+                    <div className="font-normal text-muted-foreground truncate max-w-[100px]" title={slot.name}>
+                      {slot.name}
+                    </div>
+                    {slot.size_dependent && (
+                      <Badge variant="outline" className="mt-0.5 text-[8px] h-3 px-1">por-tamaño</Badge>
+                    )}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleSwatches.map((swatch) => (
+                <tr key={swatch.id} className="hover:bg-muted/30">
+                  <td className="sticky left-0 z-10 bg-white border-r border-b px-3 py-2 align-top">
+                    <div className="flex items-center gap-2">
+                      {swatch.storage_path && (
+                        <img
+                          src={`https://${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/^https?:\/\//, '')}/storage/v1/object/public/images/${swatch.storage_path}`}
+                          alt=""
+                          className="h-8 w-8 rounded object-cover flex-shrink-0"
+                        />
+                      )}
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{swatch.label}</div>
+                        <div className="text-[10px] text-muted-foreground font-mono truncate">{swatch.sku_suffix}</div>
+                      </div>
+                      {swatch.ml_permalink && (
+                        <a href={swatch.ml_permalink} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground">
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  </td>
+                  {state.slots.map((slot) => {
+                    const cell = cellByKey.get(`${swatch.id}|${slot.position}`);
+                    const status = cell?.status || 'empty';
+                    const thumb = cell?.system?.url || cell?.ml?.url;
+                    return (
+                      <td
+                        key={slot.id}
+                        className="border-r border-b p-1 text-center"
+                        title={`${STATUS_LABEL[status]}${slot.size_dependent ? ' · slot por-tamaño' : ''}`}
+                        onMouseEnter={(e) => {
+                          if (thumb) setHoverCell({ url: thumb, x: e.clientX, y: e.clientY });
+                        }}
+                        onMouseLeave={() => setHoverCell(null)}
+                      >
+                        <div className={`relative h-12 w-12 mx-auto rounded ${STATUS_COLOR[status]} ${thumb ? 'overflow-hidden' : ''}`}>
+                          {thumb && (
+                            <img src={thumb} alt="" className="h-full w-full object-cover" />
+                          )}
+                          {!thumb && <div className="h-full w-full" />}
+                          <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-white ${STATUS_COLOR[status]}`} />
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Hover preview */}
+      {hoverCell && (
+        <div
+          className="fixed z-50 pointer-events-none rounded-lg border bg-white shadow-2xl p-1"
+          style={{ left: hoverCell.x + 16, top: hoverCell.y + 16, maxWidth: '320px' }}
+        >
+          <img src={hoverCell.url} alt="" className="rounded max-h-[300px]" />
+        </div>
+      )}
+
+      {/* Slot editor */}
+      <SlotEditorDialog
+        open={editingSlots}
+        onOpenChange={setEditingSlots}
+        projectId={id}
+        slots={state.slots}
+        onSaved={(saved) => {
+          setState((prev) => prev ? { ...prev, slots: saved } : prev);
+          setEditingSlots(false);
+        }}
+      />
+    </div>
+  );
+}
+
+// ── Slot editor dialog ──
+
+function SlotEditorDialog({
+  open,
+  onOpenChange,
+  projectId,
+  slots,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  projectId: string;
+  slots: Slot[];
+  onSaved: (saved: Slot[]) => void;
+}) {
+  type Draft = {
+    position: number;
+    name: string;
+    expected_shot_type: string | null;
+    size_dependent: boolean;
+  };
+
+  const [draft, setDraft] = useState<Draft[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setDraft(
+        slots.length > 0
+          ? slots.map((s) => ({
+              position: s.position,
+              name: s.name,
+              expected_shot_type: s.expected_shot_type,
+              size_dependent: s.size_dependent,
+            }))
+          : [{ position: 1, name: 'Packshot fondo blanco', expected_shot_type: 'main', size_dependent: false }]
+      );
+    }
+  }, [open, slots]);
+
+  function addRow() {
+    const nextPos = (draft[draft.length - 1]?.position || 0) + 1;
+    setDraft([...draft, { position: nextPos, name: '', expected_shot_type: null, size_dependent: false }]);
+  }
+
+  function removeRow(i: number) {
+    setDraft(draft.filter((_, idx) => idx !== i));
+  }
+
+  function update(i: number, patch: Partial<Draft>) {
+    setDraft(draft.map((d, idx) => (idx === i ? { ...d, ...patch } : d)));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/slots`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slots: draft }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || 'Error guardando');
+        return;
+      }
+      toast.success(`${data.length} slots guardados`);
+      onSaved(data);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Definir posiciones de imagen</DialogTitle>
+          <DialogDescription>
+            Cada posición es un &quot;slot&quot; con rol fijo (ej: 1 = packshot blanco, 2 = medidas).
+            Marcá <span className="font-medium">por-tamaño</span> si la foto cambia según el tamaño de cama.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2 max-h-[400px] overflow-y-auto">
+          {draft.map((d, i) => (
+            <div key={i} className="grid grid-cols-12 gap-2 items-center">
+              <Input
+                type="number"
+                value={d.position}
+                onChange={(e) => update(i, { position: parseInt(e.target.value) || 1 })}
+                className="col-span-1 h-8"
+                min={1}
+              />
+              <Input
+                placeholder="Nombre del slot"
+                value={d.name}
+                onChange={(e) => update(i, { name: e.target.value })}
+                className="col-span-5 h-8"
+              />
+              <Select
+                value={d.expected_shot_type || 'none'}
+                onValueChange={(v) => update(i, { expected_shot_type: v === 'none' ? null : v })}
+              >
+                <SelectTrigger className="col-span-3 h-8 text-xs"><SelectValue placeholder="Shot type" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— sin tipo —</SelectItem>
+                  <SelectItem value="main">main</SelectItem>
+                  <SelectItem value="lifestyle">lifestyle</SelectItem>
+                  <SelectItem value="detail">detail</SelectItem>
+                  <SelectItem value="doblada">doblada</SelectItem>
+                  <SelectItem value="flatlay">flatlay</SelectItem>
+                </SelectContent>
+              </Select>
+              <label className="col-span-2 flex items-center gap-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={d.size_dependent}
+                  onChange={(e) => update(i, { size_dependent: e.target.checked })}
+                  className="h-3.5 w-3.5"
+                />
+                por-tamaño
+              </label>
+              <button
+                onClick={() => removeRow(i)}
+                className="col-span-1 text-muted-foreground hover:text-destructive text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={addRow} className="w-full">
+            + Agregar slot
+          </Button>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancelar
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

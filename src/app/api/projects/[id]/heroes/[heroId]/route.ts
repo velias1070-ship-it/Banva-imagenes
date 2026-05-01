@@ -80,6 +80,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         ? body.applies_to_sizes
         : null;
   }
+  if ('slot_position' in body) {
+    update.slot_position =
+      typeof body.slot_position === 'number' && body.slot_position >= 1
+        ? Math.floor(body.slot_position)
+        : null;
+  }
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'no fields to update' }, { status: 400 });
@@ -89,7 +95,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     .from('hero_shots')
     .update(update)
     .eq('id', heroId)
-    .select('id, applies_to_designs, applies_to_sizes')
+    .select('id, applies_to_designs, applies_to_sizes, slot_position')
     .single();
 
   if (error) {
