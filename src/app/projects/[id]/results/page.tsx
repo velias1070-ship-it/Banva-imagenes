@@ -716,7 +716,7 @@ export default function ResultsPage() {
     setGenPreview({
       label: label || `${swatchIds.length} swatch(es)`,
       pairs,
-      excluded: new Set(),
+      excluded: new Set(pairs.map((p) => p.key)),
     });
   }
 
@@ -3003,9 +3003,39 @@ export default function ResultsPage() {
           </DialogHeader>
           {genPreview && (
             <>
-              <div className="text-xs text-muted-foreground">
-                {genPreview.pairs.length - genPreview.excluded.size} de {genPreview.pairs.length} imagen(es)
-                seleccionadas. Desmarcá las que no quieras generar.
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted-foreground">
+                  {genPreview.pairs.length - genPreview.excluded.size} de {genPreview.pairs.length} imagen(es)
+                  seleccionadas. Marcá las que quieras generar.
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() =>
+                      setGenPreview((prev) => (prev ? { ...prev, excluded: new Set() } : prev))
+                    }
+                    disabled={genPreview.excluded.size === 0}
+                  >
+                    Seleccionar todas
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() =>
+                      setGenPreview((prev) =>
+                        prev ? { ...prev, excluded: new Set(prev.pairs.map((p) => p.key)) } : prev,
+                      )
+                    }
+                    disabled={genPreview.excluded.size === genPreview.pairs.length}
+                  >
+                    Deseleccionar todas
+                  </Button>
+                </div>
               </div>
               <div className="max-h-[50vh] overflow-auto rounded border">
                 <table className="w-full text-xs">
