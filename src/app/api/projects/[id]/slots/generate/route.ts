@@ -158,10 +158,25 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     }
   }
 
-  // 3b. DEDUP para slots NO size-dependent: agrupar por design (color_slug)
-  // y dejar UN solo representante por grupo. Asi no gastamos Gemini 3 veces
-  // para la misma textura que sera identica en 1 plaza, 1.5 y 2 plazas.
-  // Despues de generar, "Replicar a hermanos" copia a los demas.
+  // 3b. DEDUP para slots NO size-dependent: agrupar por DESIGN sin el tamaño.
+  // Algunos proyectos legacy guardan color_slug INCLUYENDO bed_size
+  // (e.g. "aba-estampado-1-plaza"), lo que rompe el dedup. Usamos
+  // color+tipo como clave canonica y caemos a color_slug solo si no estan.
+  function designKey(swatchId: string): string {
+    const swatch = swatchById.get(swatchId);
+    const sku = (swatch?.sku_suffix || '').toUpperCase();
+    const v = variantBySku.get(sku);
+    if (v?.color || v?.tipo) {
+      return `${(v.color || '').trim().toLowerCase()}|${(v.tipo || '').trim().toLowerCase()}`;
+    }
+    // Fallback legacy: usar color_slug pero quitarle un sufijo que parezca tamaño
+    // (e.g. "-1-plaza", "-1-5-plazas", "-2-plazas")
+    if (v?.color_slug) {
+      return v.color_slug.replace(/-(\d+(-\d+)?-plazas?)$/i, '');
+    }
+    return `__nodesign__${swatchId}`;
+  }
+
   const dedupedTargets: CellTarget[] = [];
   const dedupedOut: PreviewItem[] = []; // items "siblings" que quedan para replicar luego
   const seenDesignSlot = new Set<string>(); // `${design}|${position}`
@@ -177,16 +192,14 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     const swatch = swatchById.get(t.swatch_id);
     const sku = (swatch?.sku_suffix || '').toUpperCase();
     const variant = variantBySku.get(sku);
-    const design = variant?.color_slug || `__nodesign__${t.swatch_id}`;
+    const design = designKey(t.swatch_id);
     const groupKey = `${design}|${t.position}`;
 
     // Si algun swatch del mismo design ya tiene foto en este slot, esta
     // generacion se salta — basta con replicar despues.
     const designAlreadyCovered = (allSwatches || []).some((s) => {
       if (s.id === t.swatch_id) return false;
-      const sSku = (s.sku_suffix || '').toUpperCase();
-      const sVar = variantBySku.get(sSku);
-      const sDesign = sVar?.color_slug || `__nodesign__${s.id}`;
+      const sDesign = designKey(s.id);
       if (sDesign !== design) return false;
       return occupied.has(`${s.id}|${t.position}`);
     });
