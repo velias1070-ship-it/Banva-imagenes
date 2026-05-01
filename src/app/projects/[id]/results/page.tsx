@@ -1059,43 +1059,61 @@ export default function ResultsPage() {
           .filter((t) => t.status === 'ok' && t.item_id)
           .map((t) => t.item_id as string)
       );
+      // Compute new pics per affected swatch BEFORE updating state — we need
+      // the same data for both groups[] and the separate mlPictures Map.
+      type Pic = { id: string; url: string; size: string };
+      const computedBySwatchId = new Map<string, Pic[]>();
+      for (const g of groups) {
+        if (!g.ml_listing || !successItemIds.has(g.ml_listing.item_id)) continue;
+        const existing = g.ml_listing.ml_pictures;
+        let nextPics: Pic[];
+        if (backendMode === 'replace_all') {
+          nextPics = selectedPictureIds
+            .map((pid) => sourceById.get(pid))
+            .filter((p): p is (typeof sourcePics)[number] => !!p)
+            .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+        } else if (backendMode === 'keep_cover') {
+          const adds = selectedPictureIds
+            .map((pid) => sourceById.get(pid))
+            .filter((p): p is (typeof sourcePics)[number] => !!p)
+            .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+          nextPics = existing.length > 0 ? [existing[0], ...adds] : adds;
+        } else if (backendMode === 'swap_positions') {
+          nextPics = existing.slice();
+          sourcePics.forEach((sp, idx) => {
+            if (!selectedPictureIds.includes(sp.id)) return;
+            if (idx >= nextPics.length) return;
+            nextPics[idx] = { id: sp.id, url: sp.url, size: sp.size };
+          });
+        } else {
+          const adds = selectedPictureIds
+            .map((pid) => sourceById.get(pid))
+            .filter((p): p is (typeof sourcePics)[number] => !!p)
+            .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+          nextPics = [...existing, ...adds];
+        }
+        computedBySwatchId.set(g.swatch.id, nextPics);
+      }
       setGroups((prev) =>
         prev.map((g) => {
-          if (!g.ml_listing || !successItemIds.has(g.ml_listing.item_id)) return g;
-          const existing = g.ml_listing.ml_pictures;
-          let nextPics: typeof existing;
-          if (backendMode === 'replace_all') {
-            nextPics = selectedPictureIds
-              .map((pid) => sourceById.get(pid))
-              .filter((p): p is (typeof sourcePics)[number] => !!p)
-              .map((p) => ({ id: p.id, url: p.url, size: p.size }));
-          } else if (backendMode === 'keep_cover') {
-            // target.cover preservada + todas las del source seleccionadas
-            const adds = selectedPictureIds
-              .map((pid) => sourceById.get(pid))
-              .filter((p): p is (typeof sourcePics)[number] => !!p)
-              .map((p) => ({ id: p.id, url: p.url, size: p.size }));
-            nextPics = existing.length > 0 ? [existing[0], ...adds] : adds;
-          } else if (backendMode === 'swap_positions') {
-            // same-position swap: source[i] reemplaza target[i] cuando i está
-            // en selectedPositionMap. Las posiciones que no, quedan como están.
-            nextPics = existing.slice();
-            sourcePics.forEach((sp, idx) => {
-              if (!selectedPictureIds.includes(sp.id)) return;
-              if (idx >= nextPics.length) return;
-              nextPics[idx] = { id: sp.id, url: sp.url, size: sp.size };
-            });
-          } else {
-            // append
-            const adds = selectedPictureIds
-              .map((pid) => sourceById.get(pid))
-              .filter((p): p is (typeof sourcePics)[number] => !!p)
-              .map((p) => ({ id: p.id, url: p.url, size: p.size }));
-            nextPics = [...existing, ...adds];
-          }
-          return { ...g, ml_listing: { ...g.ml_listing, ml_pictures: nextPics } };
+          const next = computedBySwatchId.get(g.swatch.id);
+          if (!next || !g.ml_listing) return g;
+          return { ...g, ml_listing: { ...g.ml_listing, ml_pictures: next } };
         })
       );
+      // El panel ML lee de un state separado (mlPictures Map). Sin esto, el
+      // user ve "8 fotos en ML" en el toast pero el panel sigue con la lista
+      // vieja hasta que recargue la página.
+      setMlPictures((prev) => {
+        const next = new Map(prev);
+        for (const [swatchId, pics] of computedBySwatchId) {
+          next.set(
+            swatchId,
+            pics.map((p) => ({ type: 'ml' as const, id: p.id, url: p.url }))
+          );
+        }
+        return next;
+      });
       setSiblingReplicateOpen(false);
       setSiblingReplicateSource(null);
       setSiblingReplicateTargets(new Set());
@@ -1184,6 +1202,16 @@ export default function ResultsPage() {
             : g
         )
       );
+      // El panel ML lee de un state separado (mlPictures Map). Hay que
+      // sincronizarlo o la UI se queda con la version vieja.
+      setMlPictures((prev) => {
+        const next = new Map(prev);
+        next.set(
+          swatchId,
+          pics.map((p) => ({ type: 'ml' as const, id: p.id, url: p.url }))
+        );
+        return next;
+      });
       toast.success(`Actualizado: ${pics.length} foto${pics.length !== 1 ? 's' : ''} en ML`);
     } catch {
       toast.error('Error de red');
