@@ -244,7 +244,7 @@ export default function ResultsPage() {
 
   const fetchResults = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${id}/results-with-listings`);
+      const res = await fetch(`/api/projects/${id}/results-with-listings`, { cache: 'no-store' });
       if (res.ok) {
         const data: SwatchResultGroup[] = await res.json();
         setGroups(data);
@@ -1045,12 +1045,55 @@ export default function ResultsPage() {
       toast.success(
         `Replicadas ${selectedPictureIds.length} foto${selectedPictureIds.length !== 1 ? 's' : ''} a ${ok} publicación${ok !== 1 ? 'es' : ''}${errs ? ` (${errs} error${errs !== 1 ? 'es' : ''})` : ''}`
       );
+      // Optimistic UI update — ML tiene consistencia eventual después del PUT
+      // (el GET puede devolver fotos viejas durante varios segundos). Pintamos
+      // localmente las URLs del source en cada destino así el usuario ve el
+      // cambio al toque, y reconciliamos contra ML con un fetch diferido.
+      const sourcePics = siblingReplicateSource.ml_listing.ml_pictures;
+      const sourceById = new Map(sourcePics.map((p) => [p.id, p]));
+      const successItemIds = new Set(
+        ((data.targets ?? []) as Array<{ status: string; item_id: string | null }>)
+          .filter((t) => t.status === 'ok' && t.item_id)
+          .map((t) => t.item_id as string)
+      );
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (!g.ml_listing || !successItemIds.has(g.ml_listing.item_id)) return g;
+          const existing = g.ml_listing.ml_pictures;
+          let nextPics: typeof existing;
+          if (backendMode === 'replace_all') {
+            nextPics = selectedPictureIds
+              .map((pid) => sourceById.get(pid))
+              .filter((p): p is (typeof sourcePics)[number] => !!p)
+              .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+          } else if (backendMode === 'swap_positions') {
+            // same-position swap: source[i] reemplaza target[i] cuando i está
+            // en selectedPositionMap. Las posiciones que no, quedan como están.
+            nextPics = existing.slice();
+            sourcePics.forEach((sp, idx) => {
+              if (!selectedPictureIds.includes(sp.id)) return;
+              if (idx >= nextPics.length) return;
+              nextPics[idx] = { id: sp.id, url: sp.url, size: sp.size };
+            });
+          } else {
+            // append
+            const adds = selectedPictureIds
+              .map((pid) => sourceById.get(pid))
+              .filter((p): p is (typeof sourcePics)[number] => !!p)
+              .map((p) => ({ id: p.id, url: p.url, size: p.size }));
+            nextPics = [...existing, ...adds];
+          }
+          return { ...g, ml_listing: { ...g.ml_listing, ml_pictures: nextPics } };
+        })
+      );
       setSiblingReplicateOpen(false);
       setSiblingReplicateSource(null);
       setSiblingReplicateTargets(new Set());
       setSiblingReplicateMlOrder([]);
       setSiblingReplicateMlExcluded(new Set());
-      fetchResults();
+      // Reconciliación contra ML — los IDs locales son del source, ML les
+      // asigna IDs nuevos al re-uploadear. El refetch diferido los corrige.
+      setTimeout(() => fetchResults(), 4000);
     } catch {
       toast.error('Error de red');
     } finally {
