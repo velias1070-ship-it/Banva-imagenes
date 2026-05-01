@@ -92,20 +92,30 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
   const positions = Array.from(new Set(targets.map((t) => t.position)));
   const swatchIds = Array.from(new Set(targets.map((t) => t.swatch_id)));
 
-  const [{ data: project }, { data: swatches }, { data: heroes }, { data: batches }] = await Promise.all([
+  const [{ data: project }, { data: allSwatches }, { data: heroes }, { data: batches }, { data: slotsRows }] = await Promise.all([
     supabase.from('projects').select('id, metadata').eq('id', projectId).single(),
+    // Cargamos TODOS los swatches del proyecto (no solo los targets) porque
+    // necesitamos los hermanos de mismo design para dedup en slots non-size-dep.
     supabase
       .from('swatches')
-      .select('id, name, sku_suffix')
-      .eq('project_id', projectId)
-      .in('id', swatchIds),
+      .select('id, name, sku_suffix, display_order')
+      .eq('project_id', projectId),
     supabase
       .from('hero_shots')
       .select('id, filename, slot_position, display_order, applies_to_designs, applies_to_sizes')
       .eq('project_id', projectId)
       .in('slot_position', positions),
     supabase.from('generation_batches').select('id').eq('project_id', projectId),
+    supabase
+      .from('project_image_slots')
+      .select('position, size_dependent')
+      .eq('project_id', projectId)
+      .in('position', positions),
   ]);
+
+  const sizeDependentBySlot = new Map<number, boolean>(
+    (slotsRows || []).map((s) => [s.position, !!s.size_dependent])
+  );
 
   if (!project) {
     return NextResponse.json({ error: 'proyecto no existe' }, { status: 404 });
@@ -117,7 +127,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     if (v.sku) variantBySku.set(v.sku.toUpperCase(), v);
   }
 
-  const swatchById = new Map((swatches || []).map((s) => [s.id, s]));
+  const swatchById = new Map((allSwatches || []).map((s) => [s.id, s]));
 
   // Heroes agrupados por slot_position
   const heroesBySlot = new Map<number, typeof heroes>();
@@ -127,31 +137,92 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     heroesBySlot.get(h.slot_position)!.push(h);
   }
 
-  // 3. Cargar celdas que ya tienen contenido (sistema aprobado) para
-  // saltarlas — solo generamos celdas REALMENTE vacias.
+  // 3. Cargar celdas que ya tienen contenido (sistema aprobado/pending) para
+  // saltarlas. Cargamos TODAS para que el dedup pueda chequear si algun hermano
+  // del mismo design ya esta cubierto.
   const batchIds = (batches || []).map((b) => b.id);
-  const occupied = new Set<string>(); // `${swatch_id}|${position}` con job aprobado
+  const occupied = new Set<string>(); // `${swatch_id}|${position}` con job
   if (batchIds.length > 0) {
     const { data: jobs } = await supabase
       .from('generation_jobs')
       .select('swatch_id, hero_shot_id, status, output_storage_path')
       .in('batch_id', batchIds)
-      .in('status', ['approved', 'pending', 'generating'])
-      .in('swatch_id', swatchIds);
+      .in('status', ['approved', 'pending', 'generating']);
     const heroSlotById = new Map((heroes || []).map((h) => [h.id, h.slot_position]));
     for (const j of jobs || []) {
       if (!j.swatch_id || !j.hero_shot_id) continue;
       const slotPos = heroSlotById.get(j.hero_shot_id);
       if (!slotPos) continue;
-      // approved con output: ya hay foto. pending/generating: ya esta en cola
       if (j.status === 'approved' && !j.output_storage_path) continue;
       occupied.add(`${j.swatch_id}|${slotPos}`);
     }
   }
 
-  // 4. Para cada target: resolver hero y armar plan
-  const plan: PreviewItem[] = [];
+  // 3b. DEDUP para slots NO size-dependent: agrupar por design (color_slug)
+  // y dejar UN solo representante por grupo. Asi no gastamos Gemini 3 veces
+  // para la misma textura que sera identica en 1 plaza, 1.5 y 2 plazas.
+  // Despues de generar, "Replicar a hermanos" copia a los demas.
+  const dedupedTargets: CellTarget[] = [];
+  const dedupedOut: PreviewItem[] = []; // items "siblings" que quedan para replicar luego
+  const seenDesignSlot = new Set<string>(); // `${design}|${position}`
+
   for (const t of targets) {
+    const slotIsSizeDep = sizeDependentBySlot.get(t.position) ?? false;
+    if (slotIsSizeDep) {
+      // Slot por-tamaño: cada celda es independiente (no dedup)
+      dedupedTargets.push(t);
+      continue;
+    }
+
+    const swatch = swatchById.get(t.swatch_id);
+    const sku = (swatch?.sku_suffix || '').toUpperCase();
+    const variant = variantBySku.get(sku);
+    const design = variant?.color_slug || `__nodesign__${t.swatch_id}`;
+    const groupKey = `${design}|${t.position}`;
+
+    // Si algun swatch del mismo design ya tiene foto en este slot, esta
+    // generacion se salta — basta con replicar despues.
+    const designAlreadyCovered = (allSwatches || []).some((s) => {
+      if (s.id === t.swatch_id) return false;
+      const sSku = (s.sku_suffix || '').toUpperCase();
+      const sVar = variantBySku.get(sSku);
+      const sDesign = sVar?.color_slug || `__nodesign__${s.id}`;
+      if (sDesign !== design) return false;
+      return occupied.has(`${s.id}|${t.position}`);
+    });
+
+    if (designAlreadyCovered) {
+      const labelParts = [variant?.color, variant?.tipo, variant?.bed_size].filter(Boolean) as string[];
+      dedupedOut.push({
+        swatch_id: t.swatch_id,
+        swatch_label: labelParts.length > 0 ? labelParts.join(' · ') : (swatch?.name || ''),
+        position: t.position,
+        hero_id: null,
+        hero_filename: null,
+        reason_skipped: 'sibling de mismo design ya cubierto — usar Replicar a hermanos',
+      });
+      continue;
+    }
+
+    if (seenDesignSlot.has(groupKey)) {
+      const labelParts = [variant?.color, variant?.tipo, variant?.bed_size].filter(Boolean) as string[];
+      dedupedOut.push({
+        swatch_id: t.swatch_id,
+        swatch_label: labelParts.length > 0 ? labelParts.join(' · ') : (swatch?.name || ''),
+        position: t.position,
+        hero_id: null,
+        hero_filename: null,
+        reason_skipped: 'dedup por design (slot no es por-tamaño) — replicar despues',
+      });
+      continue;
+    }
+    seenDesignSlot.add(groupKey);
+    dedupedTargets.push(t);
+  }
+
+  // 4. Para cada target deduplicado: resolver hero y armar plan
+  const plan: PreviewItem[] = [...dedupedOut];
+  for (const t of dedupedTargets) {
     const swatch = swatchById.get(t.swatch_id);
     if (!swatch) {
       plan.push({
@@ -226,12 +297,15 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
   const skipped = plan.filter((p) => p.reason_skipped);
   const estimatedCost = generable.length * COST_PER_IMAGE_USD;
 
+  const dedupSavings = dedupedOut.length;
+
   if (body.dry_run) {
     return NextResponse.json({
       dry_run: true,
       total_targets: targets.length,
       generable: generable.length,
       skipped_count: skipped.length,
+      dedup_siblings: dedupSavings,
       estimated_cost_usd: estimatedCost,
       plan,
     });
@@ -298,6 +372,7 @@ export async function POST(request: NextRequest, ctx: RouteContext) {
     batch_id: batch.id,
     queued: generable.length,
     skipped_count: skipped.length,
+    dedup_siblings: dedupSavings,
     estimated_cost_usd: estimatedCost,
   });
 }
