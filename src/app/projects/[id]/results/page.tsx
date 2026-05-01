@@ -13,7 +13,7 @@ import {
   ImageIcon, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
   Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
-  Palette, Copy, Play,
+  Palette, Copy, Play, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { extractSizeFromSku, resolveHeroesForVariant, type ProjectVariant, type TaggedHero } from '@/lib/sku-parser';
@@ -126,6 +126,9 @@ export default function ResultsPage() {
   // When false (default), swatches marked as done are hidden from the main list.
   const [showDone, setShowDone] = useState(false);
   const [markingDoneIds, setMarkingDoneIds] = useState<Set<string>>(new Set());
+  // Per-swatch ML refresh: re-fetches just one item from ML and updates that
+  // group's ml_listing in place. Faster than fetchResults() for the whole list.
+  const [refreshingMlIds, setRefreshingMlIds] = useState<Set<string>>(new Set());
   // Replicate-to-siblings dialog state
   const [siblingReplicateOpen, setSiblingReplicateOpen] = useState(false);
   const [siblingReplicateSource, setSiblingReplicateSource] = useState<SwatchResultGroup | null>(null);
@@ -1135,6 +1138,50 @@ export default function ResultsPage() {
       toast.error('Error de red');
     } finally {
       setMarkingDoneIds((prev) => {
+        const next = new Set(prev);
+        next.delete(swatchId);
+        return next;
+      });
+    }
+  }
+
+  async function handleRefreshMl(swatchId: string) {
+    const group = groups.find((g) => g.swatch.id === swatchId);
+    if (!group?.ml_listing?.item_id) return;
+    const itemId = group.ml_listing.item_id;
+    setRefreshingMlIds((prev) => new Set(prev).add(swatchId));
+    try {
+      const res = await fetch(
+        `/api/replicate-pictures?item_id=${encodeURIComponent(itemId)}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) {
+        toast.error('No se pudo actualizar desde ML');
+        return;
+      }
+      const data = await res.json();
+      const pics: Array<{ id: string; url: string; size: string }> = Array.isArray(data.pictures) ? data.pictures : [];
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.swatch.id === swatchId && g.ml_listing
+            ? {
+                ...g,
+                ml_listing: {
+                  ...g.ml_listing,
+                  status: data.status || g.ml_listing.status,
+                  permalink: data.permalink || g.ml_listing.permalink,
+                  titulo: data.title || g.ml_listing.titulo,
+                  ml_pictures: pics,
+                },
+              }
+            : g
+        )
+      );
+      toast.success(`Actualizado: ${pics.length} foto${pics.length !== 1 ? 's' : ''} en ML`);
+    } catch {
+      toast.error('Error de red');
+    } finally {
+      setRefreshingMlIds((prev) => {
         const next = new Set(prev);
         next.delete(swatchId);
         return next;
@@ -2711,6 +2758,25 @@ export default function ResultsPage() {
                               </DropdownMenu>
                             );
                           })()}
+                          {group.ml_listing && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-blue-600 hover:bg-blue-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRefreshMl(swatchId);
+                              }}
+                              disabled={refreshingMlIds.has(swatchId)}
+                              title="Actualizar fotos desde ML"
+                            >
+                              {refreshingMlIds.has(swatchId) ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4" />
+                              )}
+                            </Button>
+                          )}
                           {group.ml_listing?.permalink && (
                             <a
                               href={group.ml_listing.permalink}
