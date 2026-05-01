@@ -136,7 +136,9 @@ export default function ResultsPage() {
   const [siblingReplicateMlOrder, setSiblingReplicateMlOrder] = useState<string[]>([]);
   const [siblingReplicateMlExcluded, setSiblingReplicateMlExcluded] = useState<Set<string>>(new Set());
   const [siblingReplicateRunning, setSiblingReplicateRunning] = useState(false);
-  const [siblingReplicateMode, setSiblingReplicateMode] = useState<'replace_all' | 'swap_positions' | 'append'>('replace_all');
+  // UI modes — `keep_cover` is a shortcut that maps to swap_positions on the
+  // backend with the source's position 0 auto-excluded.
+  const [siblingReplicateMode, setSiblingReplicateMode] = useState<'replace_all' | 'swap_positions' | 'keep_cover' | 'append'>('replace_all');
   const [generatingSwatches, setGeneratingSwatches] = useState<Set<string>>(new Set());
   const [selectedSwatchIds, setSelectedSwatchIds] = useState<Set<string>>(new Set());
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
@@ -999,7 +1001,15 @@ export default function ResultsPage() {
   async function submitSiblingReplicate() {
     if (!siblingReplicateSource?.ml_listing) return;
     if (siblingReplicateTargets.size === 0) return;
-    const selectedPictureIds = siblingReplicateMlOrder.filter((id) => !siblingReplicateMlExcluded.has(id));
+    // keep_cover is a UX-only mode → we always send swap_positions to the
+    // backend, and additionally drop the source's position 0 from the
+    // selected list so target's cover stays put.
+    const backendMode = siblingReplicateMode === 'keep_cover' ? 'swap_positions' : siblingReplicateMode;
+    const selectedPictureIds = siblingReplicateMlOrder.filter((id, idx) => {
+      if (siblingReplicateMlExcluded.has(id)) return false;
+      if (siblingReplicateMode === 'keep_cover' && idx === 0) return false;
+      return true;
+    });
     if (selectedPictureIds.length === 0) {
       toast.error('Seleccioná al menos una foto');
       return;
@@ -1022,7 +1032,7 @@ export default function ResultsPage() {
           source_item_id: siblingReplicateSource.ml_listing.item_id,
           target_item_ids: targetItemIds,
           selected_picture_ids: selectedPictureIds,
-          mode: siblingReplicateMode,
+          mode: backendMode,
         }),
       });
       const data = await res.json();
@@ -3257,8 +3267,13 @@ export default function ResultsPage() {
               replace_all/append). For custom ordering use /replicate. */}
           {siblingReplicateSource?.ml_listing?.ml_pictures && siblingReplicateMlOrder.length > 0 && (() => {
             const picMap = new Map(siblingReplicateSource.ml_listing.ml_pictures.map((p) => [p.id, p]));
-            const isEffectivelyExcluded = (pid: string) => siblingReplicateMlExcluded.has(pid);
-            const includedCount = siblingReplicateMlOrder.filter((pid) => !isEffectivelyExcluded(pid)).length;
+            // keep_cover auto-excludes source position 0 (the cover) so the
+            // destination's cover is never overwritten. The user can't toggle
+            // it back without switching modes.
+            const isAutoExcluded = (idx: number) => siblingReplicateMode === 'keep_cover' && idx === 0;
+            const isEffectivelyExcluded = (pid: string, idx: number) =>
+              isAutoExcluded(idx) || siblingReplicateMlExcluded.has(pid);
+            const includedCount = siblingReplicateMlOrder.filter((pid, idx) => !isEffectivelyExcluded(pid, idx)).length;
             return (
               <div className="rounded-md border p-3 space-y-2">
                 <div className="flex items-center justify-between">
@@ -3291,10 +3306,11 @@ export default function ResultsPage() {
                   {siblingReplicateMlOrder.map((pid, idx) => {
                     const pic = picMap.get(pid);
                     if (!pic) return null;
-                    const excluded = isEffectivelyExcluded(pid);
+                    const autoExcluded = isAutoExcluded(idx);
+                    const excluded = isEffectivelyExcluded(pid, idx);
                     const includedIdx = siblingReplicateMlOrder
                       .slice(0, idx + 1)
-                      .filter((id) => !isEffectivelyExcluded(id)).length;
+                      .filter((id, i) => !isEffectivelyExcluded(id, i)).length;
                     return (
                       <div
                         key={pid}
@@ -3304,6 +3320,7 @@ export default function ResultsPage() {
                           type="checkbox"
                           checked={!excluded}
                           onChange={() => {
+                            if (autoExcluded) return;
                             setSiblingReplicateMlExcluded((prev) => {
                               const next = new Set(prev);
                               if (next.has(pid)) next.delete(pid);
@@ -3312,7 +3329,7 @@ export default function ResultsPage() {
                             });
                           }}
                           className="h-4 w-4 accent-purple-600"
-                          disabled={siblingReplicateRunning}
+                          disabled={siblingReplicateRunning || autoExcluded}
                         />
                         <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-mono ${excluded ? 'bg-muted text-muted-foreground' : 'bg-purple-100 text-purple-900'}`}>
                           {excluded ? '—' : includedIdx}
@@ -3325,6 +3342,11 @@ export default function ResultsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="text-xs font-medium truncate">
                             Posición ML {idx + 1}
+                            {autoExcluded && (
+                              <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                                (portada — bloqueada por modo)
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-muted-foreground truncate font-mono">
                             {pid}
@@ -3337,14 +3359,15 @@ export default function ResultsPage() {
               </div>
             );
           })()}
-          {/* Mode selector — same modes as /replicate, calls /api/replicate-pictures.
-              Tip: para "todas menos la portada, sin tocar la portada del destino",
-              elegí "Swap por posición" y destildá la posición 1 del source. */}
+          {/* Mode selector — calls /api/replicate-pictures.
+              keep_cover is a UX shortcut: backend gets swap_positions with
+              source[0] auto-excluded, so the destination's cover stays put
+              and the rest of the positions get swapped. */}
           {siblingReplicateSource && siblingReplicateTargets.size > 0 && (
             <div className="rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
               <div className="text-xs font-medium text-purple-900">Modo de inserción en el destino</div>
               <div className="grid grid-cols-1 gap-1.5 text-xs">
-                {(['replace_all', 'swap_positions', 'append'] as const).map((m) => (
+                {(['replace_all', 'swap_positions', 'keep_cover', 'append'] as const).map((m) => (
                   <label key={m} className="inline-flex items-start gap-1.5 cursor-pointer">
                     <input
                       type="radio"
@@ -3357,6 +3380,7 @@ export default function ResultsPage() {
                     <span className="text-purple-900">
                       {m === 'replace_all' && 'Reemplazar todo'}
                       {m === 'swap_positions' && 'Swap por posición — mantiene las posiciones que destildés'}
+                      {m === 'keep_cover' && 'Mantener portada del destino — reemplaza el resto'}
                       {m === 'append' && 'Agregar al final'}
                     </span>
                   </label>
@@ -3365,6 +3389,7 @@ export default function ResultsPage() {
               <p className="text-[11px] text-purple-700">
                 {siblingReplicateMode === 'replace_all' && 'El destino queda SOLO con las fotos seleccionadas, en el orden natural del ML del source.'}
                 {siblingReplicateMode === 'swap_positions' && 'Cada posición seleccionada del source reemplaza la misma posición en el destino. Las posiciones que destildés se quedan como están en el destino. Ej: para mantener portada del destino, destildá la portada del source.'}
+                {siblingReplicateMode === 'keep_cover' && 'Conserva la portada (posición 1) del destino. La portada del source se descarta automáticamente y el resto de las posiciones se swappean. Atajo de "swap por posición" sin la portada.'}
                 {siblingReplicateMode === 'append' && 'Las fotos seleccionadas se suman al final de las existentes del destino, sin tocar las que ya están.'}
               </p>
             </div>
@@ -3404,7 +3429,11 @@ export default function ResultsPage() {
               Cancelar
             </Button>
             {(() => {
-              const includedCount = siblingReplicateMlOrder.filter((id) => !siblingReplicateMlExcluded.has(id)).length;
+              const includedCount = siblingReplicateMlOrder.filter((id, idx) => {
+                if (siblingReplicateMlExcluded.has(id)) return false;
+                if (siblingReplicateMode === 'keep_cover' && idx === 0) return false;
+                return true;
+              }).length;
               return (
                 <Button
                   onClick={submitSiblingReplicate}
