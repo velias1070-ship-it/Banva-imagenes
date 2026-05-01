@@ -3280,8 +3280,8 @@ export default function ResultsPage() {
           setSiblingReplicateMlExcluded(new Set());
         }
       }}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-2xl flex flex-col max-h-[90vh] gap-0 p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
             <DialogTitle>Replicar fotos del ML a hermanos</DialogTitle>
             <DialogDescription>
               Toma las fotos publicadas hoy en
@@ -3290,6 +3290,7 @@ export default function ResultsPage() {
               Solo se listan hermanos con publicación ML activa.
             </DialogDescription>
           </DialogHeader>
+          <div className="flex-1 overflow-y-auto px-6 py-3 space-y-3">
           {/* Targets list — only siblings WITH an ML listing (we push to ML) */}
           {siblingReplicateSource && (() => {
             const sourceDesign = designForGroup(siblingReplicateSource);
@@ -3503,7 +3504,8 @@ export default function ResultsPage() {
               </p>
             </div>
           )}
-          <DialogFooter>
+          </div>
+          <DialogFooter className="px-6 py-4 border-t shrink-0 bg-background">
             <Button
               variant="ghost"
               size="sm"
