@@ -399,7 +399,7 @@ IMPORTANT — You MUST apply the brand changes specified below:
 - CHANGE all visible text typography/fonts to match the brand fonts below
 - Keep the same text content, only change COLOR and FONT
 
-LOGO ZONE — A 200x200px logo will be added in the ${brand?.logo_position || 'top-left'} corner in post-processing. If there is text in that ${brand?.logo_position || 'top-left'} zone, MOVE that text horizontally (to the opposite side) or vertically (slightly down within the same area) to leave the ${brand?.logo_position || 'top-left'} 250x250px clear. DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible — only reposition text that overlaps with the ${brand?.logo_position || 'top-left'} corner.${extraDirective ? '\n\n' + extraDirective : ''}
+LOGO ZONE — In post-processing, a 200x200px logo will be added in the ${brand?.logo_position || 'top-left'} corner. The ${brand?.logo_position || 'top-left'} 250x250px area must be FREE OF TEXT, but the BACKGROUND PIXELS in that area (wood, wall, fabric, scene, lighting, product) MUST remain IDENTICAL to Image 1. Do NOT paint, blank, lighten, fill, or cover that area with white or any solid color or rectangle — preserve the original photographic content there exactly. If text from Image 1 currently sits inside that 250x250px zone, MOVE only the text horizontally (to the opposite side) or vertically (slightly down within the same area). DO NOT slide the entire image down. DO NOT crop the bottom. The image must keep its EXACT same dimensions and ALL content visible.${extraDirective ? '\n\n' + extraDirective : ''}
 
 CRITICAL CONSTRAINTS:
 - Keep image dimensions identical (1200x1200)
