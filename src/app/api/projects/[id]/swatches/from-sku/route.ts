@@ -72,15 +72,77 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: `No se pudo obtener item ${mlItem.item_id} de ML` }, { status: 502 });
   }
 
-  // Extract color name from title (last meaningful word)
-  const titleWords = (item.title || mlItem.titulo || '').split(/\s+/);
-  let colorName = sku;
-  for (let i = titleWords.length - 1; i >= 0; i--) {
-    const w = titleWords[i];
-    if (w && !/^\d/.test(w) && w.length > 1 && !['Cm', 'M', 'Plazas', 'Plaza', 'King', 'Super', 'De', 'Y', 'En', 'La', 'El'].includes(w)) {
-      colorName = w;
+  // Extract design + size name from title.
+  // Title example:
+  //   "Sabanas King Cannon 200 Hilos 2 Plaza Media Full 100 Algodon Express 200 Hilos"
+  // We want: design = "Express", size = "King" → name = "Express King".
+  const rawTitle = item.title || mlItem.titulo || '';
+  const titleWords = rawTitle.split(/\s+/).filter(Boolean);
+  // Common Cannon/sabana stopwords. Anything in this list is NOT a design name.
+  const STOPWORDS = new Set([
+    'cm', 'm',
+    'plazas', 'plaza', 'king', 'super',
+    'de', 'y', 'en', 'la', 'el', 'con', 'para', 'del',
+    'sabanas', 'sabana', 'sábanas', 'sábana',
+    'cannon', 'cannonhome',
+    'hilos', 'hilo',
+    'algodon', 'algodón', 'poliester', 'poliéster',
+    'media', 'full', 'twin', 'queen',
+    'set', 'juego',
+    'mercadolibre', 'envio', 'envío',
+  ]);
+  const norm = (w: string) => w.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const isStop = (w: string) => STOPWORDS.has(norm(w));
+  const isNumeric = (w: string) => /^\d+([.,]\d+)?$/.test(w);
+
+  // Walk left-to-right and pick the FIRST non-stopword non-numeric token whose
+  // normalised form is unique in the title — that's typically the design name.
+  // Walking left-to-right (vs the previous right-to-left) avoids "Hilos" at the tail.
+  const counts = new Map<string, number>();
+  for (const w of titleWords) {
+    const n = norm(w);
+    counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  let designName: string | null = null;
+  for (const w of titleWords) {
+    if (isStop(w) || isNumeric(w) || w.length <= 1) continue;
+    const n = norm(w);
+    if (counts.get(n) === 1) {
+      designName = w;
       break;
     }
+  }
+
+  // Find size token (King / Plaza / 1.5 Plazas / etc.)
+  let sizeName: string | null = null;
+  for (let i = 0; i < titleWords.length; i++) {
+    const w = titleWords[i];
+    const n = norm(w);
+    if (n === 'king' || n === 'super') {
+      sizeName = w;
+      // "King Super" → use both
+      const next = titleWords[i + 1];
+      if (next && norm(next) === 'super') sizeName = `${w} ${next}`;
+      break;
+    }
+    if (n === 'plaza' || n === 'plazas') {
+      const prev = titleWords[i - 1];
+      if (prev && /^\d+([.,]\d+)?$/.test(prev)) {
+        sizeName = `${prev} ${w}`;
+      } else {
+        sizeName = w;
+      }
+      break;
+    }
+  }
+
+  let colorName = sku;
+  if (designName && sizeName) {
+    colorName = `${designName} ${sizeName}`;
+  } else if (designName) {
+    colorName = designName;
+  } else if (sizeName) {
+    colorName = sizeName;
   }
 
   // 3. Download first picture

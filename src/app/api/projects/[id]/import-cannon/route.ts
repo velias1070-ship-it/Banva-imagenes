@@ -55,17 +55,86 @@ function extractDesignFromTitle(title: string): string | null {
   return match ? match[1].trim() : null;
 }
 
+// Smarter design extraction: pick the first non-stopword non-numeric token
+// whose normalised form is unique in the title. Works for titles where
+// "plazas" is in the middle (e.g. "Sabanas King Cannon 200 Hilos 2 Plaza
+// Media Full 100 Algodon Express 200 Hilos" → "Express").
+const TITLE_STOPWORDS = new Set([
+  'cm', 'm',
+  'plazas', 'plaza', 'king', 'super',
+  'de', 'y', 'en', 'la', 'el', 'con', 'para', 'del', 'a',
+  'sabanas', 'sabana', 'sábanas', 'sábana',
+  'cannon', 'cannonhome',
+  'hilos', 'hilo',
+  'algodon', 'algodón', 'poliester', 'poliéster',
+  'media', 'full', 'twin', 'queen',
+  'set', 'juego', 'pack',
+  'mercadolibre', 'envio', 'envío',
+  'polar', 'fleece',
+]);
+function normalizeWord(w: string): string {
+  return w.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+function extractDesignFromTitleSmart(title: string): string | null {
+  const words = title.split(/\s+/).filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const w of words) {
+    const n = normalizeWord(w);
+    counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  for (const w of words) {
+    const n = normalizeWord(w);
+    if (TITLE_STOPWORDS.has(n)) continue;
+    if (/^\d+([.,]\d+)?$/.test(w)) continue;
+    if (w.length <= 1) continue;
+    if (counts.get(n) === 1) return w;
+  }
+  return null;
+}
+
+// Extract size from title: "King" / "Super King" / "1.5 plazas" / "2 plazas"
+function extractSizeFromTitle(title: string): string | null {
+  const words = title.split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const n = normalizeWord(words[i]);
+    if (n === 'king' || n === 'super') {
+      const nx = words[i + 1];
+      if (nx && normalizeWord(nx) === 'super') return `${words[i]} ${nx}`;
+      if (n === 'super' && nx && normalizeWord(nx) === 'king') return `${words[i]} ${nx}`;
+      return words[i];
+    }
+    if (n === 'plaza' || n === 'plazas') {
+      const pv = words[i - 1];
+      if (pv && /^\d+([.,]\d+)?$/.test(pv)) return `${pv} ${words[i]}`;
+      return words[i];
+    }
+  }
+  return null;
+}
+
+// Extract thread count from title: "200 Hilos" → "200"
+function extractThreadCountFromTitle(title: string): string | null {
+  const m = title.match(/(\d+)\s*hilos?/i);
+  return m ? m[1] : null;
+}
+
 function buildCannonImagePatterns(
   attrs: Record<string, string>,
   title?: string
 ): string[] {
   const fabricDesign = attrs.FABRIC_DESIGN;
   const model = attrs.MODEL || '';
-  const size = attrs.MATTRESS_SIZE || '2 plazas';
+  // Prefer attrs.MATTRESS_SIZE; fall back to size parsed from the title; only
+  // use "2 plazas" as last resort. This is what makes "King" listings work.
+  const size =
+    attrs.MATTRESS_SIZE ||
+    (title ? extractSizeFromTitle(title) : null) ||
+    '2 plazas';
   const color = attrs.COLOR || attrs.MAIN_COLOR || '';
   const fabric = attrs.FABRIC_COMPOSITION || attrs.FABRIC || '';
 
   const titleDesign = title ? extractDesignFromTitle(title) : null;
+  const titleDesignSmart = title ? extractDesignFromTitleSmart(title) : null;
 
   // Design candidates: title-based first (more specific than generic "Estampado")
   const designCandidates: string[] = [];
@@ -74,6 +143,7 @@ function buildCannonImagePatterns(
     const compact = slugify(d.replace(/\s*\d+$/, ''));
     if (compact && !designCandidates.includes(compact)) designCandidates.push(compact);
   };
+  addDesign(titleDesignSmart);
   addDesign(titleDesign);
   addDesign(fabricDesign);
 
@@ -85,8 +155,10 @@ function buildCannonImagePatterns(
   if (sizeNoDot && sizeNoDot !== sizeCandidates[0]) sizeCandidates.push(sizeNoDot);
 
   const colorCompact = slugify(color);
-  const threadMatch = model.match(/(\d+)\s*hilos/i);
-  const threadCount = threadMatch ? threadMatch[1] : null;
+  const threadMatch =
+    model.match(/(\d+)\s*hilos/i) ||
+    (title ? title.match(/(\d+)\s*hilos/i) : null);
+  const threadCount = threadMatch ? threadMatch[1] : (title ? extractThreadCountFromTitle(title) : null);
   const isPolar = /polar|fleece/i.test(
     `${model} ${fabric} ${fabricDesign || ''} ${title || ''}`
   );
@@ -118,10 +190,14 @@ function buildCannonPageUrls(
 ): string[] {
   const fabricDesign = attrs.FABRIC_DESIGN;
   const model = attrs.MODEL || '';
-  const size = attrs.MATTRESS_SIZE || '2 plazas';
+  const size =
+    attrs.MATTRESS_SIZE ||
+    (title ? extractSizeFromTitle(title) : null) ||
+    '2 plazas';
   const fabric = attrs.FABRIC_COMPOSITION || attrs.FABRIC || '';
 
   const titleDesign = title ? extractDesignFromTitle(title) : null;
+  const titleDesignSmart = title ? extractDesignFromTitleSmart(title) : null;
 
   const designCandidates: string[] = [];
   const addDesign = (d: string | null | undefined) => {
@@ -129,14 +205,17 @@ function buildCannonPageUrls(
     const slug = slugifyForPageUrl(d.replace(/\s*\d+$/, ''));
     if (slug && !designCandidates.includes(slug)) designCandidates.push(slug);
   };
+  addDesign(titleDesignSmart);
   addDesign(titleDesign);
   addDesign(fabricDesign);
 
   if (!designCandidates.length) return [];
 
   const sizeSlug = slugifyForPageUrl(size);
-  const threadMatch = model.match(/(\d+)\s*hilos/i);
-  const threadCount = threadMatch ? threadMatch[1] : null;
+  const threadMatch =
+    model.match(/(\d+)\s*hilos/i) ||
+    (title ? title.match(/(\d+)\s*hilos/i) : null);
+  const threadCount = threadMatch ? threadMatch[1] : (title ? extractThreadCountFromTitle(title) : null);
   const isPolar = /polar|fleece/i.test(
     `${model} ${fabric} ${fabricDesign || ''} ${title || ''}`
   );
