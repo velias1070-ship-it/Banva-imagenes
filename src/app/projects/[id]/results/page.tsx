@@ -172,14 +172,6 @@ export default function ResultsPage() {
   const [editInstructions, setEditInstructions] = useState<Record<string, string>>({});
   const [importingCannon, setImportingCannon] = useState(false);
   const [importingCannonSwatch, setImportingCannonSwatch] = useState<Set<string>>(new Set());
-  // Projects where per-swatch Cannon import button is enabled
-  const PER_SWATCH_CANNON_PROJECTS = new Set([
-    'f047dcc1-1c96-440c-99af-e7c0af622f89',
-    '5252726f-7f69-48be-88eb-de895e138737',
-    '4af255ae-39ba-4c7a-b425-f794ec65e4a7',
-    '1967331d-7d07-49af-92c6-7f77e5292b72', // sabanas 1.5 y 2.0 144h
-  ]);
-  const showPerSwatchCannon = PER_SWATCH_CANNON_PROJECTS.has(id);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
@@ -2773,7 +2765,7 @@ export default function ResultsPage() {
                                       Desde MercadoLibre
                                     </DropdownMenuItem>
                                   )}
-                                  {showPerSwatchCannon && hasMlListing && (
+                                  {hasMlListing && (
                                     <DropdownMenuItem
                                       onSelect={() => handleImportCannonForSwatch(swatchId)}
                                       disabled={isImportingCannon}
