@@ -14,6 +14,43 @@ const PATTERN_TYPES = new Set([
   'bordado', 'bordados', 'jacquard',
 ]);
 
+// Stopwords for the "smart" design extraction. Anything in this list cannot
+// be the design name. Includes generic Cannon/sabana noise.
+const TITLE_STOPWORDS = new Set([
+  'cm', 'm',
+  'plazas', 'plaza', 'king', 'super',
+  'de', 'y', 'en', 'la', 'el', 'con', 'para', 'del', 'a',
+  'sabanas', 'sabana', 'sábanas', 'sábana',
+  'cannon', 'cannonhome',
+  'hilos', 'hilo',
+  'algodon', 'algodón', 'poliester', 'poliéster',
+  'media', 'full', 'twin', 'queen',
+  'set', 'juego', 'pack',
+  'mercadolibre', 'envio', 'envío',
+  'polar', 'fleece',
+]);
+function normalizeWord(w: string): string {
+  return w.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+// Pick the first non-stopword non-numeric token whose normalised form is unique
+// in the title. This handles "Sabanas King ... Algodon Hibiscus 200 Hilos" → "Hibiscus".
+function smartDesignFromTitle(title: string): string | null {
+  const words = title.split(/\s+/).filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const w of words) {
+    const n = normalizeWord(w);
+    counts.set(n, (counts.get(n) || 0) + 1);
+  }
+  for (const w of words) {
+    const n = normalizeWord(w);
+    if (TITLE_STOPWORDS.has(n)) continue;
+    if (/^\d+([.,]\d+)?$/.test(w)) continue;
+    if (w.length <= 1) continue;
+    if (counts.get(n) === 1) return w;
+  }
+  return null;
+}
+
 function slugify(text: string): string {
   return (text || '')
     .toLowerCase()
@@ -35,6 +72,12 @@ function parseVariantLabel(title: string, familyName: string | null): { color: s
   const last = words[words.length - 1];
   const isType = PATTERN_TYPES.has(last.toLowerCase());
   if (isType && words.length >= 2) return { color: words[words.length - 2], tipo: last };
+  // If the last word is a stopword (e.g. titles ending in "200 Hilos"), fall
+  // back to the smart extractor so we get "Hibiscus" instead of "Hilos".
+  if (TITLE_STOPWORDS.has(normalizeWord(last))) {
+    const smart = smartDesignFromTitle(title);
+    if (smart) return { color: smart, tipo: null };
+  }
   return { color: last, tipo: null };
 }
 

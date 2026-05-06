@@ -51,7 +51,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   // 1. Find item_id in ml_items_map
   const { data: mlItem } = await inventoryDb
     .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
+    .select('sku_venta, item_id, titulo, family_name, thumbnail, permalink, bed_size')
     .eq('sku_venta', sku)
     .eq('activo', true)
     .is('variation_id', null)
@@ -199,6 +199,55 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   if (insertError) {
     return NextResponse.json({ error: insertError.message }, { status: 500 });
+  }
+
+  // 6. Upsert into project.metadata.variantes so the size filter (and other
+  // variant-aware UIs) pick up bed_size, label, etc. without requiring a
+  // separate /backfill-variantes run.
+  try {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('metadata')
+      .eq('id', projectId)
+      .single();
+
+    const meta = (project?.metadata || {}) as { variantes?: Array<Record<string, unknown>> };
+    const variantes = Array.isArray(meta.variantes) ? meta.variantes : [];
+    const designForVariant = designName || colorName;
+    const labelParts = [designForVariant, sizeName].filter(Boolean);
+    const variantSlug =
+      `${(designForVariant || '').toLowerCase()}-${(sizeName || '').toLowerCase()}`
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '-').replace(/-{2,}/g, '-').replace(/(^-|-$)/g, '');
+
+    const newVariante: Record<string, unknown> = {
+      sku,
+      color: designForVariant,
+      color_slug: variantSlug,
+      source: 'catalogo',
+      tipo: null,
+      bed_size: mlItem.bed_size || sizeName || null,
+      label: labelParts.join(' · '),
+      item_id: mlItem.item_id,
+      titulo: item.title || mlItem.titulo,
+      thumbnail: mlItem.thumbnail || undefined,
+      permalink: mlItem.permalink || undefined,
+    };
+
+    const upsertedVariantes = [...variantes];
+    const idx = upsertedVariantes.findIndex(
+      (v) => (v.sku as string | undefined)?.toUpperCase() === sku.toUpperCase()
+    );
+    if (idx >= 0) upsertedVariantes[idx] = { ...upsertedVariantes[idx], ...newVariante };
+    else upsertedVariantes.push(newVariante);
+
+    await supabase
+      .from('projects')
+      .update({ metadata: { ...meta, variantes: upsertedVariantes } })
+      .eq('id', projectId);
+  } catch (err) {
+    console.error('[from-sku] failed to upsert variant in metadata:', err);
+    // Non-fatal: the swatch is already created
   }
 
   return NextResponse.json({
