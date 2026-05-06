@@ -235,9 +235,15 @@ function buildCannonPageUrls(
   return [...new Set(urls)];
 }
 
-// Fetch product page and extract all sabanas*_N.jpg filenames referenced in the HTML.
+// Fetch product page and extract sabanas*_N.jpg filenames referenced in the HTML.
+// Filtered to filenames whose stem matches one of `targetPatterns` (e.g.
+// "sabanasking200hilosjuncus") so we don't accidentally import images of
+// related products that Cannon's category/landing pages list alongside.
 // Magento stores originals at /media/catalog/product/s/a/{filename} for filenames starting with "sa".
-async function scrapeCannonProductImages(pageUrl: string): Promise<string[]> {
+async function scrapeCannonProductImages(
+  pageUrl: string,
+  targetPatterns: string[]
+): Promise<string[]> {
   try {
     const res = await fetch(pageUrl, {
       headers: { 'Accept': 'text/html', 'User-Agent': 'Mozilla/5.0' },
@@ -249,6 +255,11 @@ async function scrapeCannonProductImages(pageUrl: string): Promise<string[]> {
     );
     const filenames = new Set<string>();
     for (const m of matches) {
+      const stem = m[1].toLowerCase();
+      // Keep only if filename stem starts with any of the target product patterns.
+      // Stems like "sabanasking200hilosjuncus_1" → match "sabanasking200hilosjuncus".
+      const ok = targetPatterns.some((p) => stem.startsWith(p.toLowerCase()));
+      if (!ok) continue;
       filenames.add(`${m[1]}.${m[2].toLowerCase()}`);
     }
     return [...filenames].map(
@@ -536,7 +547,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         const pageUrls = buildCannonPageUrls(attrs, item.title);
         (swatchResult.debug as Record<string, unknown>).page_urls = pageUrls;
         for (const pageUrl of pageUrls) {
-          const scraped = await scrapeCannonProductImages(pageUrl);
+          const scraped = await scrapeCannonProductImages(pageUrl, patterns);
           if (scraped.length > 0) {
             imageUrls = scraped;
             scrapedMode = true;
