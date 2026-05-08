@@ -110,11 +110,17 @@ Respond ONLY with valid JSON (no markdown, no backticks):
       orientation_correct: Number(parsed.orientation_correct ?? 0),
     };
 
-    // Base blockers: pattern + invention + orientation (orientation is critical
-    // for directional patterns; undefined means the verifier didn't opine).
+    // Base blockers: color + pattern + invention + orientation. Color is a
+    // hard blocker because BANVA products are sold by color variant — a quilt
+    // listed as "Arena" that ships looking blue is a refund, not a tolerable
+    // drift. Repro: job 65706cda passed with score 0.71 despite the verifier
+    // explicitly flagging "light blue instead of cream" because color_match
+    // wasn't in the blocker set. Orientation is critical for directional
+    // patterns; undefined means the verifier didn't opine.
     const baseBlockersPass =
       score >= 0.7 &&
       parsed.pattern_match === 1 &&
+      parsed.color_match === 1 &&
       parsed.no_invention === 1 &&
       (parsed.orientation_correct === 1 || parsed.orientation_correct === undefined);
 
