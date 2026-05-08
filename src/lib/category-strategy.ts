@@ -964,6 +964,16 @@ La tela del resultado debe verse PIXEL A PIXEL como la tela de Imagen 2 — mism
 
 Solo la composición (muebles, personas, animales, almohadas, fondo, iluminación) viene del hero — la TELA viene 100% de Imagen 2.` : '';
 
+  // SUPERFICIES UNIFORMES — covers hero folds/reverses staying in original color
+  // (job b4130eb6: bicolor reversible cubrecama, fold stayed red) AND swatch folds
+  // contributing a second pattern (job 99d16f0e: swatch had fold with different
+  // quilting on reverse, output ended up with two textures). Skip for infografia
+  // because that shot type is intentionally bicolor (product vs competitor).
+  const uniformFabricNote = shotType === 'infografia' ? '' : `
+
+SUPERFICIES UNIFORMES — REGLA CRÍTICA:
+El producto final es UNA SOLA tela uniforme: un color, un patrón, en TODA su superficie. Si la Imagen 1 muestra el producto con un pliegue, esquina volteada o un reverso de color o patrón distinto al frente, ESAS zonas también llevan exactamente la tela de la Imagen 2 — no preserves color ni patrón del hero ahí. Si la Imagen 2 muestra la tela con un fold revelando un reverso de patrón distinto al cuerpo principal, IGNORA ese reverso y usa solo el patrón del cuerpo principal en todas las superficies del producto. Resultado: un solo color, un solo patrón, sin mezclas ni zonas con la tela original del hero.`;
+
   if (shotType === 'detail') {
     // If the strategy has a category-specific detail rule, use it (overrides generic).
     // This is crucial for quilts where we must NOT invent texture and must NOT
@@ -975,11 +985,11 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
     if (detailRule) {
       return `${opener}
 
-${detailRule}${darkNote}${qaNote}${replaceNote}${overlayPreserveNote}
+${detailRule}${darkNote}${qaNote}${replaceNote}${uniformFabricNote}${overlayPreserveNote}
 
 Si hay texto en inglés, traducir al español. Sin marcas de agua. Imagen fotorrealista de ${resolution}.`;
     }
-    return `${opener}${darkNote}${qaNote}${replaceNote}${overlayPreserveNote}
+    return `${opener}${darkNote}${qaNote}${replaceNote}${uniformFabricNote}${overlayPreserveNote}
 
 Imagen fotorrealista de ${resolution}.`;
   }
@@ -1016,7 +1026,7 @@ Imagen fotorrealista de ${resolution}.`;
   // Use shot-type-aware instructions if category has them
   const whatToChange = strategy.prompt.what_to_change;
 
-  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}${replaceNote}
+  return `Toma Imagen 1 y cámbiale SOLO la tela del producto al color/patrón/textura de Imagen 2. ${whatToChange}${darkNote}${qaNote}${replaceNote}${uniformFabricNote}
 
 Imagen 1 es la composición exacta: mantén personas, rostros, expresiones, manos, pelo, fondo, muebles, lámpara, objetos de mesa de noche, almohadas decorativas, iluminación, encuadre y foco idénticos. MISMA cantidad de almohadas, misma posición, mismo tamaño. Solo la tela del producto cambia. Si hay texto en inglés, traducir al español. Sin marcas de agua.
 
