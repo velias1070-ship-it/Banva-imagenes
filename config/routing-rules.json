@@ -61,6 +61,14 @@
         "gpt-image-2"
       ]
     },
+    "frazadas": {
+      "attempts": [
+        "gemini-pro",
+        "gemini-pro",
+        "gpt-image-2"
+      ],
+      "_decision_basis": "Flash on flannel-ribbed heroes consistently leaks (50/50 bicolor or localized blue patches) — see jobs 3a78ac3b, 5b8e0e99, 59ced8d7, 783b1cbb, f36bc552, 1e0d6f3d, 991315ed. Pro is stable. 2026-05-08."
+    },
     "brand": {
       "attempts": [
         "gemini-flash",
