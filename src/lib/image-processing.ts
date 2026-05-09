@@ -1054,10 +1054,21 @@ export async function compositeHeroOverlays(
       const lab = rgbToLab(c.r, c.g, c.b);
       return { a: lab.a, b: lab.b };
     });
-    // Tight threshold: rib transition pixels match dominant fabric chroma at
-    // ~0-3 (a,b) units. Icon teal pictograms inside navy circles match at ~7
-    // and need to be preserved. Threshold 5 is comfortably between.
-    const CHROMA_DIST = 5;
+    // Adaptive chroma threshold scaled to fabric saturation. Rationale:
+    // anti-aliased edges between fabric and wall drift in (a,b) space
+    // proportionally to the fabric's chroma magnitude. A near-neutral fabric
+    // (celeste palette mag ~5) has edge drift ~1-3, so a tight threshold
+    // (~5) keeps icon teal at chroma 7 safe. A saturated fabric (red palette
+    // mag ~75) has edge drift up to ~20 (job 34601916: salmon edge pixels at
+    // chroma 6-21 from deep red palette). Scaling by 0.25 × max palette
+    // chroma mag covers most edge pixels without ever clipping the cream
+    // wall (chroma_dist to red ~65, to celeste ~13 — both well outside).
+    let maxPaletteChromaMag = 0;
+    for (const c of fabricChroma) {
+      const m = Math.sqrt(c.a * c.a + c.b * c.b);
+      if (m > maxPaletteChromaMag) maxPaletteChromaMag = m;
+    }
+    const CHROMA_DIST = Math.min(20, Math.max(5, maxPaletteChromaMag * 0.25));
     for (let i = 0; i < cw * ch; i++) {
       const idx = i * inCh;
       const r = data[idx];
