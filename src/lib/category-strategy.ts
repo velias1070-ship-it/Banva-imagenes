@@ -941,12 +941,17 @@ PRESERVAR OVERLAYS DEL HERO — REGLA CRÍTICA:
 La Imagen 1 contiene overlays de texto, branding, cotas e infografía superpuestos sobre el producto. ESOS OVERLAYS DEBEN APARECER IDÉNTICOS EN EL RESULTADO — mismo contenido, misma posición, mismo tamaño, misma fuente, mismo color. NO los borres. NO los muevas. NO los traduzcas. Solo cambia la TELA del producto que está debajo de ellos.
 Lista de elementos a preservar:
 ${overlayList}` : '';
-  // When patterns differ, DISCARD any verifier qaFeedback — it usually says
-  // "pattern doesn't match" which Gemini reads as "preserve the hero's pattern
-  // (the model the verifier expected)", directly contradicting the REEMPLAZO
-  // COMPLETO rule below. The REEMPLAZO rule is the authoritative instruction
-  // for this case; the verifier's free-text complaint is noise.
-  const effectiveQaFeedback = patternsDiffer ? null : qaFeedback;
+  // Discard verifier qaFeedback in edit mode (uniformFabricNote covers all
+  // shotTypes except infografia). Reasons:
+  //   1. patternsDiffer case: feedback like "pattern doesn't match" makes
+  //      Gemini preserve the hero's pattern, contradicting REEMPLAZO COMPLETO.
+  //   2. hero-leak case (jobs 5b8e0e99, fd35ff47): feedback like "invented
+  //      blue patch" makes Gemini fixate on the word "blue" and re-emit blue
+  //      patches. The free-text complaint poisons the retry.
+  // The structured rules (REEMPLAZO + SUPERFICIES UNIFORMES) are the
+  // authoritative retry signal; verifier free-text is noise.
+  const dropQaFeedback = shotType !== 'infografia';
+  const effectiveQaFeedback = dropQaFeedback ? null : qaFeedback;
   const qaNote = effectiveQaFeedback ? `\nINTENTO ANTERIOR FALLÓ: "${effectiveQaFeedback}"` : '';
   // Force-replace section: only injected when arePatternsSimilar returned false.
   // Without this, Gemini 3 Pro Image preserves distinctive painted patterns
@@ -967,12 +972,16 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
   // SUPERFICIES UNIFORMES — covers hero folds/reverses staying in original color
   // (job b4130eb6: bicolor reversible cubrecama, fold stayed red) AND swatch folds
   // contributing a second pattern (job 99d16f0e: swatch had fold with different
-  // quilting on reverse, output ended up with two textures). Skip for infografia
-  // because that shot type is intentionally bicolor (product vs competitor).
+  // quilting on reverse, output ended up with two textures) AND generic hero
+  // color leaks (job 5b8e0e99 / fd35ff47: frazada flannel where Gemini left
+  // patches of the original hero color visible despite no fold being present).
+  // Skip for infografia because that shot type is intentionally bicolor.
   const uniformFabricNote = shotType === 'infografia' ? '' : `
 
 SUPERFICIES UNIFORMES — REGLA CRÍTICA:
-El producto final es UNA SOLA tela uniforme: un color, un patrón, en TODA su superficie. Si la Imagen 1 muestra el producto con un pliegue, esquina volteada o un reverso de color o patrón distinto al frente, ESAS zonas también llevan exactamente la tela de la Imagen 2 — no preserves color ni patrón del hero ahí. Si la Imagen 2 muestra la tela con un fold revelando un reverso de patrón distinto al cuerpo principal, IGNORA ese reverso y usa solo el patrón del cuerpo principal en todas las superficies del producto. Resultado: un solo color, un solo patrón, sin mezclas ni zonas con la tela original del hero.`;
+El producto final es UNA SOLA tela uniforme: un color, un patrón, en TODA su superficie. NO dejes NINGÚN píxel del color del hero original en NINGUNA parte del producto — ni en pliegues, ni en sombras, ni en zonas con relieve, ni "filtrándose" detrás de la nueva tela. Si después de generar quedan zonas (parches, franjas, sombras) con el color del hero original visible sobre el producto, falló. Toda la superficie textil del producto debe ser exactamente la tela de la Imagen 2.
+
+Si la Imagen 1 muestra el producto con un pliegue, esquina volteada o un reverso de color o patrón distinto al frente, ESAS zonas también llevan exactamente la tela de la Imagen 2 — no preserves color ni patrón del hero ahí. Si la Imagen 2 muestra la tela con un fold revelando un reverso de patrón distinto al cuerpo principal, IGNORA ese reverso y usa solo el patrón del cuerpo principal en todas las superficies del producto. Resultado: un solo color, un solo patrón, sin mezclas ni zonas con la tela original del hero.`;
 
   if (shotType === 'detail') {
     // If the strategy has a category-specific detail rule, use it (overrides generic).
