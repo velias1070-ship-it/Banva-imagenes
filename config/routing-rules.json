@@ -65,9 +65,9 @@
       "attempts": [
         "gemini-pro",
         "gemini-pro",
-        "gemini-pro"
+        "gpt-image-2"
       ],
-      "_decision_basis": "Flash leaks (jobs 3a78ac3b et al.) — Pro from attempt 0. gpt-image-2 was tried as fallback but hit OpenAI billing cap (job 5b673072 attempt 2 'Billing hard limit has been reached'); Pro 3rd attempt is safer and uses the same Gemini billing pool that's already proven."
+      "_decision_basis": "Skip Flash (leaks 50/50 bicolor on flannel-ribbed heroes per jobs 3a78ac3b, 5b8e0e99). Pro twice gives a second chance with different temperature (0.1 → 0.2). gpt-image-2 third for model diversity — Pro is reliable but on hard heroes a different model bias can succeed. OpenAI billing must be live for that fallback."
     },
     "brand": {
       "attempts": [
