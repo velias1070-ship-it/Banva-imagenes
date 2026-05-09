@@ -65,9 +65,9 @@
       "attempts": [
         "gemini-pro",
         "gemini-pro",
-        "gpt-image-2"
+        "gemini-pro"
       ],
-      "_decision_basis": "Flash on flannel-ribbed heroes consistently leaks (50/50 bicolor or localized blue patches) — see jobs 3a78ac3b, 5b8e0e99, 59ced8d7, 783b1cbb, f36bc552, 1e0d6f3d, 991315ed. Pro is stable. 2026-05-08."
+      "_decision_basis": "Flash leaks (jobs 3a78ac3b et al.) — Pro from attempt 0. gpt-image-2 was tried as fallback but hit OpenAI billing cap (job 5b673072 attempt 2 'Billing hard limit has been reached'); Pro 3rd attempt is safer and uses the same Gemini billing pool that's already proven."
     },
     "brand": {
       "attempts": [

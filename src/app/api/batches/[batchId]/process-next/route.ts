@@ -1003,9 +1003,26 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       // ("azul claro", "rojo") instead of generic "color del hero". Manual
       // A/B confirmed on jobs 5b673072, de50e6c0 (Gris swatch + light-blue
       // flannel hero). Cheap (~50ms) and non-blocking.
+      // Use a center crop of the hero before sampling — getProductBaseColor
+      // averages a binned histogram, and on lifestyle heroes with lots of
+      // cream wall the wall dominates the bin counts. Job 5b673072 regen
+      // detected "crema #e5ddd3" instead of "azul claro" because of this.
+      // The center 50% × 50% crop typically falls on the product.
       let heroColorHint: { hex?: string | null; name?: string | null } | null = null;
       try {
-        const heroRgb = await getProductBaseColor(heroBuffer);
+        const sharpHero = (await import('sharp')).default;
+        const heroMeta = await sharpHero(heroBuffer).metadata();
+        const hW = heroMeta.width || 1200;
+        const hH = heroMeta.height || 1200;
+        const cropX = Math.round(hW * 0.5);  // right half — left is usually overlay/text
+        const cropY = Math.round(hH * 0.25);
+        const cropW = Math.round(hW * 0.45);
+        const cropH = Math.round(hH * 0.5);
+        const heroProductBuf = await sharpHero(heroBuffer)
+          .extract({ left: cropX, top: cropY, width: cropW, height: cropH })
+          .png()
+          .toBuffer();
+        const heroRgb = await getProductBaseColor(heroProductBuf);
         const heroHex = `#${[heroRgb.r, heroRgb.g, heroRgb.b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
         const heroName = rgbToSpanishColorName(heroRgb.r, heroRgb.g, heroRgb.b);
         heroColorHint = { hex: heroHex, name: heroName };

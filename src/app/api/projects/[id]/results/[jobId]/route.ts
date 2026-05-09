@@ -963,9 +963,24 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         }
       }
       // Sample hero base color for prompt anti-leak hint (see process-next).
+      // Use a right-half center crop so we sample the product, not the
+      // cream wall / overlays that dominate the left half of typical heroes.
       let heroColorHint: { hex?: string | null; name?: string | null } | null = null;
       try {
-        const heroRgb = await getProductBaseColor(heroBuffer);
+        const sharpHero = (await import('sharp')).default;
+        const heroMeta = await sharpHero(heroBuffer).metadata();
+        const hW = heroMeta.width || 1200;
+        const hH = heroMeta.height || 1200;
+        const heroProductBuf = await sharpHero(heroBuffer)
+          .extract({
+            left: Math.round(hW * 0.5),
+            top: Math.round(hH * 0.25),
+            width: Math.round(hW * 0.45),
+            height: Math.round(hH * 0.5),
+          })
+          .png()
+          .toBuffer();
+        const heroRgb = await getProductBaseColor(heroProductBuf);
         const heroHex = `#${[heroRgb.r, heroRgb.g, heroRgb.b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
         const heroName = rgbToSpanishColorName(heroRgb.r, heroRgb.g, heroRgb.b);
         heroColorHint = { hex: heroHex, name: heroName };
