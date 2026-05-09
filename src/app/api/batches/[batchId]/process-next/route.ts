@@ -1154,14 +1154,15 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     if (!ownedPrompt) return { chain: true, triggerQA: false };
 
     // ── Generate image based on mode ──
-    // Escalate to Pro model for retries. Categories with fine/smooth weave
-    // (quilts with waffle/pique; cortinas with lino/sarga) escalate after
-    // just 1 failed attempt because Flash consistently produces coarser
-    // weave than the reference, triggering verifier rejects. Frazadas added
-    // 2026-05-08: Flash on flannel ribbed heroes intermittently produces
-    // 50/50 bicolor outputs (see jobs 3a78ac3b, 5b8e0e99). Pro is stable.
-    // Other categories retry with Flash once before escalating.
-    const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras' || category === 'frazadas') ? 1 : 2;
+    // Escalate to Pro model. Frazadas use Pro from attempt 0 because Flash
+    // intermittently produces 50/50 bicolor outputs (see jobs 3a78ac3b,
+    // 5b8e0e99) and the verifier doesn't reliably catch them — manual A/B
+    // confirmed Pro+strong prompt is consistently clean while Flash is not.
+    // Quilts/cortinas/alfombras escalate after 1 failed attempt (fine weave
+    // problem). Other categories retry with Flash once before escalating.
+    const proThreshold = category === 'frazadas' ? 0
+      : (category === 'quilts' || category === 'cortinas' || category === 'alfombras') ? 1
+      : 2;
     const useProModel = job.attempt >= proThreshold;
 
     logPipelineEvent(job.id, 'GENERATION_START', useProModel ? 'Pro' : 'Flash', {

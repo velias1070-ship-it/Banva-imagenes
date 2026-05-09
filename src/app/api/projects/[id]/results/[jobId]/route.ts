@@ -1080,11 +1080,13 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       opacity: swatchProfileForSig?.opacity || null,
     });
 
-    // Generate — escalate to Pro model. Quilts + cortinas escalate earlier
-    // (Flash can't reproduce fine/smooth weave — verifier rejects coarse output).
-    // Frazadas added 2026-05-08: Flash intermittently produces 50/50 bicolor
-    // outputs on flannel ribbed heroes (jobs 3a78ac3b, 5b8e0e99) — Pro is stable.
-    const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras' || category === 'frazadas') ? 1 : 2;
+    // Generate — escalate to Pro model. Frazadas use Pro from attempt 0
+    // because Flash intermittently leaves localized leaks / 50/50 bicolor
+    // outputs that the verifier doesn't reliably catch. Quilts/cortinas/
+    // alfombras escalate after 1 failed attempt. Others retry with Flash once.
+    const proThreshold = category === 'frazadas' ? 0
+      : (category === 'quilts' || category === 'cortinas' || category === 'alfombras') ? 1
+      : 2;
     const useProModel = attempt >= proThreshold;
 
     // ── COST CAP GUARD (Sprint 2 issue #3) ──
