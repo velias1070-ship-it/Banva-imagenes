@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImageSmart } from '@/lib/image-providers';
-import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, rgbToSpanishColorName } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, getDominantColorPalette, rgbToSpanishColorName } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -1321,6 +1321,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         }
         if (bboxes && bboxes.length > 0) {
           let heroFabricRgb: { r: number; g: number; b: number } | null = null;
+          let heroFabricPalette: Array<{ r: number; g: number; b: number }> = [];
           try {
             const sharpHero = (await import('sharp')).default;
             const heroMeta = await sharpHero(heroBuffer).metadata();
@@ -1336,9 +1337,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
               .png()
               .toBuffer();
             heroFabricRgb = await getProductBaseColor(heroProductBuf);
+            heroFabricPalette = await getDominantColorPalette(heroProductBuf, 5);
           } catch { /* non-blocking */ }
-          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes, { heroFabricRgb });
-          logPipelineEvent(jobId, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero`);
+          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes, { heroFabricRgb, heroFabricPalette });
+          logPipelineEvent(jobId, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero (${heroFabricPalette.length} fabric BGs)`);
         }
       } catch (overlayErr) {
         console.error('[regenerateJob] Hero overlay restore failed (non-blocking):', overlayErr);

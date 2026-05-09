@@ -85,6 +85,39 @@ export async function getDominantColor(imageBuffer: Buffer): Promise<{ r: number
  * color comes out ~RGB(210,210,215) for all four tested swatches, matching
  * the actual white-with-accents product. See audit 2026-04-15 job 1017bdb7.
  */
+/**
+ * Sample multiple dominant colors from a region. Returns the top-N most
+ * common color bins (each averaged within the bin). Used to characterize
+ * a textured fabric where shadows + highlights span a range of related
+ * colors — chroma-key against a single "dominant" misses the others.
+ */
+export async function getDominantColorPalette(
+  imageBuffer: Buffer,
+  topN: number = 3,
+): Promise<Array<{ r: number; g: number; b: number; count: number }>> {
+  const { data, info } = await sharp(imageBuffer)
+    .resize(150, 150, { fit: 'inside' })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const channels = info.channels;
+  const bins = new Map<string, { count: number; sumR: number; sumG: number; sumB: number }>();
+  for (let i = 0; i < data.length; i += channels) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const key = `${r >> 3}|${g >> 3}|${b >> 3}`;
+    const bin = bins.get(key);
+    if (bin) { bin.count++; bin.sumR += r; bin.sumG += g; bin.sumB += b; }
+    else bins.set(key, { count: 1, sumR: r, sumG: g, sumB: b });
+  }
+  const sorted = Array.from(bins.values()).sort((a, b) => b.count - a.count);
+  return sorted.slice(0, topN).map(b => ({
+    r: Math.round(b.sumR / b.count),
+    g: Math.round(b.sumG / b.count),
+    b: Math.round(b.sumB / b.count),
+    count: b.count,
+  }));
+}
+
 export async function getProductBaseColor(imageBuffer: Buffer): Promise<{ r: number; g: number; b: number }> {
   const { data, info } = await sharp(imageBuffer)
     .resize(150, 150, { fit: 'inside' })
@@ -889,7 +922,10 @@ export async function compositeHeroOverlays(
   heroBuffer: Buffer,
   resultBuffer: Buffer,
   bboxes: Array<{ text?: string; x: number; y: number; width: number; height: number }>,
-  opts?: { heroFabricRgb?: { r: number; g: number; b: number } | null },
+  opts?: {
+    heroFabricRgb?: { r: number; g: number; b: number } | null;
+    heroFabricPalette?: Array<{ r: number; g: number; b: number }> | null;
+  },
 ): Promise<Buffer> {
   if (!bboxes || bboxes.length === 0) return resultBuffer;
 
@@ -986,16 +1022,25 @@ export async function compositeHeroOverlays(
       .toBuffer({ resolveWithObject: true });
     const inCh = info.channels;
     const out = Buffer.alloc(cw * ch * 4);
-    // Two background classes to chroma-key out:
+    // Multiple background classes to chroma-key out:
     //   1. The corner-sampled local BG (typically the wall behind the icon).
-    //   2. The known hero fabric color (from heroColorHint). When the bbox
-    //      extends slightly into the hero's fabric region, those pixels are
-    //      far from the corner sample but should still be removed because
-    //      we know they're hero fabric, not icon glyphs. Repro: job ed172062
-    //      (Olivo + blue flannel hero) left a faint blue halo to the right
-    //      of each circle icon because the bbox padded into hero fabric and
-    //      the single-BG chroma-key kept those pixels semi-opaque.
-    const heroFab = opts?.heroFabricRgb;
+    //   2. The known hero fabric dominant color (cresta of ribbed flannel).
+    //   3. Up to N additional palette colors from the hero fabric region —
+    //      shadows/valles of the ribbed relieve carry darker variants of
+    //      the same fabric that single-color chroma-key misses. Repro: job
+    //      7ef08d0c (Olivo + blue flannel) left small dark-blue glyphs from
+    //      the hero rib shadows that the dual chroma-key preserved as
+    //      "neither wall nor light fabric → opaque". Adding the palette
+    //      covers the full range of hero-fabric hues.
+    const fabricBgs: Array<{ r: number; g: number; b: number }> = [];
+    if (opts?.heroFabricRgb) fabricBgs.push(opts.heroFabricRgb);
+    if (opts?.heroFabricPalette) {
+      for (const c of opts.heroFabricPalette) {
+        if (!fabricBgs.some(f => Math.abs(f.r - c.r) + Math.abs(f.g - c.g) + Math.abs(f.b - c.b) < 20)) {
+          fabricBgs.push(c);
+        }
+      }
+    }
     for (let i = 0; i < cw * ch; i++) {
       const idx = i * inCh;
       const r = data[idx];
@@ -1004,16 +1049,13 @@ export async function compositeHeroOverlays(
       const dr1 = r - bgR;
       const dg1 = g - bgG;
       const db1 = b - bgB;
-      const dist1 = Math.sqrt(dr1 * dr1 + dg1 * dg1 + db1 * db1);
-      let dist = dist1;
-      if (heroFab) {
-        const dr2 = r - heroFab.r;
-        const dg2 = g - heroFab.g;
-        const db2 = b - heroFab.b;
-        const dist2 = Math.sqrt(dr2 * dr2 + dg2 * dg2 + db2 * db2);
-        // Pixel is "background" if close to EITHER the wall OR the hero
-        // fabric color. Use the minimum distance to decide opacity.
-        dist = Math.min(dist, dist2);
+      let dist = Math.sqrt(dr1 * dr1 + dg1 * dg1 + db1 * db1);
+      for (const fb of fabricBgs) {
+        const drx = r - fb.r;
+        const dgx = g - fb.g;
+        const dbx = b - fb.b;
+        const distFb = Math.sqrt(drx * drx + dgx * dgx + dbx * dbx);
+        if (distFb < dist) dist = distFb;
       }
       let alpha: number;
       if (dist <= NEAR_DIST) alpha = 0;

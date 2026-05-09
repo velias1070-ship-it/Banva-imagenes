@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { type GeminiGenerateResult } from '@/lib/gemini/client';
 import { generateImageSmart } from '@/lib/image-providers';
-import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, rgbToSpanishColorName } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, getDominantColorPalette, rgbToSpanishColorName } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -1337,11 +1337,14 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           }
         }
         if (bboxes && bboxes.length > 0) {
-          // Re-sample hero fabric RGB (was sampled earlier for prompt hint;
-          // out of scope here, ~50ms to redo). Used as a second chroma-key
-          // BG class so per-bbox composites that pad into hero fabric don't
-          // leave a halo of the original color (job ed172062).
+          // Re-sample hero fabric palette: dominant + top variants (cresta,
+          // valle, sombra in ribbed flannel). Single-color chroma-key (fix
+          // 8870410) didn't catch the darker rib shadows — job 7ef08d0c
+          // still showed small dark-blue glyphs from rib shadows surviving
+          // both chroma-keys (far from wall, far from light-blue dominant).
+          // Pass the full palette so each fabric variant is its own BG class.
           let heroFabricRgb: { r: number; g: number; b: number } | null = null;
+          let heroFabricPalette: Array<{ r: number; g: number; b: number }> = [];
           try {
             const sharpHero = (await import('sharp')).default;
             const heroMeta = await sharpHero(heroBuffer).metadata();
@@ -1357,9 +1360,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
               .png()
               .toBuffer();
             heroFabricRgb = await getProductBaseColor(heroProductBuf);
+            heroFabricPalette = await getDominantColorPalette(heroProductBuf, 5);
           } catch { /* non-blocking */ }
-          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes, { heroFabricRgb });
-          logPipelineEvent(job.id, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero`);
+          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes, { heroFabricRgb, heroFabricPalette });
+          logPipelineEvent(job.id, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero (${heroFabricPalette.length} fabric BGs)`);
         }
       } catch (overlayErr) {
         console.error('[process-next] Hero overlay restore failed (non-blocking):', overlayErr);
