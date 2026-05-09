@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImageSmart } from '@/lib/image-providers';
-import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, rgbToSpanishColorName } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
   getCategoryStrategy,
@@ -962,6 +962,17 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           console.error('[regenerateJob] analyzeTextElements failed (non-blocking):', err);
         }
       }
+      // Sample hero base color for prompt anti-leak hint (see process-next).
+      let heroColorHint: { hex?: string | null; name?: string | null } | null = null;
+      try {
+        const heroRgb = await getProductBaseColor(heroBuffer);
+        const heroHex = `#${[heroRgb.r, heroRgb.g, heroRgb.b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
+        const heroName = rgbToSpanishColorName(heroRgb.r, heroRgb.g, heroRgb.b);
+        heroColorHint = { hex: heroHex, name: heroName };
+        logPipelineEvent(jobId, 'HERO_COLOR_HINT', `${heroName} ${heroHex}`);
+      } catch (err) {
+        console.error('[regenerateJob] hero color sample failed (non-blocking):', err);
+      }
       prompt = buildPromptForMode(
         mode,
         strategy,
@@ -974,6 +985,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         null,
         patternsDiffer,
         detectedHeroOverlays,
+        heroColorHint,
       );
     }
 

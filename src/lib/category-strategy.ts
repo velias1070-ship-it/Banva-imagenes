@@ -924,6 +924,7 @@ export function buildEditPrompt(
   _swatchHex?: string | null,
   patternsDiffer: boolean = false,
   heroTextElements?: Array<{ text: string; position?: string; size?: string; role?: string }> | null,
+  heroColorHint?: { hex?: string | null; name?: string | null } | null,
 ): string {
   const darkNote = isDarkSwatch ? ' No aclares la tela — debe ser igual de oscura que la Imagen 2.' : '';
   // When the hero is classified as `detail` but actually carries text overlays
@@ -985,16 +986,29 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
   const swatchPhrase = swatchHexLabel
     ? `${swatchLabel} (color ${swatchHexLabel})`
     : swatchLabel;
+  // Hero color phrase — when available, the prompt says "no leak of azul claro"
+  // explicitly instead of generic "no leak of hero color". Manual A/B on jobs
+  // 5b673072 / de50e6c0 (Gris swatch + light-blue flannel hero) confirmed Pro
+  // suppresses leaks much better when the hero color is named in the prompt.
+  const heroNamePart = heroColorHint?.name?.trim();
+  const heroHexPart = heroColorHint?.hex?.trim();
+  const heroPhrase = heroNamePart && heroHexPart
+    ? `${heroNamePart} (color ${heroHexPart})`
+    : (heroNamePart || heroHexPart || null);
+  const heroLeakClause = heroPhrase
+    ? `NINGÚN píxel de color ${heroPhrase} (que es el color que el producto tiene en la Imagen 1)`
+    : `NINGÚN píxel del color del hero original`;
+  const heroAvoidShort = heroNamePart || (heroPhrase ? heroPhrase : 'azul/celeste/cualquier color del hero');
   const uniformFabricNote = shotType === 'infografia' ? '' : `
 
 SUPERFICIES UNIFORMES — REGLA CRÍTICA:
-El producto final es UNA SOLA tela uniforme: un solo color (${swatchPhrase}), un patrón, en TODA su superficie. NO dejes NINGÚN píxel del color del hero original en NINGUNA parte del producto — ni en pliegues, ni en sombras, ni en zonas con relieve, ni "filtrándose" detrás de la nueva tela. Si después de generar quedan zonas (parches, franjas, sombras) con el color del hero original visible sobre el producto, falló. Toda la superficie textil del producto debe ser exactamente la tela ${swatchPhrase} de la Imagen 2.
+El producto final es UNA SOLA tela uniforme: un solo color (${swatchPhrase}), un patrón, en TODA su superficie. NO dejes ${heroLeakClause} en NINGUNA parte del producto — ni en pliegues, ni en sombras, ni en zonas con relieve, ni "filtrándose" detrás de la nueva tela. Si después de generar quedan zonas (parches, franjas, sombras) con ${heroPhrase ? `color ${heroPhrase}` : 'el color del hero original'} visible sobre el producto, falló. Toda la superficie textil del producto debe ser exactamente la tela ${swatchPhrase} de la Imagen 2 — sin tinte ${heroAvoidShort}, sin parches ${heroAvoidShort}, sin sombras ${heroAvoidShort}.
 
 TEXTURA 3D — REGLA EXPLÍCITA:
-Si el producto en Imagen 1 tiene relieve 3D (costillas, ribs, quilting embossed, pliegues con sombra, dobleces marcados), CADA cresta Y CADA valle/receso/sombra de ese relieve debe pintarse con la tela ${swatchPhrase} de Imagen 2. NO dejes el color original del hero en los valles/recesos/sombras del relieve. La estructura 3D se mantiene pero TODO su volumen es ${swatchPhrase} — la cresta es ${swatchPhrase}, el valle es una versión más oscura de ${swatchPhrase} (NO el color del hero), la sombra es una versión aún más oscura de ${swatchPhrase} (NO azul, NO el color del hero).
+Si el producto en Imagen 1 tiene relieve 3D (costillas, ribs, quilting embossed, pliegues con sombra, dobleces marcados), CADA cresta Y CADA valle/receso/sombra de ese relieve debe pintarse con la tela ${swatchPhrase} de Imagen 2. NO dejes el color ${heroAvoidShort} del hero en los valles/recesos/sombras del relieve. La estructura 3D se mantiene pero TODO su volumen es ${swatchPhrase} — la cresta es ${swatchPhrase}, el valle es una versión más oscura de ${swatchPhrase} (NO ${heroAvoidShort}), la sombra es una versión aún más oscura de ${swatchPhrase} (NO ${heroAvoidShort}, NO el color del hero).
 
 PRODUCTOS SECUNDARIOS:
-Si en la Imagen 1 hay copias del mismo producto en canastas, sobre muebles, doblados de fondo, en pilas o en cualquier ubicación secundaria, ESAS copias también son el producto y también se reemplazan con la tela ${swatchPhrase} de la Imagen 2 — mismo color, mismo patrón. No quedan unidades del producto en el hero color original; todas se cambian a ${swatchPhrase}.
+Si en la Imagen 1 hay copias del mismo producto en canastas, sobre muebles, doblados de fondo, en pilas o en cualquier ubicación secundaria, ESAS copias también son el producto y también se reemplazan con la tela ${swatchPhrase} de la Imagen 2 — mismo color, mismo patrón. No quedan unidades del producto en color ${heroAvoidShort}; todas se cambian a ${swatchPhrase}.
 
 Si la Imagen 1 muestra el producto con un pliegue, esquina volteada o un reverso de color o patrón distinto al frente, ESAS zonas también llevan exactamente la tela ${swatchPhrase} de la Imagen 2 — no preserves color ni patrón del hero ahí. Si la Imagen 2 muestra la tela con un fold revelando un reverso de patrón distinto al cuerpo principal, IGNORA ese reverso y usa solo el patrón del cuerpo principal en todas las superficies del producto. Resultado: un solo color (${swatchPhrase}), un solo patrón, sin mezclas ni zonas con la tela original del hero.`;
 
@@ -1163,10 +1177,11 @@ export function buildPromptForMode(
   swatchHex?: string | null,
   patternsDiffer: boolean = false,
   heroTextElements?: Array<{ text: string; position?: string; size?: string; role?: string }> | null,
+  heroColorHint?: { hex?: string | null; name?: string | null } | null,
 ): string {
   switch (mode) {
     case 'edit':
-      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex, patternsDiffer, heroTextElements);
+      return buildEditPrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex, patternsDiffer, heroTextElements, heroColorHint);
     case 'reference':
       return buildReferencePrompt(strategy, swatchName, colorDescription, shotType, isDarkSwatch, qaFeedback, resolution, swatchHex);
     case 'from_scratch':

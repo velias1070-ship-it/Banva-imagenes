@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { type GeminiGenerateResult } from '@/lib/gemini/client';
 import { generateImageSmart } from '@/lib/image-providers';
-import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE, compositeHeroOverlays } from '@/lib/image-processing';
+import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, rgbToSpanishColorName } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
   getEffectiveMode,
@@ -998,6 +998,21 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           console.error('[process-next] analyzeTextElements failed (non-blocking):', err);
         }
       }
+      // Sample hero base color for prompt anti-leak hint. Pro suppresses
+      // hero-color leaks much better when the hero color is named explicitly
+      // ("azul claro", "rojo") instead of generic "color del hero". Manual
+      // A/B confirmed on jobs 5b673072, de50e6c0 (Gris swatch + light-blue
+      // flannel hero). Cheap (~50ms) and non-blocking.
+      let heroColorHint: { hex?: string | null; name?: string | null } | null = null;
+      try {
+        const heroRgb = await getProductBaseColor(heroBuffer);
+        const heroHex = `#${[heroRgb.r, heroRgb.g, heroRgb.b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
+        const heroName = rgbToSpanishColorName(heroRgb.r, heroRgb.g, heroRgb.b);
+        heroColorHint = { hex: heroHex, name: heroName };
+        logPipelineEvent(job.id, 'HERO_COLOR_HINT', `${heroName} ${heroHex}`);
+      } catch (err) {
+        console.error('[process-next] hero color sample failed (non-blocking):', err);
+      }
       prompt = buildPromptForMode(
         effectiveMode,
         strategy,
@@ -1010,6 +1025,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         swatchHex,
         patternSimilarity === false,
         detectedHeroOverlays ?? null,
+        heroColorHint,
       );
     }
 

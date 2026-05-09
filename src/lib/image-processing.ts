@@ -319,6 +319,58 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 /**
+ * Classify an RGB color to a Spanish color-family name. Used to inject the
+ * hero color into the prompt so Gemini knows what color to AVOID. Manual
+ * A/B confirmed Pro suppresses leaks much better when both source ("azul
+ * claro") and destination ("Gris") colors are named in the prompt vs only
+ * the destination (jobs 5b673072, de50e6c0 — Gris swatch + light-blue
+ * flannel hero).
+ */
+export function rgbToSpanishColorName(r: number, g: number, b: number): string {
+  // Convert to HSL for cleaner classification
+  const rN = r / 255, gN = g / 255, bN = b / 255;
+  const max = Math.max(rN, gN, bN), min = Math.min(rN, gN, bN);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0, s = 0;
+  if (d > 0) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === rN) h = ((gN - bN) / d + (gN < bN ? 6 : 0));
+    else if (max === gN) h = ((bN - rN) / d + 2);
+    else h = ((rN - gN) / d + 4);
+    h *= 60;
+  }
+  // Neutrals first (low saturation)
+  if (s < 0.10) {
+    if (l > 0.85) return 'blanco';
+    if (l > 0.65) return 'gris claro';
+    if (l > 0.40) return 'gris';
+    if (l > 0.20) return 'gris oscuro';
+    return 'negro';
+  }
+  // Light pastels (high lightness, low-mid saturation)
+  if (l > 0.78 && s < 0.35) {
+    if (h >= 180 && h < 260) return 'celeste';
+    if (h >= 0 && h < 30) return 'rosa pálido';
+    if (h >= 30 && h < 70) return 'crema';
+    if (h >= 70 && h < 170) return 'verde claro';
+    if (h >= 260 && h < 320) return 'lila pálido';
+    return 'pastel claro';
+  }
+  // Saturated families by hue
+  if (h < 15 || h >= 345) return l < 0.4 ? 'rojo oscuro' : (l > 0.7 ? 'rosa' : 'rojo');
+  if (h < 45) return l > 0.7 ? 'salmón' : 'naranja';
+  if (h < 65) return l > 0.7 ? 'amarillo claro' : 'amarillo';
+  if (h < 90) return 'amarillo verdoso';
+  if (h < 160) return l < 0.4 ? 'verde oscuro' : (l > 0.65 ? 'verde claro' : 'verde');
+  if (h < 200) return l > 0.65 ? 'celeste' : (l < 0.4 ? 'azul oscuro' : 'azul');
+  if (h < 250) return l > 0.7 ? 'azul claro' : (l < 0.35 ? 'azul marino' : 'azul');
+  if (h < 290) return l > 0.65 ? 'lila' : (l < 0.35 ? 'morado oscuro' : 'morado');
+  if (h < 345) return l > 0.65 ? 'rosa' : 'fucsia';
+  return 'desconocido';
+}
+
+/**
  * Map a Spanish color name to a saturated hex color.
  * Used as a high-confidence fallback when Gemini's swatch analysis returns
  * confusing results (e.g., for full-product swatches with lots of background).
