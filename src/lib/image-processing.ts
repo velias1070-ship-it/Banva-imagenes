@@ -912,25 +912,42 @@ export async function compositeHeroOverlays(
   );
   if (valid.length === 0) return baseBuffer;
 
-  // ── Cluster bboxes by Y-proximity ──
-  // Bboxes within 200px vertical gap are part of the same UI element (a
-  // logo block, a cartel, a header bar). Compositing the *cluster* as one
-  // alpha-masked region eliminates per-word rectangular halos that the
-  // earlier per-bbox approach produced.
+  // ── Cluster bboxes by Y-proximity AND X-proximity ──
+  // Earlier version clustered by Y-gap < 200px only. That caused leak
+  // regression on jobs like de50e6c0 (frazadas Gris): 9 text bboxes
+  // spanning top→bottom of the image clustered into one big cluster whose
+  // corners landed on cream wall, NOT on the blue blanket fabric. The
+  // chroma-key sampled cream as BG → blue blanket fabric inside the
+  // cluster bbox was treated as "foreground" → pasted opaque onto the
+  // generated grey output, reintroducing the original blue.
+  // Now also requires X-proximity (bbox horizontal overlap or < 100px gap)
+  // so each visible UI block (logo top-left, headline center, icon list
+  // bottom-left) ends up as its own cluster with corners adjacent to its
+  // own local backdrop instead of spanning two backgrounds at once.
   const sorted = [...valid].sort((a, b) => a.y - b.y);
   const clusters: typeof sorted[] = [];
-  let current: typeof sorted = [];
-  let lastBottom = -Infinity;
   for (const b of sorted) {
-    const gap = b.y - lastBottom;
-    if (gap > 200 && current.length > 0) {
-      clusters.push(current);
-      current = [];
+    let placed = false;
+    for (const c of clusters) {
+      const cMinY = Math.min(...c.map(p => p.y));
+      const cMaxY = Math.max(...c.map(p => p.y + p.height));
+      const cMinX = Math.min(...c.map(p => p.x));
+      const cMaxX = Math.max(...c.map(p => p.x + p.width));
+      const yGap = b.y - cMaxY;
+      const yOverlap = b.y < cMaxY && b.y + b.height > cMinY;
+      const xGap = Math.max(0, Math.max(cMinX - (b.x + b.width), b.x - cMaxX));
+      const xOverlap = b.x < cMaxX && b.x + b.width > cMinX;
+      // Same cluster if vertically close AND horizontally close/overlapping
+      const yClose = yOverlap || (yGap >= 0 && yGap < 80);
+      const xClose = xOverlap || xGap < 100;
+      if (yClose && xClose) {
+        c.push(b);
+        placed = true;
+        break;
+      }
     }
-    current.push(b);
-    lastBottom = Math.max(lastBottom, b.y + b.height);
+    if (!placed) clusters.push([b]);
   }
-  if (current.length > 0) clusters.push(current);
 
   // Chroma-key tunables. Only pixels with RGB distance > effective threshold
   // from the corner-sampled BG survive as opaque. With NEAR=14, FAR=80, BIN=100,
