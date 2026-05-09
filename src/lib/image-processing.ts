@@ -912,54 +912,30 @@ export async function compositeHeroOverlays(
   );
   if (valid.length === 0) return baseBuffer;
 
-  // ── Cluster bboxes by Y-proximity AND X-proximity ──
-  // Earlier version clustered by Y-gap < 200px only. That caused leak
-  // regression on jobs like de50e6c0 (frazadas Gris): 9 text bboxes
-  // spanning top→bottom of the image clustered into one big cluster whose
-  // corners landed on cream wall, NOT on the blue blanket fabric. The
-  // chroma-key sampled cream as BG → blue blanket fabric inside the
-  // cluster bbox was treated as "foreground" → pasted opaque onto the
-  // generated grey output, reintroducing the original blue.
-  // Now also requires X-proximity (bbox horizontal overlap or < 100px gap)
-  // so each visible UI block (logo top-left, headline center, icon list
-  // bottom-left) ends up as its own cluster with corners adjacent to its
-  // own local backdrop instead of spanning two backgrounds at once.
-  const sorted = [...valid].sort((a, b) => a.y - b.y);
-  const clusters: typeof sorted[] = [];
-  for (const b of sorted) {
-    let placed = false;
-    for (const c of clusters) {
-      const cMinY = Math.min(...c.map(p => p.y));
-      const cMaxY = Math.max(...c.map(p => p.y + p.height));
-      const cMinX = Math.min(...c.map(p => p.x));
-      const cMaxX = Math.max(...c.map(p => p.x + p.width));
-      const yGap = b.y - cMaxY;
-      const yOverlap = b.y < cMaxY && b.y + b.height > cMinY;
-      const xGap = Math.max(0, Math.max(cMinX - (b.x + b.width), b.x - cMaxX));
-      const xOverlap = b.x < cMaxX && b.x + b.width > cMinX;
-      // Same cluster if vertically close AND horizontally close/overlapping
-      const yClose = yOverlap || (yGap >= 0 && yGap < 80);
-      const xClose = xOverlap || xGap < 100;
-      if (yClose && xClose) {
-        c.push(b);
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) clusters.push([b]);
-  }
+  // ── No clustering — each bbox is its own composite group ──
+  // Earlier versions clustered bboxes (first by Y-only, then by X+Y) to
+  // collapse adjacent text into a single composite region. Both versions
+  // had the same failure mode on vertical icon stacks: when 3-5 icons
+  // share the same X column with hero fabric flowing behind them
+  // (jobs de50e6c0, 4f1f7d43), the cluster's union bbox spans both
+  // wall and fabric, the 4-corner BG sample averages them, and the
+  // fabric ends up classified as "foreground" → pasted opaque, which
+  // reintroduces the original hero color exactly where Pro just removed it.
+  // Per-bbox processing keeps each rectangle small enough that its 4
+  // corners land on the immediate local backdrop (wall right next to the
+  // text/icon), giving a clean BG sample that the chroma-key can remove.
+  const clusters: typeof valid[] = valid.map((b) => [b]);
 
-  // Chroma-key tunables. Only pixels with RGB distance > effective threshold
-  // from the corner-sampled BG survive as opaque. With NEAR=14, FAR=80, BIN=100,
-  // the effective threshold is ~40 — aggressive enough to drop near-fabric
-  // panel backdrops *and* near-wall lamp/cabinet pixels that would otherwise
-  // get pasted as floating shapes on contrasting bases (e.g. malva on white).
-  // Trade-off: panel "container" rectangles are removed; text floats on the
-  // generated fabric color directly. Acceptable for the typical use case.
-  const GROUP_PAD = 30;
+  // Chroma-key tunables. Per-bbox sampling now (no clustering) so the
+  // padding can stay small — corners need to land just outside the text
+  // glyphs / icon ring, on the local wall/fabric backdrop.
+  // Reduced GROUP_PAD from 30 → 12 to keep the corner sample local; with
+  // 30px the corners frequently overshot small icons into the next icon
+  // or into hero fabric.
+  const GROUP_PAD = 12;
   const NEAR_DIST = 14;
   const FAR_DIST = 80;
-  const CORNER_SAMPLE = 12;
+  const CORNER_SAMPLE = 8;
   const ALPHA_BINARIZE_THRESHOLD = 100;
 
   const composites: import('sharp').OverlayOptions[] = [];
