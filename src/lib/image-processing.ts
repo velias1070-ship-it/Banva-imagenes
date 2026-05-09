@@ -889,6 +889,7 @@ export async function compositeHeroOverlays(
   heroBuffer: Buffer,
   resultBuffer: Buffer,
   bboxes: Array<{ text?: string; x: number; y: number; width: number; height: number }>,
+  opts?: { heroFabricRgb?: { r: number; g: number; b: number } | null },
 ): Promise<Buffer> {
   if (!bboxes || bboxes.length === 0) return resultBuffer;
 
@@ -985,15 +986,35 @@ export async function compositeHeroOverlays(
       .toBuffer({ resolveWithObject: true });
     const inCh = info.channels;
     const out = Buffer.alloc(cw * ch * 4);
+    // Two background classes to chroma-key out:
+    //   1. The corner-sampled local BG (typically the wall behind the icon).
+    //   2. The known hero fabric color (from heroColorHint). When the bbox
+    //      extends slightly into the hero's fabric region, those pixels are
+    //      far from the corner sample but should still be removed because
+    //      we know they're hero fabric, not icon glyphs. Repro: job ed172062
+    //      (Olivo + blue flannel hero) left a faint blue halo to the right
+    //      of each circle icon because the bbox padded into hero fabric and
+    //      the single-BG chroma-key kept those pixels semi-opaque.
+    const heroFab = opts?.heroFabricRgb;
     for (let i = 0; i < cw * ch; i++) {
       const idx = i * inCh;
       const r = data[idx];
       const g = data[idx + 1];
       const b = data[idx + 2];
-      const dr = r - bgR;
-      const dg = g - bgG;
-      const db = b - bgB;
-      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+      const dr1 = r - bgR;
+      const dg1 = g - bgG;
+      const db1 = b - bgB;
+      const dist1 = Math.sqrt(dr1 * dr1 + dg1 * dg1 + db1 * db1);
+      let dist = dist1;
+      if (heroFab) {
+        const dr2 = r - heroFab.r;
+        const dg2 = g - heroFab.g;
+        const db2 = b - heroFab.b;
+        const dist2 = Math.sqrt(dr2 * dr2 + dg2 * dg2 + db2 * db2);
+        // Pixel is "background" if close to EITHER the wall OR the hero
+        // fabric color. Use the minimum distance to decide opacity.
+        dist = Math.min(dist, dist2);
+      }
       let alpha: number;
       if (dist <= NEAR_DIST) alpha = 0;
       else if (dist >= FAR_DIST) alpha = 255;

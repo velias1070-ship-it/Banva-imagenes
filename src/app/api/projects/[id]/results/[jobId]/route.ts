@@ -1320,7 +1320,24 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           }
         }
         if (bboxes && bboxes.length > 0) {
-          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes);
+          let heroFabricRgb: { r: number; g: number; b: number } | null = null;
+          try {
+            const sharpHero = (await import('sharp')).default;
+            const heroMeta = await sharpHero(heroBuffer).metadata();
+            const hW = heroMeta.width || 1200;
+            const hH = heroMeta.height || 1200;
+            const heroProductBuf = await sharpHero(heroBuffer)
+              .extract({
+                left: Math.round(hW * 0.5),
+                top: Math.round(hH * 0.25),
+                width: Math.round(hW * 0.45),
+                height: Math.round(hH * 0.5),
+              })
+              .png()
+              .toBuffer();
+            heroFabricRgb = await getProductBaseColor(heroProductBuf);
+          } catch { /* non-blocking */ }
+          imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes, { heroFabricRgb });
           logPipelineEvent(jobId, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero`);
         }
       } catch (overlayErr) {
