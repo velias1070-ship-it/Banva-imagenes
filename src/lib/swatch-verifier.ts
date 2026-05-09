@@ -57,13 +57,24 @@ export async function verifySwatch(
 IMAGE 1: The SWATCH — this is the REFERENCE. The generated image MUST match this fabric exactly (color, pattern, texture, scale, orientation).
 IMAGE 2: The GENERATED IMAGE — this is what we need to verify.
 
-Your job: Does Image 2 faithfully reproduce the fabric of Image 1? Look ONLY at these two images. Do not infer anything from outside them.
+Your job: Does Image 2 show ONLY the fabric of Image 1 across the entire product, with NO leaks of a different color or pattern? Look ONLY at these two images. Do not infer anything from outside them.
 ${patternDescription ? `\nExpected pattern: "${patternDescription}"` : ''}
+
+CRITICAL CHECK — HERO COLOR LEAK:
+Scan Image 2 carefully. Are there ANY zones (patches, stripes, bands, regions, stains) on the product showing a color CLEARLY DIFFERENT from the fabric of Image 1?
+
+Common leak patterns to check for paranoidly:
+- A blue patch or band on a non-blue product
+- A red / pink / orange / green region on a product whose swatch is a different color
+- Color showing through behind / between fabric folds that does NOT match Image 1
+- Shadows that are not just darker shades of the swatch color but a completely different hue
+
+If you see ANY such zone, even small or localized, the COLOR_MATCH check FAILS (0). Be paranoid — leaks are a common artifact of AI image generation and the generator routinely leaves patches of the original product color.
 
 CHECK EACH of these and score 0 (fail) or 1 (pass):
 
 1. PATTERN_MATCH: Are the design elements (flowers, shapes, motifs) the SAME as Image 1? Not similar — SAME shapes, same style.
-2. COLOR_MATCH: Do the colors of the fabric match Image 1 exactly? Same hue, same warmth, same saturation. If Image 2 contains zones of a clearly different color (e.g. a blue patch where Image 1 is taupe), this check FAILS.
+2. COLOR_MATCH: As described above — fail if there is any visible hero-color leak anywhere on the product. Same hue, same warmth, same saturation across the entire product.
 3. TEXTURE_MATCH: If Image 1 shows quilted/textured fabric, does Image 2 show the same texture?
 4. NO_INVENTION: Is Image 2 free of INVENTED fabric patterns or designs not in Image 1? IGNORE any logo/watermark in the corners — logos are added automatically in post-processing and should NOT be penalized.
 5. SCALE_CORRECT: Are the pattern motifs the same relative size as in Image 1?
@@ -77,6 +88,7 @@ Respond ONLY with valid JSON (no markdown, no backticks):
   "no_invention": 0 or 1,
   "scale_correct": 0 or 1,
   "orientation_correct": 0 or 1,
+  "leak_zones_described": "describe any zones on the product with a color different from Image 1, or 'none'",
   "overall_score": 0.0 to 1.0,
   "issues": ["issue 1", "issue 2"],
   "feedback": "one sentence describing the main problem, or 'Faithful reproduction'"
