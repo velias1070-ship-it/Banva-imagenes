@@ -1082,7 +1082,9 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
 
     // Generate — escalate to Pro model. Quilts + cortinas escalate earlier
     // (Flash can't reproduce fine/smooth weave — verifier rejects coarse output).
-    const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras') ? 1 : 2;
+    // Frazadas added 2026-05-08: Flash intermittently produces 50/50 bicolor
+    // outputs on flannel ribbed heroes (jobs 3a78ac3b, 5b8e0e99) — Pro is stable.
+    const proThreshold = (category === 'quilts' || category === 'cortinas' || category === 'alfombras' || category === 'frazadas') ? 1 : 2;
     const useProModel = attempt >= proThreshold;
 
     // ── COST CAP GUARD (Sprint 2 issue #3) ──

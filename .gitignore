@@ -43,3 +43,6 @@ next-env.d.ts
 # benchmark images (downloaded via bash benchmarks/download-baseline.sh)
 # Manifests and SQL queries ARE versioned; only the raw PNG/JPG/WEBP pixels stay local.
 benchmarks/**/images/
+
+# claude code local settings (personal permissions, not team-wide)
+.claude/settings.local.json
