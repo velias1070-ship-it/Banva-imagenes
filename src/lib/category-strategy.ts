@@ -976,18 +976,27 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
   // color leaks (job 5b8e0e99 / fd35ff47: frazada flannel where Gemini left
   // patches of the original hero color visible despite no fold being present).
   // Skip for infografia because that shot type is intentionally bicolor.
+  // Including the swatch color name explicitly ("la tela GRIS de Imagen 2"
+  // instead of just "la tela de Imagen 2") materially improves Pro's hero-color
+  // suppression — manual A/B on jobs 5b673072, 1e0d6f3d, 991315ed all came
+  // out clean only when the destination color was named in the prompt.
+  const swatchLabel = swatchName?.trim() || 'del swatch';
+  const swatchHexLabel = _swatchHex?.trim();
+  const swatchPhrase = swatchHexLabel
+    ? `${swatchLabel} (color ${swatchHexLabel})`
+    : swatchLabel;
   const uniformFabricNote = shotType === 'infografia' ? '' : `
 
 SUPERFICIES UNIFORMES — REGLA CRÍTICA:
-El producto final es UNA SOLA tela uniforme: un color, un patrón, en TODA su superficie. NO dejes NINGÚN píxel del color del hero original en NINGUNA parte del producto — ni en pliegues, ni en sombras, ni en zonas con relieve, ni "filtrándose" detrás de la nueva tela. Si después de generar quedan zonas (parches, franjas, sombras) con el color del hero original visible sobre el producto, falló. Toda la superficie textil del producto debe ser exactamente la tela de la Imagen 2.
+El producto final es UNA SOLA tela uniforme: un solo color (${swatchPhrase}), un patrón, en TODA su superficie. NO dejes NINGÚN píxel del color del hero original en NINGUNA parte del producto — ni en pliegues, ni en sombras, ni en zonas con relieve, ni "filtrándose" detrás de la nueva tela. Si después de generar quedan zonas (parches, franjas, sombras) con el color del hero original visible sobre el producto, falló. Toda la superficie textil del producto debe ser exactamente la tela ${swatchPhrase} de la Imagen 2.
 
 TEXTURA 3D — REGLA EXPLÍCITA:
-Si el producto en Imagen 1 tiene relieve 3D (costillas, ribs, quilting embossed, pliegues con sombra, dobleces marcados), CADA cresta Y CADA valle/receso/sombra de ese relieve debe pintarse con la tela de Imagen 2. NO dejes el color original en los valles/recesos/sombras del relieve. La estructura 3D se mantiene pero TODO su volumen es del color y patrón de Imagen 2 — la cresta es del color del swatch, el valle es del color del swatch, la sombra es una versión más oscura del color del swatch (NO el color original del hero).
+Si el producto en Imagen 1 tiene relieve 3D (costillas, ribs, quilting embossed, pliegues con sombra, dobleces marcados), CADA cresta Y CADA valle/receso/sombra de ese relieve debe pintarse con la tela ${swatchPhrase} de Imagen 2. NO dejes el color original del hero en los valles/recesos/sombras del relieve. La estructura 3D se mantiene pero TODO su volumen es ${swatchPhrase} — la cresta es ${swatchPhrase}, el valle es una versión más oscura de ${swatchPhrase} (NO el color del hero), la sombra es una versión aún más oscura de ${swatchPhrase} (NO azul, NO el color del hero).
 
 PRODUCTOS SECUNDARIOS:
-Si en la Imagen 1 hay copias del mismo producto en canastas, sobre muebles, doblados de fondo, en pilas o en cualquier ubicación secundaria, ESAS copias también son el producto y también se reemplazan con la tela de la Imagen 2 — mismo color, mismo patrón. No quedan unidades del producto en el hero color original; todas se cambian.
+Si en la Imagen 1 hay copias del mismo producto en canastas, sobre muebles, doblados de fondo, en pilas o en cualquier ubicación secundaria, ESAS copias también son el producto y también se reemplazan con la tela ${swatchPhrase} de la Imagen 2 — mismo color, mismo patrón. No quedan unidades del producto en el hero color original; todas se cambian a ${swatchPhrase}.
 
-Si la Imagen 1 muestra el producto con un pliegue, esquina volteada o un reverso de color o patrón distinto al frente, ESAS zonas también llevan exactamente la tela de la Imagen 2 — no preserves color ni patrón del hero ahí. Si la Imagen 2 muestra la tela con un fold revelando un reverso de patrón distinto al cuerpo principal, IGNORA ese reverso y usa solo el patrón del cuerpo principal en todas las superficies del producto. Resultado: un solo color, un solo patrón, sin mezclas ni zonas con la tela original del hero.`;
+Si la Imagen 1 muestra el producto con un pliegue, esquina volteada o un reverso de color o patrón distinto al frente, ESAS zonas también llevan exactamente la tela ${swatchPhrase} de la Imagen 2 — no preserves color ni patrón del hero ahí. Si la Imagen 2 muestra la tela con un fold revelando un reverso de patrón distinto al cuerpo principal, IGNORA ese reverso y usa solo el patrón del cuerpo principal en todas las superficies del producto. Resultado: un solo color (${swatchPhrase}), un solo patrón, sin mezclas ni zonas con la tela original del hero.`;
 
   if (shotType === 'detail') {
     // If the strategy has a category-specific detail rule, use it (overrides generic).
