@@ -1041,6 +1041,23 @@ export async function compositeHeroOverlays(
         }
       }
     }
+    // Pre-compute LAB chromaticity (a, b only — ignore L for lightness) of
+    // each fabric BG. Ribbed flannel crests, transitions and shadows share
+    // the same hue/chroma but vary widely in lightness; a (a,b)-distance
+    // check catches all rib variants in one pass even when the per-color
+    // RGB distance is too far. Threshold 7.5 is tight enough that distinct
+    // hues (icon teal vs cream wall) don't match. Repro: job 7be4b0bc had
+    // silver rib transitions (RGB ~170,181,190) inside the "ultra suave"
+    // bbox at ~54 RGB distance from celeste — too far for the RGB chroma
+    // key, but only ~3 chromaticity distance.
+    const fabricChroma: Array<{ a: number; b: number }> = fabricBgs.map((c) => {
+      const lab = rgbToLab(c.r, c.g, c.b);
+      return { a: lab.a, b: lab.b };
+    });
+    // Tight threshold: rib transition pixels match dominant fabric chroma at
+    // ~0-3 (a,b) units. Icon teal pictograms inside navy circles match at ~7
+    // and need to be preserved. Threshold 5 is comfortably between.
+    const CHROMA_DIST = 5;
     for (let i = 0; i < cw * ch; i++) {
       const idx = i * inCh;
       const r = data[idx];
@@ -1062,6 +1079,21 @@ export async function compositeHeroOverlays(
       else if (dist >= FAR_DIST) alpha = 255;
       else alpha = Math.round(((dist - NEAR_DIST) / (FAR_DIST - NEAR_DIST)) * 255);
       alpha = alpha >= ALPHA_BINARIZE_THRESHOLD ? 255 : 0;
+      // LAB chromaticity check: if the pixel shares hue/chroma with any
+      // fabric BG, force transparent (treat as fabric regardless of
+      // lightness). Skips text/dark-navy logos because their chroma signature
+      // is far from the fabric's even when both happen to be "blue family".
+      if (alpha === 255 && fabricChroma.length > 0) {
+        const lab = rgbToLab(r, g, b);
+        for (const fc of fabricChroma) {
+          const da = lab.a - fc.a;
+          const db_ = lab.b - fc.b;
+          if (Math.sqrt(da * da + db_ * db_) <= CHROMA_DIST) {
+            alpha = 0;
+            break;
+          }
+        }
+      }
       out[i * 4] = r;
       out[i * 4 + 1] = g;
       out[i * 4 + 2] = b;

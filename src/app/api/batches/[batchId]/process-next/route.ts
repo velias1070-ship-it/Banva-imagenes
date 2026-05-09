@@ -1360,7 +1360,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
               .png()
               .toBuffer();
             heroFabricRgb = await getProductBaseColor(heroProductBuf);
-            heroFabricPalette = await getDominantColorPalette(heroProductBuf, 5);
+            heroFabricPalette = await getDominantColorPalette(heroProductBuf, 12);
           } catch { /* non-blocking */ }
           imageBuffer = await compositeHeroOverlays(heroBuffer, imageBuffer, bboxes, { heroFabricRgb, heroFabricPalette });
           logPipelineEvent(job.id, 'OVERLAY_RESTORED', `${bboxes.length} regions composited from hero (${heroFabricPalette.length} fabric BGs)`);
