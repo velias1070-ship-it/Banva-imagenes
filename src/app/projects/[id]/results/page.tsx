@@ -172,6 +172,7 @@ export default function ResultsPage() {
   const [editInstructions, setEditInstructions] = useState<Record<string, string>>({});
   const [importingCannon, setImportingCannon] = useState(false);
   const [importingCannonSwatch, setImportingCannonSwatch] = useState<Set<string>>(new Set());
+  const [importingIdetexSwatch, setImportingIdetexSwatch] = useState<Set<string>>(new Set());
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{
     success: number; errors: number; skipped: number; total_images: number;
@@ -1434,6 +1435,39 @@ export default function ResultsPage() {
       toast.error('Error de conexion');
     } finally {
       setImportingCannonSwatch((prev) => {
+        const next = new Set(prev);
+        next.delete(swatchId);
+        return next;
+      });
+    }
+  }
+
+  async function handleImportIdetexForSwatch(swatchId: string) {
+    setImportingIdetexSwatch((prev) => new Set(prev).add(swatchId));
+    try {
+      const res = await fetch(`/api/projects/${id}/import-idetex`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ swatch_ids: [swatchId], force: true }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const detail = data.details?.[0];
+        if (detail?.images_imported > 0) {
+          toast.success(`${detail.images_imported} imagenes importadas de Idetex`);
+          await fetchResults();
+        } else if (detail?.errors?.length) {
+          toast.error(detail.errors[0]);
+        } else {
+          toast.error('No se importaron imagenes');
+        }
+      } else {
+        toast.error(data.error || 'Error importando');
+      }
+    } catch {
+      toast.error('Error de conexion');
+    } finally {
+      setImportingIdetexSwatch((prev) => {
         const next = new Set(prev);
         next.delete(swatchId);
         return next;
@@ -2730,8 +2764,9 @@ export default function ResultsPage() {
                           {(() => {
                             const isImportingMl = mlImporting.has(swatchId);
                             const isImportingCannon = importingCannonSwatch.has(swatchId);
+                            const isImportingIdetex = importingIdetexSwatch.has(swatchId);
                             const isUploading = uploadingSwatch.has(swatchId);
-                            const isImporting = isImportingMl || isImportingCannon || isUploading;
+                            const isImporting = isImportingMl || isImportingCannon || isImportingIdetex || isUploading;
                             const hasMlListing = !!group.ml_listing;
                             return (
                               <DropdownMenu>
@@ -2772,6 +2807,15 @@ export default function ResultsPage() {
                                     >
                                       <Palette className="h-3.5 w-3.5 mr-2" />
                                       Desde Cannon (por SKU)
+                                    </DropdownMenuItem>
+                                  )}
+                                  {hasMlListing && (
+                                    <DropdownMenuItem
+                                      onSelect={() => handleImportIdetexForSwatch(swatchId)}
+                                      disabled={isImportingIdetex}
+                                    >
+                                      <Palette className="h-3.5 w-3.5 mr-2" />
+                                      Desde Idetex (por SKU)
                                     </DropdownMenuItem>
                                   )}
                                   <DropdownMenuItem
