@@ -275,6 +275,105 @@ function cannonUrl(pattern: string, index: number, variant?: number): string {
   return `https://cannonhome.cl/media/catalog/product/s/a/${pattern}${suffix}.jpg`;
 }
 
+// Magento auto-buckets media by the first two characters of the filename
+// (e.g. "plumon..." → /p/l/, "sabanas..." → /s/a/, "quilt..." → /q/u/).
+// Lets us reuse the same downloader for any Cannon product family.
+function cannonUrlFromStem(stem: string, index: number, variant?: number): string {
+  const bucket = `${stem[0]}/${stem[1]}`;
+  const suffix = variant ? `_${index}_${variant}` : `_${index}`;
+  return `https://cannonhome.cl/media/catalog/product/${bucket}/${stem}${suffix}.jpg`;
+}
+
+/**
+ * Search-driven Cannon resolver — third-tier fallback for product families
+ * not covered by the deterministic pattern builder (plumones, quilts, etc.).
+ *
+ * Strategy:
+ *   1. Use the design name as the search query (more selective than generic
+ *      terms like "plumon" which Cannon's search ranks heavily).
+ *   2. Filter results by URL slug containing both the design and a size token.
+ *   3. Open the product page, scrape the first product-image filename stem
+ *      so the downloader knows the exact Magento bucket and filename.
+ */
+async function searchCannonByDesign(
+  attrs: Record<string, string>,
+  title?: string
+): Promise<{ pageUrl: string; stem: string } | null> {
+  const designCandidates: string[] = [];
+  const addDesign = (d: string | null | undefined) => {
+    if (!d) return;
+    const slug = slugify(d.replace(/\s*\d+$/, ''));
+    if (slug && !designCandidates.includes(slug)) designCandidates.push(slug);
+  };
+  addDesign(title ? extractDesignFromTitleSmart(title) : null);
+  addDesign(title ? extractDesignFromTitle(title) : null);
+  addDesign(attrs.FABRIC_DESIGN);
+
+  if (!designCandidates.length) return null;
+
+  const size =
+    attrs.MATTRESS_SIZE ||
+    attrs.COMFORTER_MATTRESS_SIZE ||
+    (title ? extractSizeFromTitle(title) : null) ||
+    '2 plazas';
+  const sizeSlugCandidates: string[] = [];
+  const ss1 = slugifyForPageUrl(size);
+  if (ss1) sizeSlugCandidates.push(ss1);
+  if (/^king\b/i.test(size)) sizeSlugCandidates.push('king');
+  if (/super\s*king/i.test(size)) sizeSlugCandidates.push('super-king');
+
+  for (const design of designCandidates) {
+    let html: string;
+    try {
+      const res = await fetch(
+        `https://cannonhome.cl/catalogsearch/result/?q=${encodeURIComponent(design)}`,
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html' } }
+      );
+      if (!res.ok) continue;
+      html = await res.text();
+    } catch {
+      continue;
+    }
+
+    const productUrls = Array.from(
+      new Set(html.match(/https:\/\/cannonhome\.cl\/[a-z0-9-]+\.html/g) || [])
+    );
+
+    const matches = productUrls.filter((u) => {
+      const slug = u.replace(/^https:\/\/cannonhome\.cl\//, '').replace(/\.html$/, '');
+      const designOk = slug.includes(design);
+      const sizeOk =
+        sizeSlugCandidates.length === 0 ||
+        sizeSlugCandidates.some((s) => slug.includes(s));
+      return designOk && sizeOk;
+    });
+
+    if (matches.length === 0) continue;
+
+    const pageUrl = matches[0];
+    let pageHtml: string;
+    try {
+      const pageRes = await fetch(pageUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html' },
+      });
+      if (!pageRes.ok) continue;
+      pageHtml = await pageRes.text();
+    } catch {
+      continue;
+    }
+
+    const imgMatch = pageHtml.match(
+      /\/media\/catalog\/product\/[a-z0-9]\/[a-z0-9]\/([a-z0-9.]+?)_\d+(?:_\d+)?\.(?:jpg|jpeg|png|webp)/i
+    );
+    if (!imgMatch) continue;
+    const stem = imgMatch[1].toLowerCase();
+
+    return { pageUrl, stem };
+  }
+
+  return null;
+}
+
 /**
  * POST /api/projects/{id}/import-cannon
  * Body: { swatch_ids?: string[] } — optional filter, defaults to all swatches
@@ -553,6 +652,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
             scrapedMode = true;
             (swatchResult.debug as Record<string, unknown>).scraped_from = pageUrl;
             break;
+          }
+        }
+      }
+
+      // Tier 3 — search-driven fallback for families outside the sabanas
+      // template (plumones, quilts, etc.). Only runs when the previous tiers
+      // produced nothing.
+      if (imageUrls.length === 0) {
+        const searchResult = await searchCannonByDesign(attrs, item.title);
+        if (searchResult) {
+          (swatchResult.debug as Record<string, unknown>).search_match = searchResult;
+          const probeVariants: (number | undefined)[] = [1, undefined];
+          for (const variant of probeVariants) {
+            const probe = await tryFetch(cannonUrlFromStem(searchResult.stem, 1, variant));
+            if (probe) {
+              for (let idx = 1; idx <= 10; idx++) {
+                imageUrls.push(cannonUrlFromStem(searchResult.stem, idx, variant));
+              }
+              break;
+            }
           }
         }
       }
