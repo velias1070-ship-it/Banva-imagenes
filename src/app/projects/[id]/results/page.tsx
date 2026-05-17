@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowLeft, Download, CheckCircle, AlertTriangle, XCircle,
-  ImageIcon, RotateCcw, ChevronDown, ChevronRight,
+  ImageIcon, ImagePlus, RotateCcw, ChevronDown, ChevronRight,
   Upload, Loader2, BedSingle, Star, Pencil, Send,
   Globe, ExternalLink, GripVertical, X, Plus, Save, ArrowLeftRight,
   Palette, Copy, Play, RefreshCw,
@@ -505,6 +505,49 @@ export default function ResultsPage() {
       return next;
     });
     setMlDirty((prev) => new Map(prev).set(swatchId, true));
+  }
+
+  function addAllApprovedToMlPanel(swatchId: string, jobs: JobWithRelations[]) {
+    const approvedJobs = jobs.filter(
+      (j) => j.status === 'approved' && j.output_storage_path
+    );
+    if (approvedJobs.length === 0) {
+      toast.error('No hay fotos aprobadas');
+      return;
+    }
+    let added = 0;
+    let skipped = 0;
+    let capped = false;
+    setMlPictures((prev) => {
+      const next = new Map(prev);
+      const current = [...(next.get(swatchId) || [])];
+      const existing = new Set(current.map((p) => p.source_url));
+      for (const job of approvedJobs) {
+        if (current.length >= 10) { capped = true; break; }
+        const url = getStorageUrl(job.output_storage_path!);
+        if (existing.has(url)) { skipped++; continue; }
+        current.push({
+          type: 'generated',
+          url,
+          source_url: url,
+          shot_type: job.hero_shot?.shot_type,
+        });
+        existing.add(url);
+        added++;
+      }
+      next.set(swatchId, current);
+      return next;
+    });
+    if (added > 0) {
+      setMlDirty((prev) => new Map(prev).set(swatchId, true));
+      const extras: string[] = [];
+      if (skipped > 0) extras.push(`${skipped} ya estaban`);
+      if (capped) extras.push('limite 10 alcanzado');
+      const suffix = extras.length ? ` (${extras.join(', ')})` : '';
+      toast.success(`${added} foto${added !== 1 ? 's' : ''} agregada${added !== 1 ? 's' : ''} al panel ML${suffix}`);
+    } else if (skipped > 0) {
+      toast.info('Todas las fotos ya estaban en el panel ML');
+    }
   }
 
   function removeMlPicture(swatchId: string, picIdx: number) {
@@ -2758,6 +2801,22 @@ export default function ResultsPage() {
                           </Button>
                         );
                       })()}
+
+                      {/* Stage all approved jobs into the ML panel in one click */}
+                      {approvedInGroup > 0 && group.ml_listing && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-green-600 hover:text-green-800 hover:bg-green-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            addAllApprovedToMlPanel(swatchId, group.jobs);
+                          }}
+                          title={`Agregar ${approvedInGroup} foto${approvedInGroup !== 1 ? 's' : ''} aprobada${approvedInGroup !== 1 ? 's' : ''} al panel ML`}
+                        >
+                          <ImagePlus className="h-4 w-4" />
+                        </Button>
+                      )}
 
                       {/* Import/upload actions (icon-only with tooltip) */}
                       <div className="flex items-center gap-0.5 flex-shrink-0 border-l pl-2 ml-1">
