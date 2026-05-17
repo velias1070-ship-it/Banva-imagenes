@@ -71,6 +71,28 @@ const TITLE_STOPWORDS = new Set([
   'set', 'juego', 'pack',
   'mercadolibre', 'envio', 'envío',
   'polar', 'fleece',
+  // Product family words — should never be treated as the design name. These
+  // would otherwise confuse the search-driven resolver (e.g. "Plumon ... Adele"
+  // would surface "Plumon" before reaching the actual design "Adele").
+  'plumon', 'plumón', 'plumones', 'plumones',
+  'quilt', 'quilts',
+  'cubrecama', 'cubrecamas',
+  'frazada', 'frazadas',
+  'cobertor', 'cobertores',
+  'toalla', 'toallas',
+  'manta', 'mantas',
+  'cortina', 'cortinas',
+  // Bedding / marketing adjectives that appear in Cannon plumon titles
+  'cama', 'reversible', 'invierno', 'verano', 'suave', 'af',
+]);
+
+// FABRIC_DESIGN values that are placeholders rather than real design names.
+// When FABRIC_DESIGN is one of these, the search resolver should fall back
+// to title-derived candidates.
+const GENERIC_DESIGN_WORDS = new Set([
+  'estampado', 'estampada', 'estampados', 'estampadas',
+  'liso', 'lisa', 'lisos', 'lisas',
+  'unicolor', 'sólido', 'solido',
 ]);
 function normalizeWord(w: string): string {
   return w.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -305,9 +327,19 @@ async function searchCannonByDesign(
     const slug = slugify(d.replace(/\s*\d+$/, ''));
     if (slug && !designCandidates.includes(slug)) designCandidates.push(slug);
   };
+
+  // FABRIC_DESIGN is the canonical signal when it's a real design name.
+  // Try it first so we don't fall into title-smart returning a family word
+  // (e.g. title "Plumon ... Adele" would surface "Plumon" ahead of "Adele").
+  const fabricDesign = attrs.FABRIC_DESIGN;
+  const fabricIsGeneric =
+    !fabricDesign ||
+    GENERIC_DESIGN_WORDS.has(fabricDesign.toLowerCase().trim());
+
+  if (!fabricIsGeneric) addDesign(fabricDesign);
   addDesign(title ? extractDesignFromTitleSmart(title) : null);
   addDesign(title ? extractDesignFromTitle(title) : null);
-  addDesign(attrs.FABRIC_DESIGN);
+  if (fabricIsGeneric) addDesign(fabricDesign);
 
   if (!designCandidates.length) return null;
 
@@ -339,13 +371,19 @@ async function searchCannonByDesign(
       new Set(html.match(/https:\/\/cannonhome\.cl\/[a-z0-9-]+\.html/g) || [])
     );
 
+    // Cannon URL convention: {family}-{size}-...-{design}[-{variant}].html.
+    // Require the design candidate to appear AFTER the size token in the
+    // slug — otherwise generic family words ("plumon") would match many URLs
+    // and we'd return whichever the search engine ranked first.
     const matches = productUrls.filter((u) => {
       const slug = u.replace(/^https:\/\/cannonhome\.cl\//, '').replace(/\.html$/, '');
-      const designOk = slug.includes(design);
-      const sizeOk =
-        sizeSlugCandidates.length === 0 ||
-        sizeSlugCandidates.some((s) => slug.includes(s));
-      return designOk && sizeOk;
+      for (const sizeSlug of sizeSlugCandidates) {
+        const idx = slug.indexOf(sizeSlug);
+        if (idx < 0) continue;
+        const afterSize = slug.substring(idx + sizeSlug.length);
+        if (afterSize.includes(design)) return true;
+      }
+      return false;
     });
 
     if (matches.length === 0) continue;
