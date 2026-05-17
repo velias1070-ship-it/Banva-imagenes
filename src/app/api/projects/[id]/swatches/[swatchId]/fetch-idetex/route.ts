@@ -18,14 +18,13 @@ function getInventorySupabase() {
 // Brands sourced from Idetex (idetex.cl). Extend as new brands are discovered.
 const IDETEX_BRANDS = ['valencia', 'illusions'];
 
-// ML COMFORTER_MATTRESS_SIZE / MATTRESS_SIZE → Idetex URL slug suffix
-const PLAZAS_TO_IDETEX_SIZE: Record<string, string> = {
-  '1 plaza': 'single',
-  '1.5 plazas': 'single',
-  '2 plazas': 'queen',
-  '2.5 plazas': 'king',
-  '3 plazas': 'super-king',
-};
+// FABRIC_DESIGN values that are placeholders rather than real design names.
+// Triggers a fallback to COLOR/MAIN_COLOR in the search query.
+const GENERIC_DESIGN_WORDS = new Set([
+  'estampado', 'estampada', 'estampados', 'estampadas',
+  'liso', 'lisa', 'lisos', 'lisas',
+  'unicolor', 'sólido', 'solido',
+]);
 
 function normalize(s: string): string {
   return s
@@ -37,20 +36,73 @@ function normalize(s: string): string {
 }
 
 function buildIdetexQuery(attrs: Record<string, string>): string {
-  // Strip "MF " prefix used in BANVA model naming on ML (e.g., "MF Embossed" → "embossed").
+  // Strip "MF " prefix used in BANVA model naming on ML (e.g. "MF Embossed").
   const model = (attrs.MODEL || '').replace(/^MF\s+/i, '');
+  const fabricDesign = attrs.FABRIC_DESIGN;
+  const fabricIsGeneric =
+    !fabricDesign ||
+    GENERIC_DESIGN_WORDS.has(fabricDesign.toLowerCase().trim());
+
+  // When FABRIC_DESIGN is generic ("Liso"), the discriminating token is the
+  // color (e.g. "Azul"). Otherwise the design itself is the discriminator.
+  const designOrColor = fabricIsGeneric
+    ? (attrs.MAIN_COLOR || attrs.COLOR)
+    : fabricDesign;
+
+  // COMFORTER_TYPE covers plumones; PRODUCT_TYPE covers frazadas, toallas, etc.
+  const productType = attrs.COMFORTER_TYPE || attrs.PRODUCT_TYPE;
+
   const parts = [
-    attrs.COMFORTER_TYPE,
-    attrs.BRAND,
+    productType,
     model,
-    attrs.FABRIC_DESIGN || attrs.COLOR,
+    attrs.BRAND,
+    designOrColor,
   ].filter(Boolean).map(normalize);
   return parts.join(' ');
 }
 
-function getSizeSlug(attrs: Record<string, string>): string | null {
-  const raw = attrs.COMFORTER_MATTRESS_SIZE || attrs.MATTRESS_SIZE || '';
-  return PLAZAS_TO_IDETEX_SIZE[raw.toLowerCase()] || null;
+// Idetex uses different size conventions per product family:
+//   - plumones:  -single/-queen/-king/-super-king
+//   - frazadas:  -10p/-15p/-20p/-25p   (plazas * 10 + "p")
+//   - sábanas:   -1-5-plaza/-2-plaza   (dashed)
+// Generate every plausible suffix so the URL filter accepts any of them.
+function getSizeSlugCandidates(attrs: Record<string, string>): string[] {
+  const raw = (
+    attrs.COMFORTER_MATTRESS_SIZE ||
+    attrs.MATTRESS_SIZE ||
+    attrs.BLANKET_SIZE ||
+    ''
+  ).toLowerCase().trim();
+  if (!raw) return [];
+
+  const candidates: string[] = [];
+
+  if (/super\s*king/.test(raw)) candidates.push('super-king');
+  else if (/\bking\b/.test(raw)) candidates.push('king');
+  else if (/\bqueen\b/.test(raw)) candidates.push('queen');
+  else if (/\bsingle\b/.test(raw)) candidates.push('single');
+
+  const m = raw.match(/(\d+(?:[.,]\d+)?)\s*plazas?/);
+  if (m) {
+    const numStr = m[1].replace(',', '.');
+    const num = parseFloat(numStr);
+    if (!Number.isNaN(num)) {
+      candidates.push(`${Math.round(num * 10)}p`);
+    }
+    const wordMap: Record<string, string> = {
+      '1': 'single',
+      '1.5': 'single',
+      '2': 'queen',
+      '2.5': 'king',
+      '3': 'super-king',
+    };
+    if (wordMap[numStr]) candidates.push(wordMap[numStr]);
+    const dashed = numStr.replace('.', '-');
+    candidates.push(`${dashed}-plaza`);
+    candidates.push(`${dashed}-plazas`);
+  }
+
+  return Array.from(new Set(candidates));
 }
 
 async function searchIdetex(query: string): Promise<string[]> {
@@ -62,18 +114,22 @@ async function searchIdetex(query: string): Promise<string[]> {
   return Array.from(new Set(matches));
 }
 
-function pickProductUrl(urls: string[], sizeSlug: string | null): string | null {
+function pickProductUrl(urls: string[], sizeSlugs: string[]): string | null {
   // Idetex product URLs look like: idetex.cl/{category}/{id}-{slug}.html
-  // Filter to product detail pages (path has a numeric prefix after the category).
   const productUrls = urls.filter((u) => /\/\d+-[^/]+\.html$/.test(u));
   if (productUrls.length === 0) return null;
-  if (!sizeSlug) return productUrls[0];
+  if (sizeSlugs.length === 0) return productUrls[0];
 
-  // Prefer URLs whose slug ends in the size word (king, queen, single, super-king).
-  const sizeMatch = productUrls.find((u) =>
-    new RegExp(`-${sizeSlug}\\.html$`).test(u)
-  );
-  return sizeMatch || productUrls[0];
+  // Require the URL slug to end with one of the size candidates. We do NOT
+  // fall back to productUrls[0] on miss — silently returning the wrong size
+  // was the original bug; better to fail loud and surface the issue.
+  for (const size of sizeSlugs) {
+    const match = productUrls.find((u) =>
+      new RegExp(`-${size.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\.html$`).test(u)
+    );
+    if (match) return match;
+  }
+  return null;
 }
 
 async function extractOgImage(pageUrl: string): Promise<string | null> {
@@ -163,18 +219,18 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Could not build Idetex search query — missing attributes' }, { status: 400 });
   }
 
-  const sizeSlug = getSizeSlug(attrs);
+  const sizeSlugs = getSizeSlugCandidates(attrs);
 
-  console.log(`[fetch-idetex] query="${query}" sizeSlug="${sizeSlug}"`);
+  console.log(`[fetch-idetex] query="${query}" sizeSlugs=${JSON.stringify(sizeSlugs)}`);
 
   const urls = await searchIdetex(query);
-  const productUrl = pickProductUrl(urls, sizeSlug);
+  const productUrl = pickProductUrl(urls, sizeSlugs);
 
   if (!productUrl) {
     return NextResponse.json({
       error: 'No matching product on idetex.cl',
       query,
-      size_attempted: sizeSlug,
+      size_attempted: sizeSlugs,
       results_found: urls.length,
     }, { status: 404 });
   }
