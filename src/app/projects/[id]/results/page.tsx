@@ -822,20 +822,13 @@ export default function ResultsPage() {
     }
   }
 
-  async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    const swatchId = uploadTargetSwatchId.current;
-    e.target.value = '';
-    if (!file || !swatchId) return;
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-      toast.error(`Formato no soportado: ${file.type || 'desconocido'}`);
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      toast.error('Archivo excede 25MB');
-      return;
-    }
-    setUploadingSwatch((prev) => new Set(prev).add(swatchId));
+  // Sube UN archivo via el flujo sign -> PUT -> finalize. Cada archivo recibe su
+  // propio job_id del backend, asi que N archivos = N generation_jobs aprobados
+  // para el mismo swatch (mismo patron que import-ml-pictures).
+  async function uploadOneFile(
+    file: File,
+    swatchId: string,
+  ): Promise<{ ok: true; swatch: string } | { ok: false; error: string }> {
     try {
       const signRes = await fetch(`/api/projects/${id}/upload-result/sign`, {
         method: 'POST',
@@ -844,8 +837,7 @@ export default function ResultsPage() {
       });
       const signData = await signRes.json();
       if (!signRes.ok) {
-        toast.error(signData.error || 'No se pudo iniciar la subida');
-        return;
+        return { ok: false, error: signData.error || 'No se pudo iniciar la subida' };
       }
 
       const putRes = await fetch(signData.signed_url, {
@@ -854,8 +846,7 @@ export default function ResultsPage() {
         body: file,
       });
       if (!putRes.ok) {
-        toast.error(`Subida a Storage falló (${putRes.status})`);
-        return;
+        return { ok: false, error: `Subida a Storage falló (${putRes.status})` };
       }
 
       const finalizeRes = await fetch(`/api/projects/${id}/upload-result`, {
@@ -871,21 +862,72 @@ export default function ResultsPage() {
         }),
       });
       const finalizeData = await finalizeRes.json();
-      if (finalizeRes.ok) {
-        toast.success(`Imagen subida para ${finalizeData.swatch}`);
-        fetchResults();
-      } else {
-        toast.error(finalizeData.error || 'Error subiendo');
+      if (!finalizeRes.ok) {
+        return { ok: false, error: finalizeData.error || 'Error subiendo' };
       }
+      return { ok: true, swatch: finalizeData.swatch };
     } catch {
-      toast.error('Error de conexion');
+      return { ok: false, error: 'Error de conexion' };
+    }
+  }
+
+  async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    const swatchId = uploadTargetSwatchId.current;
+    e.target.value = '';
+    uploadTargetSwatchId.current = null;
+    if (files.length === 0 || !swatchId) return;
+
+    // Validacion por archivo: separamos validos de los que se descartan.
+    const valid: File[] = [];
+    const rejected: string[] = [];
+    for (const file of files) {
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        rejected.push(`${file.name || 'archivo'}: formato no soportado`);
+      } else if (file.size > 25 * 1024 * 1024) {
+        rejected.push(`${file.name || 'archivo'}: excede 25MB`);
+      } else {
+        valid.push(file);
+      }
+    }
+    for (const msg of rejected) toast.error(msg);
+    if (valid.length === 0) return;
+
+    setUploadingSwatch((prev) => new Set(prev).add(swatchId));
+    try {
+      // Subimos en paralelo con un limite de 4 simultaneas para no saturar la
+      // conexion ni el rate limit de Storage.
+      const CONCURRENCY = 4;
+      const results: Array<{ ok: boolean; error?: string; swatch?: string }> = [];
+      let lastSwatchName = '';
+      for (let i = 0; i < valid.length; i += CONCURRENCY) {
+        const chunk = valid.slice(i, i + CONCURRENCY);
+        const chunkResults = await Promise.all(chunk.map((f) => uploadOneFile(f, swatchId)));
+        for (const r of chunkResults) {
+          results.push(r);
+          if (r.ok) lastSwatchName = r.swatch;
+        }
+      }
+
+      const okCount = results.filter((r) => r.ok).length;
+      const failCount = results.length - okCount;
+      const label = lastSwatchName ? ` para ${lastSwatchName}` : '';
+
+      if (failCount === 0) {
+        const noun = okCount === 1 ? 'imagen subida' : 'imágenes subidas';
+        toast.success(`${okCount} ${noun}${label}`);
+      } else if (okCount === 0) {
+        toast.error(`No se pudo subir ninguna imagen${label}`);
+      } else {
+        toast.warning(`${okCount} de ${results.length} imágenes subidas${label} (${failCount} fallaron)`);
+      }
+      if (okCount > 0) fetchResults();
     } finally {
       setUploadingSwatch((prev) => {
         const next = new Set(prev);
         next.delete(swatchId);
         return next;
       });
-      uploadTargetSwatchId.current = null;
     }
   }
 
@@ -3262,6 +3304,7 @@ export default function ResultsPage() {
         ref={uploadInputRef}
         type="file"
         accept="image/png,image/jpeg,image/webp"
+        multiple
         className="hidden"
         onChange={handleUploadFile}
       />
