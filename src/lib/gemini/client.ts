@@ -1,7 +1,10 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
 const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview').trim();
 export const GEMINI_MODEL_PRO = process.env.GEMINI_MODEL_PRO || 'gemini-3-pro-image-preview';
-const GEMINI_ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-2.0-flash';
+// gemini-2.0-flash fue retirado por Google (HTTP 404 "no longer available") y dejaba
+// el QA scorer atascado en qa_pending. Default ahora gemini-2.5-flash (vivo, mismo modelo
+// que todos los callers ya usaban via modelOverride).
+const GEMINI_ANALYSIS_MODEL = process.env.GEMINI_ANALYSIS_MODEL || 'gemini-2.5-flash';
 const GEMINI_VERIFY_MODEL = process.env.GEMINI_VERIFY_MODEL || 'gemini-2.5-pro';
 const GEMINI_ENDPOINT = process.env.GEMINI_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta/models';
 
