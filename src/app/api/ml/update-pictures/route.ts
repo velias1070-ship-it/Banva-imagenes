@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { mlPut, mlUploadImageFromUrl } from '@/lib/ml';
+import { mlPut, mlUploadImageFromUrl, isCatalogListing } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -35,6 +35,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Guard anti-catalogo (Capa 2): las fotos de publicaciones de catalogo
+    // se editan en la ficha del catalogo, no por API.
+    if (await isCatalogListing(item_id)) {
+      return NextResponse.json({
+        item_id,
+        success: false,
+        error: 'Esta publicacion es de CATALOGO (catalog_listing=true): las fotos se editan en la ficha del catalogo, no por API. Subi a la publicacion tradicional.',
+      }, { status: 422 });
+    }
+
     // Step 1: Upload new images to ML first, get their picture_ids
     const resolvedPictures: { id: string }[] = [];
     const uploadErrors: string[] = [];

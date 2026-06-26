@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -195,15 +195,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'No swatches have sku_suffix. Create project from catalog first.' }, { status: 400 });
   }
 
-  const { data: mlItems } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
-    .in('sku_venta', allSkus)
-    .eq('activo', true)
-    .is('variation_id', null);
-
-  const skuToItem = new Map((mlItems || []).map((item) => [item.sku_venta, item]));
-
   // 3. Process each swatch
   const results: {
     swatch: string;
@@ -225,18 +216,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
       continue;
     }
 
-    const mlItem = skuToItem.get(swatch.sku_suffix);
-    if (!mlItem) {
+    const resolved = await resolveItemIdForSku(swatch.sku_suffix);
+    if (!resolved.item_id) {
       results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: '', status: 'skipped', error: 'SKU not in ml_items_map' });
       continue;
     }
+    const itemId = resolved.item_id;
 
     try {
       // Fetch item from ML to get pictures
-      const item = await mlGet<MlItem>(`/items/${mlItem.item_id}?attributes=pictures`);
+      const item = await mlGet<MlItem>(`/items/${itemId}?attributes=pictures`);
 
       if (!item.pictures?.length) {
-        results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: mlItem.item_id, status: 'skipped', error: 'No pictures on ML listing' });
+        results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: itemId, status: 'skipped', error: 'No pictures on ML listing' });
         continue;
       }
 
@@ -248,7 +240,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       // Download the image
       const imgRes = await fetch(imageUrl);
       if (!imgRes.ok) {
-        results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: mlItem.item_id, status: 'error', error: `Failed to download: ${imgRes.status}` });
+        results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: itemId, status: 'error', error: `Failed to download: ${imgRes.status}` });
         continue;
       }
 
@@ -265,7 +257,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         });
 
       if (uploadError) {
-        results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: mlItem.item_id, status: 'error', error: uploadError.message });
+        results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: itemId, status: 'error', error: uploadError.message });
         continue;
       }
 
@@ -275,10 +267,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
         .update({ storage_path: storagePath })
         .eq('id', swatch.id);
 
-      results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: mlItem.item_id, status: 'success' });
+      results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: itemId, status: 'success' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: mlItem.item_id, status: 'error', error: message });
+      results.push({ swatch: swatch.name, sku: swatch.sku_suffix, item_id: itemId, status: 'error', error: message });
     }
   }
 

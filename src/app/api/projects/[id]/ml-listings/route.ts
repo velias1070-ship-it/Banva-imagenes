@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -67,17 +67,6 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'No swatches found' }, { status: 404 });
   }
 
-  // Get ML item mappings
-  const skus = swatches.map((s) => s.sku_suffix).filter(Boolean) as string[];
-  const { data: mlItems } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
-    .in('sku_venta', skus.length > 0 ? skus : ['__none__'])
-    .eq('activo', true)
-    .is('variation_id', null);
-
-  const skuToMl = new Map((mlItems || []).map((m) => [m.sku_venta, m]));
-
   // Get approved jobs for this project
   const { data: batches } = await supabase
     .from('generation_batches')
@@ -123,8 +112,16 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         qa_score: j.qa_score,
       }));
 
-    if (!skuToMl.has(swatch.sku_suffix || '') && swatch.sku_suffix) {
-      // SKU not in ml_items_map — try to find it in ML and auto-insert
+    // Resolve item_id deterministically via the shared resolver
+    let resolvedItemId: string | null = null;
+    let resolvedTitulo = '';
+    if (swatch.sku_suffix) {
+      const r = await resolveItemIdForSku(swatch.sku_suffix);
+      resolvedItemId = r.item_id;
+    }
+
+    if (!resolvedItemId && swatch.sku_suffix) {
+      // SKU not resolvable — fallback: try to find it in ML and auto-insert
       try {
         const sellerId = '1953806321';
         const searchResult = await mlGet<{ results: string[] }>(
@@ -145,18 +142,15 @@ export async function GET(_request: NextRequest, context: RouteContext) {
           }, { onConflict: 'sku_venta,item_id' });
 
           console.log(`[ml-listings] Auto-inserted ${swatch.sku_suffix} → ${foundItemId}`);
-          // Set ml so the code below fetches pictures
-          skuToMl.set(swatch.sku_suffix, { sku_venta: swatch.sku_suffix, item_id: foundItemId, titulo: itemData?.title || '' });
+          resolvedItemId = foundItemId;
+          resolvedTitulo = itemData?.title || '';
         }
       } catch (err) {
         console.error(`[ml-listings] Auto-insert failed for ${swatch.sku_suffix}:`, err);
       }
     }
 
-    // Re-check after potential auto-insert
-    const mlItem = swatch.sku_suffix ? skuToMl.get(swatch.sku_suffix) : null;
-
-    if (!mlItem) {
+    if (!resolvedItemId) {
       listings.push({
         swatch_id: swatch.id,
         swatch_name: swatch.name,
@@ -172,13 +166,13 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     }
 
     try {
-      const item = await mlGet<MlItemResponse>(`/items/${mlItem.item_id}?attributes=id,title,status,permalink,pictures`);
+      const item = await mlGet<MlItemResponse>(`/items/${resolvedItemId}?attributes=id,title,status,permalink,pictures`);
       listings.push({
         swatch_id: swatch.id,
         swatch_name: swatch.name,
         sku: swatch.sku_suffix || '',
-        item_id: mlItem.item_id,
-        titulo: item.title || mlItem.titulo,
+        item_id: resolvedItemId,
+        titulo: item.title || resolvedTitulo,
         status: item.status || '',
         permalink: item.permalink || '',
         ml_pictures: (item.pictures || []).map((p) => ({
@@ -193,8 +187,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         swatch_id: swatch.id,
         swatch_name: swatch.name,
         sku: swatch.sku_suffix || '',
-        item_id: mlItem.item_id,
-        titulo: mlItem.titulo,
+        item_id: resolvedItemId,
+        titulo: resolvedTitulo,
         status: 'error',
         permalink: '',
         ml_pictures: [],

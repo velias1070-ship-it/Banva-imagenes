@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -15,12 +14,6 @@ interface MlPicture {
   secure_url?: string;
 }
 
-function getInventorySupabase() {
-  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, key);
-}
-
 // POST /api/projects/[id]/slots/import-ml
 //
 // Para cada swatch del proyecto que tenga publicacion ML activa, lee las
@@ -29,7 +22,6 @@ function getInventorySupabase() {
 export async function POST(_req: NextRequest, ctx: RouteContext) {
   const { id: projectId } = await ctx.params;
   const supabase = createAdminClient();
-  const inventoryDb = getInventorySupabase();
 
   const { data: swatches, error: swErr } = await supabase
     .from('swatches')
@@ -38,20 +30,6 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
   if (swErr) return NextResponse.json({ error: swErr.message }, { status: 500 });
   if (!swatches?.length) return NextResponse.json({ ok: true, synced: 0 });
 
-  const skus = swatches.map((s) => s.sku_suffix).filter(Boolean) as string[];
-  const { data: mlMap } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, sku, item_id')
-    .or(`sku_venta.in.(${skus.join(',')}),sku.in.(${skus.join(',')})`)
-    .eq('activo', true)
-    .is('variation_id', null);
-
-  const skuToItemId = new Map<string, string>();
-  for (const m of mlMap || []) {
-    if (m.sku_venta) skuToItemId.set(m.sku_venta, m.item_id);
-    if (m.sku) skuToItemId.set(m.sku, m.item_id);
-  }
-
   let imported = 0;
   let withMl = 0;
   const errors: string[] = [];
@@ -59,7 +37,8 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
   for (const swatch of swatches) {
     const sku = swatch.sku_suffix;
     if (!sku) continue;
-    const itemId = skuToItemId.get(sku);
+    const r = await resolveItemIdForSku(sku);
+    const itemId = r.item_id;
     if (!itemId) continue;
     withMl++;
 

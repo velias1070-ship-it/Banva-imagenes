@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveItemIdForSku } from '@/lib/ml';
 
 const CATEGORY_MAP: Record<string, string> = {
   sabana: 'sabanas',
@@ -111,7 +112,7 @@ interface ProductGroup {
 //
 // Productos table is used as a SECONDARY enrichment source: if a SKU exists
 // in productos, we use its category/color/tamano fields to enrich the variant.
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const supabaseUrl = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.INVENTORY_SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -121,6 +122,64 @@ export async function GET() {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Exact-by-SKU escape hatch (Capa 3, server side): when ?sku=XXXX is present
+    // we bypass the 2+ variant filter and return a SINGLE single-variant group
+    // for that SKU, with its TRADITIONAL item_id resolved via resolveItemIdForSku.
+    // Without the param the normal grouped behaviour is untouched.
+    const skuQuery = new URL(request.url).searchParams.get('sku')?.trim();
+    if (skuQuery) {
+      const resolved = await resolveItemIdForSku(skuQuery);
+
+      const [prodRes, mlRes] = await Promise.all([
+        supabase
+          .from('productos')
+          .select('sku, nombre, categoria')
+          .eq('sku', skuQuery)
+          .maybeSingle(),
+        supabase
+          .from('ml_items_map')
+          .select('item_id, titulo, family_name')
+          .or(`sku_venta.eq."${skuQuery.replace(/["\\]/g, '')}",sku.eq."${skuQuery.replace(/["\\]/g, '')}"`)
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      const producto = prodRes.data || null;
+      const mlItem = mlRes.data || null;
+
+      // Nothing matches this SKU anywhere → empty result.
+      if (!producto && !mlItem) {
+        return NextResponse.json([]);
+      }
+
+      const titulo: string = mlItem?.titulo || '';
+      const familyName: string | null = mlItem?.family_name || null;
+      const baseName = producto?.nombre || titulo || skuQuery;
+      const parsed = parseVariantLabel(titulo, familyName);
+      const color = parsed.color || skuQuery;
+      const itemId = resolved.item_id || mlItem?.item_id || undefined;
+
+      const group: ProductGroup = {
+        base_name: baseName,
+        slug: slugify(baseName),
+        tamano: '',
+        categoria: producto?.categoria || inferCategory(baseName),
+        family_name: familyName,
+        variantes: [
+          {
+            sku: skuQuery,
+            color,
+            color_slug: slugify(color),
+            source: producto ? 'catalogo' : 'ml',
+            item_id: itemId,
+            titulo: titulo || undefined,
+          },
+        ],
+      };
+
+      return NextResponse.json([group]);
+    }
 
     const [mlItemsRes, productosRes] = await Promise.all([
       supabase

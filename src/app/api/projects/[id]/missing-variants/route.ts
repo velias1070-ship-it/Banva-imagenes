@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -161,15 +161,22 @@ export async function POST(request: NextRequest, context: RouteContext) {
   let added = 0;
 
   for (const sku of skus) {
-    // Get item info from ML
-    const sellerId = '1953806321';
-    const search = await mlGet<{ results: string[] }>(
-      `/users/${sellerId}/items/search?seller_sku=${sku}&limit=1`
-    );
+    // Resolve item_id via shared deterministic resolver
+    const resolved = await resolveItemIdForSku(sku);
+    let itemId = resolved.item_id;
 
-    if (!search?.results?.[0]) continue;
+    // Fallback: legacy seller_sku search only when the resolver found nothing
+    if (!itemId) {
+      const sellerId = '1953806321';
+      const search = await mlGet<{ results: string[] }>(
+        `/users/${sellerId}/items/search?seller_sku=${sku}&limit=1`
+      );
 
-    const itemId = search.results[0];
+      if (!search?.results?.[0]) continue;
+
+      itemId = search.results[0];
+    }
+
     const item = await mlGet<{ id: string; title: string; pictures?: Array<{ secure_url: string }> }>(
       `/items/${itemId}?attributes=id,title,pictures`
     );

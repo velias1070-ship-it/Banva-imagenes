@@ -232,3 +232,155 @@ export async function mlUpdateItemPictures(
     pictures: pictureIds.map((id) => ({ id })),
   });
 }
+
+// Fila de ml_items_map relevante para resolver un SKU a su item_id.
+interface MlItemsMapRow {
+  item_id: string | null;
+  sku_venta: string | null;
+  sku: string | null;
+  ultimo_sync: string | null;
+}
+
+// Respuesta del multiget de ML (/items?ids=...): array de envelopes { code, body }.
+interface MlMultigetEntry {
+  code: number;
+  body: { id?: string; catalog_listing?: boolean };
+}
+
+// Resultado del resolver: item_id elegido + flags de diagnostico.
+export interface ResolveItemIdResult {
+  item_id: string | null;
+  is_catalog: boolean;
+  candidate_count: number;
+  all_item_ids: string[];
+}
+
+/**
+ * Resuelve un sku_venta al item_id de ML que corresponde subir/editar.
+ *
+ * El bug historico era usar .maybeSingle()/.single(): cuando un SKU tiene
+ * varias publicaciones (tipico: una tradicional + una de catalogo), esas
+ * llamadas fallan o devuelven la fila equivocada. Aca traemos TODAS las filas
+ * y, si hay ambiguedad, preferimos la publicacion TRADICIONAL (catalog_listing
+ * = false) porque es la editable (las de catalogo heredan fotos/titulo de la
+ * ficha y rechazan PUT de pictures).
+ */
+export async function resolveItemIdForSku(skuVenta: string): Promise<ResolveItemIdResult> {
+  const supabase = getInventorySupabase();
+
+  // Traemos todas las publicaciones activas y sin variacion del SKU.
+  // Match por sku_venta (preferido) o por la columna sku (respaldo legacy,
+  // porque sku_venta puede venir null en filas antiguas).
+  // Envolvemos el valor en comillas dobles para que ,/./() sean literales en
+  // PostgREST y removemos "/\ (que romperian el filtro): el resolver se llama
+  // server-side con SKUs crudos, asi que no confiamos en la forma del input.
+  const safeSku = skuVenta.replace(/["\\]/g, '');
+  const { data, error } = await supabase
+    .from('ml_items_map')
+    .select('item_id, sku_venta, sku, ultimo_sync')
+    .or(`sku_venta.eq."${safeSku}",sku.eq."${safeSku}"`)
+    .eq('activo', true)
+    .is('variation_id', null);
+
+  if (error || !data || data.length === 0) {
+    return { item_id: null, is_catalog: false, candidate_count: 0, all_item_ids: [] };
+  }
+
+  const rows = data as MlItemsMapRow[];
+
+  // Priorizamos las filas que matchean por sku_venta sobre las que solo
+  // matchean por sku (respaldo legacy). Si hay matches por sku_venta, esos mandan.
+  const skuVentaRows = rows.filter((r) => r.sku_venta === skuVenta);
+  const effectiveRows = skuVentaRows.length > 0 ? skuVentaRows : rows;
+
+  // Solo filas con item_id no nulo son candidatas reales.
+  const candidates = effectiveRows.filter(
+    (r): r is MlItemsMapRow & { item_id: string } => typeof r.item_id === 'string' && r.item_id.length > 0
+  );
+
+  const allItemIds = candidates.map((r) => r.item_id);
+  const candidateCount = candidates.length;
+
+  if (candidateCount === 0) {
+    return { item_id: null, is_catalog: false, candidate_count: 0, all_item_ids: [] };
+  }
+
+  // Caso simple: una sola publicacion. No gastamos una llamada extra a ML;
+  // asumimos tradicional (is_catalog=false) y el guard del upload lo revalida.
+  if (candidateCount === 1) {
+    return {
+      item_id: candidates[0].item_id,
+      is_catalog: false,
+      candidate_count: 1,
+      all_item_ids: allItemIds,
+    };
+  }
+
+  // Ordenamos por ultimo_sync desc para el desempate y el fallback.
+  const byRecency = [...candidates].sort(
+    (a, b) => (b.ultimo_sync ? Date.parse(b.ultimo_sync) : 0) - (a.ultimo_sync ? Date.parse(a.ultimo_sync) : 0)
+  );
+
+  // Caso ambiguo: preguntamos a ML el catalog_listing de cada candidato para
+  // poder preferir la publicacion tradicional (editable).
+  try {
+    const csv = allItemIds.join(',');
+    const multiget = await mlGet<MlMultigetEntry[]>(
+      `/items?ids=${csv}&attributes=id,catalog_listing`
+    );
+
+    // Mapa item_id -> catalog_listing (solo entradas que ML respondio OK).
+    const catalogById = new Map<string, boolean>();
+    for (const entry of multiget) {
+      if (entry.code === 200 && entry.body?.id) {
+        catalogById.set(entry.body.id, entry.body.catalog_listing === true);
+      }
+    }
+
+    // Tradicionales = catalog_listing explicitamente false. Recorremos en orden
+    // de recency para que el primer match ya sea el mas reciente.
+    const tradicional = byRecency.find((r) => catalogById.get(r.item_id) === false);
+    if (tradicional) {
+      return {
+        item_id: tradicional.item_id,
+        is_catalog: false,
+        candidate_count: candidateCount,
+        all_item_ids: allItemIds,
+      };
+    }
+
+    // Todas son de catalogo (o sin dato fiable): devolvemos la primera y marcamos catalogo.
+    return {
+      item_id: byRecency[0].item_id,
+      is_catalog: catalogById.get(byRecency[0].item_id) === true,
+      candidate_count: candidateCount,
+      all_item_ids: allItemIds,
+    };
+  } catch {
+    // Falla de red en el multiget: no rompemos el flujo. Caemos a la fila mas
+    // reciente y asumimos tradicional (el guard del upload revalida).
+    return {
+      item_id: byRecency[0].item_id,
+      is_catalog: false,
+      candidate_count: candidateCount,
+      all_item_ids: allItemIds,
+    };
+  }
+}
+
+/**
+ * Revalida contra ML si una publicacion es de catalogo (catalog_listing=true).
+ * Sirve como guard antes de subir/editar fotos: las de catalogo rechazan el PUT.
+ * En error de red devolvemos false a proposito: preferimos no bloquear subidas
+ * validas por un fallo transitorio (el PUT real fallara claro si fuese catalogo).
+ */
+export async function isCatalogListing(itemId: string): Promise<boolean> {
+  try {
+    const item = await mlGet<{ catalog_listing?: boolean }>(
+      `/items/${itemId}?attributes=catalog_listing`
+    );
+    return item.catalog_listing === true;
+  } catch {
+    return false;
+  }
+}

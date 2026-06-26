@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -137,23 +137,23 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
   const allSwatches = (swatches || []) as SwatchData[];
 
-  // 4. Fetch ML item mappings from inventory DB
-  const skus = allSwatches.map((s) => s.sku_suffix).filter(Boolean) as string[];
-  const { data: mlItems } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
-    .in('sku_venta', skus.length > 0 ? skus : ['__none__'])
-    .eq('activo', true)
-    .is('variation_id', null);
-
-  const skuToMl = new Map((mlItems || []).map((m) => [m.sku_venta, m]));
-
-  // 5. Auto-discover unmapped SKUs + fetch ML listing data in parallel
+  // 4. Resolve ML item_id per SKU via the shared deterministic resolver
+  //    + auto-discover unmapped SKUs + fetch ML listing data in parallel
   const mlListingsBySwatch = new Map<string, MlListingData | null>();
 
   const mlFetches = allSwatches.map(async (swatch) => {
-    // Auto-discover logic for unmapped SKUs
-    if (!skuToMl.has(swatch.sku_suffix || '') && swatch.sku_suffix) {
+    if (!swatch.sku_suffix) {
+      mlListingsBySwatch.set(swatch.id, null);
+      return;
+    }
+
+    // Deterministic shared resolution first
+    const r = await resolveItemIdForSku(swatch.sku_suffix);
+    let itemId = r.item_id;
+    let fallbackTitulo = '';
+
+    // Auto-discover only as fallback when the resolver finds nothing
+    if (!itemId) {
       try {
         const sellerId = '1953806321';
         const searchResult = await mlGet<{ results: string[] }>(
@@ -175,32 +175,26 @@ export async function GET(_request: NextRequest, context: RouteContext) {
             { onConflict: 'sku_venta,item_id' }
           );
           console.log(`[results-with-listings] Auto-inserted ${swatch.sku_suffix} -> ${foundItemId}`);
-          skuToMl.set(swatch.sku_suffix, {
-            sku_venta: swatch.sku_suffix,
-            item_id: foundItemId,
-            titulo: itemData?.title || '',
-          });
+          itemId = foundItemId;
+          fallbackTitulo = itemData?.title || '';
         }
       } catch (err) {
         console.error(`[results-with-listings] Auto-insert failed for ${swatch.sku_suffix}:`, err);
       }
     }
 
-    // Re-check after potential auto-insert
-    const mlItem = swatch.sku_suffix ? skuToMl.get(swatch.sku_suffix) : null;
-
-    if (!mlItem) {
+    if (!itemId) {
       mlListingsBySwatch.set(swatch.id, null);
       return;
     }
 
     try {
       const item = await mlGet<MlItemResponse>(
-        `/items/${mlItem.item_id}?attributes=id,title,status,permalink,pictures`
+        `/items/${itemId}?attributes=id,title,status,permalink,pictures`
       );
       mlListingsBySwatch.set(swatch.id, {
-        item_id: mlItem.item_id,
-        titulo: item.title || mlItem.titulo,
+        item_id: itemId,
+        titulo: item.title || fallbackTitulo,
         status: item.status || '',
         permalink: item.permalink || '',
         ml_pictures: (item.pictures || []).map((p) => ({

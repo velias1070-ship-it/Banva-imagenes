@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -48,35 +48,44 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: `SKU ${sku} ya existe como swatch "${existing.name}"` }, { status: 409 });
   }
 
-  // 1. Find item_id in ml_items_map
-  const { data: mlItem } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo, family_name, thumbnail, permalink, bed_size')
-    .eq('sku_venta', sku)
-    .eq('activo', true)
-    .is('variation_id', null)
-    .maybeSingle();
+  // 1. Resolve item_id deterministically via the shared resolver
+  const resolved = await resolveItemIdForSku(sku);
 
-  if (!mlItem) {
+  if (!resolved.item_id) {
     return NextResponse.json({ error: `SKU ${sku} no encontrado en ml_items_map` }, { status: 404 });
   }
+
+  const itemId = resolved.item_id;
+
+  // Fetch the ml_items_map row for the resolved item to get display metadata
+  // (titulo, thumbnail, permalink, bed_size). May be null if the item was
+  // resolved outside the map; metadata fields below tolerate that.
+  const { data: mlRows } = await inventoryDb
+    .from('ml_items_map')
+    .select('sku_venta, item_id, titulo, family_name, thumbnail, permalink, bed_size')
+    .eq('item_id', itemId)
+    .is('variation_id', null)
+    .order('activo', { ascending: false })
+    .limit(1);
+
+  const mlItem = mlRows?.[0] ?? null;
 
   // 2. Fetch item from ML to get pictures + title
   const item = await mlGet<{
     id: string;
     title: string;
     pictures?: { id: string; secure_url: string }[];
-  }>(`/items/${mlItem.item_id}?attributes=id,title,pictures`);
+  }>(`/items/${itemId}?attributes=id,title,pictures`);
 
   if (!item) {
-    return NextResponse.json({ error: `No se pudo obtener item ${mlItem.item_id} de ML` }, { status: 502 });
+    return NextResponse.json({ error: `No se pudo obtener item ${itemId} de ML` }, { status: 502 });
   }
 
   // Extract design + size name from title.
   // Title example:
   //   "Sabanas King Cannon 200 Hilos 2 Plaza Media Full 100 Algodon Express 200 Hilos"
   // We want: design = "Express", size = "King" → name = "Express King".
-  const rawTitle = item.title || mlItem.titulo || '';
+  const rawTitle = item.title || mlItem?.titulo || '';
   const titleWords = rawTitle.split(/\s+/).filter(Boolean);
   // Common Cannon/sabana stopwords. Anything in this list is NOT a design name.
   const STOPWORDS = new Set([
@@ -226,12 +235,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       color_slug: variantSlug,
       source: 'catalogo',
       tipo: null,
-      bed_size: mlItem.bed_size || sizeName || null,
+      bed_size: mlItem?.bed_size || sizeName || null,
       label: labelParts.join(' · '),
-      item_id: mlItem.item_id,
-      titulo: item.title || mlItem.titulo,
-      thumbnail: mlItem.thumbnail || undefined,
-      permalink: mlItem.permalink || undefined,
+      item_id: itemId,
+      titulo: item.title || mlItem?.titulo,
+      thumbnail: mlItem?.thumbnail || undefined,
+      permalink: mlItem?.permalink || undefined,
     };
 
     const upsertedVariantes = [...variantes];
@@ -252,8 +261,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   return NextResponse.json({
     swatch,
-    ml_item_id: mlItem.item_id,
-    ml_title: item.title || mlItem.titulo,
+    ml_item_id: itemId,
+    ml_title: item.title || mlItem?.titulo,
     has_image: !!storagePath,
   }, { status: 201 });
 }

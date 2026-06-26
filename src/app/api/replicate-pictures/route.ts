@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { mlGet, mlPut, mlUploadImageFromUrl } from '@/lib/ml';
+import { mlGet, mlPut, mlUploadImageFromUrl, resolveItemIdForSku, isCatalogListing } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -31,21 +31,14 @@ function extractSku(item: MlItemResponse): string | null {
 const SELLER_ID = '1953806321';
 
 async function resolveSkuToItemId(
-  inventoryDb: ReturnType<typeof getInventorySupabase>,
+  _inventoryDb: ReturnType<typeof getInventorySupabase>,
   sku: string
 ): Promise<string | null> {
-  // Try ml_items_map first
-  const { data: mlItem } = await inventoryDb
-    .from('ml_items_map')
-    .select('item_id')
-    .eq('sku_venta', sku)
-    .eq('activo', true)
-    .is('variation_id', null)
-    .maybeSingle();
+  // Resolver determinista compartido (ml_items_map + reglas de prioridad)
+  const r = await resolveItemIdForSku(sku);
+  if (r.item_id) return r.item_id;
 
-  if (mlItem?.item_id) return mlItem.item_id;
-
-  // Auto-discover via ML API
+  // Fallback: auto-descubrir via seller_sku search solo si el resolver no encontro nada
   const search = await mlGet<{ results: string[] }>(
     `/users/${SELLER_ID}/items/search?seller_sku=${sku}&limit=1`
   );
@@ -242,6 +235,13 @@ export async function POST(request: NextRequest) {
       }
       if (!targetItemId) {
         results.push({ sku: target.label, item_id: null, title: null, status: 'error', pictures_set: 0, error: 'Not found in ML' });
+        continue;
+      }
+
+      // Guard anti-catalogo (Capa 2): las fotos de publicaciones de catalogo se editan
+      // en la ficha del catalogo, no por API. Bloquear antes de cualquier PUT de pictures.
+      if (await isCatalogListing(targetItemId)) {
+        results.push({ sku: target.label, item_id: targetItemId, title: null, status: 'error', pictures_set: 0, error: 'Esta publicacion es de CATALOGO (catalog_listing=true): las fotos se editan en la ficha del catalogo, no por API. Subi a la publicacion tradicional.' });
         continue;
       }
 

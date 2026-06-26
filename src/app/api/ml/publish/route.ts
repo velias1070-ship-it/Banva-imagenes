@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet, mlPut, mlUploadImageFromUrl } from '@/lib/ml';
+import { mlGet, mlPut, mlUploadImageFromUrl, resolveItemIdForSku, isCatalogListing } from '@/lib/ml';
 
 // Inventory Supabase (ml_items_map, ml_config, productos)
 function getInventorySupabase() {
@@ -270,22 +270,12 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // If this SKU isn't in our map yet (e.g. a 1.5P target_sku), fetch it
-    if (!skuToItem.has(sku)) {
-      const { data: extraItems } = await inventoryDb
-        .from('ml_items_map')
-        .select('sku_venta, item_id, titulo')
-        .eq('sku_venta', sku)
-        .eq('activo', true)
-        .is('variation_id', null)
-        .limit(1);
-      if (extraItems?.length) {
-        skuToItem.set(sku, extraItems[0]);
-      }
-    }
-
-    const mlItem = skuToItem.get(sku);
-    if (!mlItem) {
+    // Resolve item_id deterministically via the shared resolver (handles
+    // multi-candidate / catalog disambiguation the same way across endpoints).
+    // The bulk ml_items_map fetch + title-search above is kept only as a
+    // titulo cache for the response.
+    const resolved = await resolveItemIdForSku(sku);
+    if (!resolved.item_id) {
       results.push({
         sku, item_id: '', titulo: '',
         pictures_new: 0, pictures_kept: 0, pictures_total: 0,
@@ -293,6 +283,8 @@ export async function POST(request: NextRequest) {
       });
       continue;
     }
+
+    const mlItem = { item_id: resolved.item_id, titulo: skuToItem.get(sku)?.titulo ?? '' };
 
     const newImageUrls = swatchJobs
       .filter((j) => j.output_storage_path)
@@ -346,6 +338,18 @@ export async function POST(request: NextRequest) {
           pictures_kept: keptCount,
           pictures_total: plannedNewCount + keptCount,
           status: 'success',
+        });
+        continue;
+      }
+
+      // Capa 2 — guard anti-catalogo: justo antes del PUT de pictures.
+      // Las publicaciones de catalogo no aceptan edicion de fotos por API.
+      if (await isCatalogListing(mlItem.item_id)) {
+        results.push({
+          sku, item_id: mlItem.item_id, titulo: mlItem.titulo,
+          pictures_new: 0, pictures_kept: 0, pictures_total: 0,
+          status: 'error',
+          error: 'Esta publicacion es de CATALOGO (catalog_listing=true): las fotos se editan en la ficha del catalogo, no por API. Subi a la publicacion tradicional.',
         });
         continue;
       }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -30,6 +30,12 @@ interface ProductGroup {
     bed_size?: string | null;
     label?: string;
   }[];
+}
+
+// El query "parece un SKU" cuando no tiene espacios, mide >= 6 y es
+// alfanumerico/mayusculas. Solo en ese caso hacemos el fetch on-demand a la API.
+function looksLikeSku(q: string): boolean {
+  return q.length >= 6 && !/\s/.test(q) && /^[A-Za-z0-9]+$/.test(q);
 }
 
 function SyncMlFamiliesButton() {
@@ -78,16 +84,21 @@ function ProductCombobox({
   selectedSlugs,
   onToggle,
   onClear,
+  onAddGroups,
 }: {
   productos: ProductGroup[];
   loading: boolean;
   selectedSlugs: string[];
   onToggle: (slug: string) => void;
   onClear: () => void;
+  onAddGroups: (groups: ProductGroup[]) => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [skuLoading, setSkuLoading] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Evita refetch del mismo query (incluso si no devolvio nada).
+  const attemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -112,6 +123,34 @@ function ProductCombobox({
       p.variantes.some((v) => v.sku.toLowerCase().includes(q) || v.color.toLowerCase().includes(q))
     );
   });
+
+  // Escape single-variant: cuando el filtro local no encuentra nada y el query
+  // parece un SKU, buscamos ese SKU on-demand en la API. Los grupos devueltos se
+  // suman a `productos` (via onAddGroups), por lo que `filtered` los recalcula y
+  // aparecen como opciones seleccionables con el mismo render que el resto.
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || filtered.length > 0 || !looksLikeSku(q) || attemptedRef.current.has(q.toLowerCase())) {
+      return;
+    }
+    const handle = setTimeout(() => {
+      attemptedRef.current.add(q.toLowerCase());
+      setSkuLoading(true);
+      fetch(`/api/productos?sku=${encodeURIComponent(q)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          const groups: ProductGroup[] = Array.isArray(data)
+            ? (data as ProductGroup[])
+            : data && Array.isArray((data as ProductGroup).variantes)
+            ? [data as ProductGroup]
+            : [];
+          if (groups.length > 0) onAddGroups(groups);
+        })
+        .catch(() => {})
+        .finally(() => setSkuLoading(false));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query, open, filtered.length, onAddGroups]);
 
   const placeholder = loading
     ? 'Cargando...'
@@ -147,7 +186,9 @@ function ProductCombobox({
         {open && (
           <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[320px] overflow-y-auto rounded-md border bg-popover shadow-lg">
             {filtered.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-muted-foreground">Sin resultados</div>
+              <div className="px-3 py-2 text-sm text-muted-foreground">
+                {skuLoading ? 'Buscando SKU...' : 'Sin resultados'}
+              </div>
             ) : (
               filtered.map((p) => {
                 const isSelected = selectedSet.has(p.slug);
@@ -163,7 +204,11 @@ function ProductCombobox({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{p.base_name} — {p.tamano}</div>
-                      <div className="text-xs text-muted-foreground">{p.variantes.length} variantes · {p.categoria}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {p.variantes.length === 1
+                          ? `Producto suelto · 1 variante · ${p.categoria}`
+                          : `${p.variantes.length} variantes · ${p.categoria}`}
+                      </div>
                     </div>
                   </button>
                 );
@@ -274,6 +319,16 @@ export default function NewProjectPage() {
     });
   }
 
+  // Suma grupos traidos por SKU a la lista que ya maneja el estado, dedup por
+  // slug, para que el toggle/autocompletado existente los encuentre.
+  const handleAddGroups = useCallback((groups: ProductGroup[]) => {
+    setProductos((prev) => {
+      const existing = new Set(prev.map((p) => p.slug));
+      const fresh = groups.filter((g) => g.slug && !existing.has(g.slug));
+      return fresh.length > 0 ? [...prev, ...fresh] : prev;
+    });
+  }, []);
+
   function handleClearProductos() {
     setSelectedProductos([]);
     setName('');
@@ -357,6 +412,7 @@ export default function NewProjectPage() {
                 selectedSlugs={selectedProductos}
                 onToggle={handleProductoToggle}
                 onClear={handleClearProductos}
+                onAddGroups={handleAddGroups}
               />
             )}
 

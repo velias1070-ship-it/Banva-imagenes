@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 30;
 
 interface RouteContext {
   params: Promise<{ id: string }>;
-}
-
-function getInventorySupabase() {
-  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, key);
 }
 
 interface MlItemResponse {
@@ -36,23 +29,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'sku query parameter required' }, { status: 400 });
   }
 
-  const inventoryDb = getInventorySupabase();
-
-  // 1. Look up in ml_items_map
+  // 1. Resolve item_id via shared deterministic resolver
   let mlItem: { sku_venta: string; item_id: string; titulo: string } | null = null;
 
-  const { data: found } = await inventoryDb
-    .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
-    .eq('sku_venta', sku)
-    .eq('activo', true)
-    .is('variation_id', null)
-    .maybeSingle();
+  const resolved = await resolveItemIdForSku(sku);
 
-  if (found) {
-    mlItem = found;
+  if (resolved.item_id) {
+    mlItem = { sku_venta: sku, item_id: resolved.item_id, titulo: '' };
   } else {
-    // Try ML API search as fallback
+    // Try ML API search as fallback (only when the resolver found nothing)
     try {
       const sellerId = '1953806321';
       const searchResult = await mlGet<{ results: string[] }>(

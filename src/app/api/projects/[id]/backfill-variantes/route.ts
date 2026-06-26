@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
@@ -115,30 +116,32 @@ export async function POST(_request: NextRequest, context: RouteContext) {
   const inventoryKey = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
   const inventoryDb = createClient(inventoryUrl, inventoryKey);
 
-  // Buscar por sku Y por sku_venta (uno de los dos puede tener match)
-  const [bySku, bySkuVenta] = await Promise.all([
-    inventoryDb
-      .from('ml_items_map')
-      .select('item_id, sku, sku_venta, titulo, family_name, thumbnail, permalink, bed_size')
-      .eq('activo', true)
-      .is('variation_id', null)
-      .in('sku', skus),
-    inventoryDb
-      .from('ml_items_map')
-      .select('item_id, sku, sku_venta, titulo, family_name, thumbnail, permalink, bed_size')
-      .eq('activo', true)
-      .is('variation_id', null)
-      .in('sku_venta', skus),
-  ]);
+  // Resolver determinista del item_id por SKU (fuente compartida con el resto de la app)
+  const itemIdBySku = new Map<string, string>();
+  await Promise.all(
+    skus.map(async (sku) => {
+      const r = await resolveItemIdForSku(sku);
+      if (r.item_id) itemIdBySku.set(sku, r.item_id);
+    }),
+  );
 
-  const lookup = new Map<string, NonNullable<typeof bySku.data>[number]>();
-  for (const row of bySku.data || []) if (row.sku) lookup.set(row.sku, row);
-  for (const row of bySkuVenta.data || []) if (row.sku_venta) lookup.set(row.sku_venta, row);
+  // Enriquecer con metadata de ml_items_map a partir del item_id ya resuelto
+  const itemIds = Array.from(new Set(itemIdBySku.values()));
+  const byItemId = await inventoryDb
+    .from('ml_items_map')
+    .select('item_id, sku, sku_venta, titulo, family_name, thumbnail, permalink, bed_size')
+    .eq('activo', true)
+    .is('variation_id', null)
+    .in('item_id', itemIds);
+
+  const lookup = new Map<string, NonNullable<typeof byItemId.data>[number]>();
+  for (const row of byItemId.data || []) if (row.item_id) lookup.set(row.item_id, row);
 
   let matched = 0;
   const newVariantes = variantes.map((v) => {
-    const ml = lookup.get(v.sku);
-    if (!ml) return v; // dejar tal cual
+    const itemId = itemIdBySku.get(v.sku);
+    const ml = itemId ? lookup.get(itemId) : undefined;
+    if (!ml) return v; // dejar tal cual (no encontrado)
     matched++;
     const titulo = ml.titulo || '';
     const familyName = ml.family_name || null;

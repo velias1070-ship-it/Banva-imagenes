@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { mlGet, mlPut, mlUploadImageFromUrl } from '@/lib/ml';
+import { mlGet, mlPut, mlUploadImageFromUrl, resolveItemIdForSku, isCatalogListing } from '@/lib/ml';
 
 export const maxDuration = 120;
 
@@ -52,19 +52,21 @@ export async function POST(request: NextRequest) {
 
   const inventoryDb = getInventorySupabase();
 
-  // 1. Look up all SKUs → item_ids
+  // 1. Look up titulos for display (item_id se resuelve con el resolver compartido)
   const allSkus = [source_sku, ...target_skus];
   const { data: mlItems } = await inventoryDb
     .from('ml_items_map')
-    .select('sku_venta, item_id, titulo')
+    .select('sku_venta, titulo')
     .in('sku_venta', allSkus)
     .eq('activo', true)
     .is('variation_id', null);
 
-  const skuToItem = new Map((mlItems || []).map((m) => [m.sku_venta, m]));
+  const skuToTitulo = new Map((mlItems || []).map((m) => [m.sku_venta, (m.titulo as string) || '']));
 
-  const sourceItem = skuToItem.get(source_sku);
-  if (!sourceItem) {
+  // Resolve source item_id con la funcion determinista compartida
+  const sourceResolved = await resolveItemIdForSku(source_sku);
+  const sourceItemId = sourceResolved.item_id;
+  if (!sourceItemId) {
     return NextResponse.json({ error: `Source SKU ${source_sku} not found in ml_items_map` }, { status: 404 });
   }
 
@@ -75,18 +77,18 @@ export async function POST(request: NextRequest) {
     // Custom arrangement from editor (mix of ML + generated)
     for (const pic of customPictures) {
       const url = pic.source_url || pic.url;
-      if (pic.type === 'ml' && pic.id && sourceItem) {
+      if (pic.type === 'ml' && pic.id && sourceItemId) {
         // Resolve ML picture URL
-        const itemData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItem.item_id}?attributes=pictures`);
+        const itemData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItemId}?attributes=pictures`);
         const found = itemData.pictures?.find((p) => p.id === pic.id);
         if (found) imageUrls.push(found.secure_url);
       } else if (url) {
         imageUrls.push(url);
       }
     }
-  } else if (sourceItem) {
+  } else if (sourceItemId) {
     // Copy from source ML listing as-is
-    const sourceData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItem.item_id}?attributes=pictures`);
+    const sourceData = await mlGet<{ pictures: MlPicture[] }>(`/items/${sourceItemId}?attributes=pictures`);
     const sourcePictures = sourceData.pictures || [];
 
     // Reorder if cover_index specified
@@ -111,18 +113,33 @@ export async function POST(request: NextRequest) {
   }[] = [];
 
   for (const targetSku of target_skus) {
-    const targetItem = skuToItem.get(targetSku);
-    if (!targetItem) {
+    const targetResolved = await resolveItemIdForSku(targetSku);
+    const targetItemId = targetResolved.item_id;
+    const targetTitulo = skuToTitulo.get(targetSku) || '';
+    if (!targetItemId) {
       results.push({ sku: targetSku, item_id: '', titulo: '', pictures_count: 0, status: 'skipped', error: 'SKU not found in ml_items_map' });
       continue;
     }
 
     if (dry_run) {
-      results.push({ sku: targetSku, item_id: targetItem.item_id, titulo: targetItem.titulo, pictures_count: imageUrls.length, status: 'success' });
+      results.push({ sku: targetSku, item_id: targetItemId, titulo: targetTitulo, pictures_count: imageUrls.length, status: 'success' });
       continue;
     }
 
     try {
+      // Guard anti-catalogo: las fotos de publicaciones de catalogo se editan en la ficha, no por API
+      if (await isCatalogListing(targetItemId)) {
+        results.push({
+          sku: targetSku,
+          item_id: targetItemId,
+          titulo: targetTitulo,
+          pictures_count: 0,
+          status: 'error',
+          error: 'Esta publicacion es de CATALOGO (catalog_listing=true): las fotos se editan en la ficha del catalogo, no por API. Subi a la publicacion tradicional.',
+        });
+        continue;
+      }
+
       // Upload each image to ML for this target
       const newPictureIds: { id: string }[] = [];
       for (const url of imageUrls) {
@@ -131,23 +148,23 @@ export async function POST(request: NextRequest) {
       }
 
       // PUT to target item
-      await mlPut(`/items/${targetItem.item_id}`, { pictures: newPictureIds });
+      await mlPut(`/items/${targetItemId}`, { pictures: newPictureIds });
 
       results.push({
         sku: targetSku,
-        item_id: targetItem.item_id,
-        titulo: targetItem.titulo,
+        item_id: targetItemId,
+        titulo: targetTitulo,
         pictures_count: newPictureIds.length,
         status: 'success',
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      results.push({ sku: targetSku, item_id: targetItem.item_id, titulo: targetItem.titulo, pictures_count: 0, status: 'error', error: message });
+      results.push({ sku: targetSku, item_id: targetItemId, titulo: targetTitulo, pictures_count: 0, status: 'error', error: message });
     }
   }
 
   return NextResponse.json({
-    source: { sku: source_sku, item_id: sourceItem?.item_id || '', pictures: imageUrls.length },
+    source: { sku: source_sku, item_id: sourceItemId, pictures: imageUrls.length },
     dry_run,
     targets: results,
     success: results.filter((r) => r.status === 'success').length,

@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { mlGet } from '@/lib/ml';
+import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
 export const maxDuration = 60;
 
 interface RouteContext {
   params: Promise<{ id: string }>;
-}
-
-function getInventorySupabase() {
-  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, key);
 }
 
 interface MlPicture {
@@ -36,7 +29,6 @@ interface MlItemResponse {
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id: projectId } = await context.params;
   const supabase = createAdminClient();
-  const inventoryDb = getInventorySupabase();
   const body = await request.json().catch(() => ({}));
 
   const swatchId: string | undefined = body.swatch_id;
@@ -59,18 +51,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Swatch has no SKU linked' }, { status: 400 });
   }
 
-  // Find ML item
-  const { data: mlItem } = await inventoryDb
-    .from('ml_items_map')
-    .select('item_id')
-    .eq('sku_venta', swatch.sku_suffix)
-    .eq('activo', true)
-    .is('variation_id', null)
-    .maybeSingle();
-
-  let itemId = mlItem?.item_id;
+  // Find ML item via shared deterministic resolver
+  const resolved = await resolveItemIdForSku(swatch.sku_suffix);
+  let itemId: string | null = resolved.item_id;
   if (!itemId) {
-    // Auto-discover
+    // Auto-discover (fallback only when resolver finds nothing)
     const search = await mlGet<{ results: string[] }>(
       `/users/1953806321/items/search?seller_sku=${swatch.sku_suffix}&limit=1`
     );
