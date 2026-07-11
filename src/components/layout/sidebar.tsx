@@ -16,11 +16,13 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldCheck,
+  Images,
 } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/projects', label: 'Proyectos', icon: FolderOpen },
+  { href: '/variantes', label: 'Variantes ML', icon: Images },
   { href: '/brands', label: 'Brand Books', icon: Palette },
   { href: '/search', label: 'Buscar Imagenes', icon: Search },
   { href: '/replicate', label: 'Replicar Fotos', icon: Copy },
