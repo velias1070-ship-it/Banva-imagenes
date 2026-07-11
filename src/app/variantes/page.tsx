@@ -71,6 +71,7 @@ export default function VariantesPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadingAll, setLoadingAll] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [view, setView] = useState<'cards' | 'matrix'>('cards');
 
   useEffect(() => {
     fetch('/api/productos')
@@ -96,6 +97,15 @@ export default function VariantesPage() {
     () => families.find((f) => f.slug === selectedSlug) || null,
     [families, selectedSlug]
   );
+
+  // La vista "Comparar fotos" (matriz) necesita todas las fotos de todas las
+  // variantes, asi que se disparan las cargas en vivo al entrar a esa vista.
+  useEffect(() => {
+    if (view === 'matrix' && selected) {
+      void loadAllLive();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedSlug]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -265,21 +275,48 @@ export default function VariantesPage() {
             <h2 className="text-lg font-semibold">{selected.base_name}</h2>
             <p className="text-sm text-muted-foreground">
               {totalVariantes} publicaciones · {selected.categoria}
+              {loadingAll ? ' · cargando fotos…' : ''}
             </p>
           </div>
-          <Button onClick={loadAllLive} disabled={loadingAll} variant="outline" size="sm">
-            {loadingAll ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Ver todas las fotos en vivo
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="flex overflow-hidden rounded-md border">
+              <button
+                type="button"
+                onClick={() => setView('cards')}
+                className={`px-3 py-1.5 text-sm ${
+                  view === 'cards'
+                    ? 'bg-blue-50 font-medium text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Tarjetas
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('matrix')}
+                className={`border-l px-3 py-1.5 text-sm ${
+                  view === 'matrix'
+                    ? 'bg-blue-50 font-medium text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Comparar fotos
+              </button>
+            </div>
+            <Button onClick={loadAllLive} disabled={loadingAll} variant="outline" size="sm">
+              {loadingAll ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              {view === 'matrix' ? 'Recargar' : 'Ver todas en vivo'}
+            </Button>
+          </div>
         </div>
       )}
 
-      {/* Grilla de publicaciones */}
-      {selected && (
+      {/* Grilla de publicaciones (vista Tarjetas) */}
+      {selected && view === 'cards' && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {selected.variantes.map((v) => {
             const itemId = v.item_id;
@@ -393,6 +430,116 @@ export default function VariantesPage() {
           })}
         </div>
       )}
+
+      {/* Matriz de comparación (vista Comparar fotos):
+          filas = variantes, columnas = posición de foto (#1..#N) en vivo */}
+      {selected && view === 'matrix' && (() => {
+        const rows = selected.variantes;
+        const maxCols = rows.reduce((m, v) => {
+          const n = v.item_id ? picsByItem[v.item_id]?.pics?.length ?? 0 : 0;
+          return Math.max(m, n);
+        }, 0);
+        const cols = Math.max(maxCols, 1);
+        return (
+          <div
+            className="overflow-auto rounded-lg border bg-white"
+            style={{ maxHeight: 'calc(100vh - 220px)' }}
+          >
+            <table className="border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 top-0 z-30 border-b border-r bg-gray-50 px-3 py-2 text-left font-medium">
+                    Variante
+                  </th>
+                  {Array.from({ length: cols }).map((_, j) => (
+                    <th
+                      key={j}
+                      className="sticky top-0 z-20 border-b bg-gray-50 px-2 py-2 text-center font-medium text-muted-foreground"
+                    >
+                      #{j + 1}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((v) => {
+                  const itemId = v.item_id;
+                  const state = itemId ? picsByItem[itemId] : undefined;
+                  const pics = state?.pics || [];
+                  return (
+                    <tr key={v.sku + (itemId || '')} className="hover:bg-gray-50/40">
+                      <td className="sticky left-0 z-10 border-b border-r bg-white px-3 py-2 align-top">
+                        <div className="flex items-center gap-2">
+                          {v.thumbnail ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={mlImg(v.thumbnail, 'O')}
+                              alt=""
+                              className="h-10 w-10 flex-shrink-0 rounded border object-cover"
+                            />
+                          ) : null}
+                          <div className="min-w-0">
+                            <div className="whitespace-nowrap text-sm font-medium">
+                              {v.color}
+                              {v.tipo ? (
+                                <span className="text-muted-foreground"> · {v.tipo}</span>
+                              ) : null}
+                              {v.bed_size ? (
+                                <span className="text-muted-foreground"> · {v.bed_size}</span>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[11px] text-muted-foreground">
+                                {v.sku}
+                              </span>
+                              {v.permalink && (
+                                <a
+                                  href={v.permalink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:text-blue-700"
+                                  title="Abrir en MercadoLibre"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      {Array.from({ length: cols }).map((_, j) => {
+                        const p = pics[j];
+                        return (
+                          <td key={j} className="border-b px-1 py-1 text-center align-middle">
+                            {p ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={p.url}
+                                alt=""
+                                loading="lazy"
+                                onClick={() => setLightbox(p.full)}
+                                className="mx-auto h-20 w-20 cursor-zoom-in rounded border object-cover"
+                              />
+                            ) : state?.error && j === 0 ? (
+                              <span className="text-[10px] text-red-600" title={state.error}>
+                                error
+                              </span>
+                            ) : state?.loading && j === 0 ? (
+                              <Loader2 className="mx-auto h-4 w-4 animate-spin text-muted-foreground" />
+                            ) : (
+                              <div className="mx-auto h-20 w-20 rounded border border-dashed bg-gray-50/60" />
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
 
       {!selected && !loading && (
         <div className="rounded-lg border border-dashed py-16 text-center text-sm text-muted-foreground">
