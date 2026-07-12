@@ -58,6 +58,41 @@ function mlImg(url: string | undefined, code: 'O' | 'F' = 'O'): string {
     .replace(/-[A-Z]\.(webp|jpg|jpeg|png)(\?.*)?$/i, `-${code}.$1$2`);
 }
 
+// Categorías donde la talla se mide en "plazas" (cama). En toallas/alfombras/etc
+// los dígitos del SKU NO son plazas, así que la derivación solo aplica aquí.
+const BEDDING_CATS = new Set([
+  'sabanas',
+  'quilts',
+  'plumones',
+  'frazadas',
+  'cubrecamas',
+  'toppers',
+  'cubre-colchon',
+]);
+
+// Deriva la talla en plazas desde el SKU cuando el campo estructurado falta.
+// La talla se codifica como el ÚLTIMO token 10/15/20/25 del SKU (con límites de
+// dígito para no cazar números de serie: JSAFAB4[15]P[20]W → toma 20, no 15).
+function plazaFromSku(sku: string): string {
+  const matches = sku.toUpperCase().match(/(?<!\d)(10|15|20|25)(?!\d)/g);
+  if (!matches) return '';
+  const code = matches[matches.length - 1];
+  const map: Record<string, string> = {
+    '10': '1 plaza',
+    '15': '1.5 plazas',
+    '20': '2 plazas',
+    '25': '2.5 plazas',
+  };
+  return map[code] || '';
+}
+
+// Talla efectiva: bed_size si viene, si no la derivada del SKU (solo cama).
+function sizeOf(v: Variante, bedding: boolean): string {
+  const bs = (v.bed_size || '').trim();
+  if (bs) return bs;
+  return bedding ? plazaFromSku(v.sku) : '';
+}
+
 function FilterSelect({
   label,
   value,
@@ -241,12 +276,13 @@ export default function VariantesPage() {
   }
 
   const totalVariantes = selected?.variantes.length ?? 0;
+  const bedding = !!selected && BEDDING_CATS.has(selected.categoria);
 
   // Opciones de filtro derivadas de las variantes de la familia elegida.
   // Solo se muestra un desplegable si esa dimensión tiene 2+ valores distintos.
   const sizeOpts = useMemo(
-    () => [...new Set((selected?.variantes || []).map((v) => v.bed_size || '').filter(Boolean))].sort(),
-    [selected]
+    () => [...new Set((selected?.variantes || []).map((v) => sizeOf(v, bedding)).filter(Boolean))].sort(),
+    [selected, bedding]
   );
   const colorOpts = useMemo(
     () => [...new Set((selected?.variantes || []).map((v) => v.color || '').filter(Boolean))].sort(),
@@ -260,16 +296,16 @@ export default function VariantesPage() {
   const filteredVariantes = useMemo(() => {
     const t = fText.trim().toLowerCase();
     return (selected?.variantes || []).filter((v) => {
-      if (fSize && (v.bed_size || '') !== fSize) return false;
+      if (fSize && sizeOf(v, bedding) !== fSize) return false;
       if (fColor && (v.color || '') !== fColor) return false;
       if (fTipo && (v.tipo || '') !== fTipo) return false;
       if (t) {
-        const hay = `${v.sku} ${v.color} ${v.tipo || ''} ${v.bed_size || ''} ${v.label || ''}`.toLowerCase();
+        const hay = `${v.sku} ${v.color} ${v.tipo || ''} ${sizeOf(v, bedding)} ${v.label || ''}`.toLowerCase();
         if (!hay.includes(t)) return false;
       }
       return true;
     });
-  }, [selected, fSize, fColor, fTipo, fText]);
+  }, [selected, bedding, fSize, fColor, fTipo, fText]);
 
   const hasFilters = !!(fSize || fColor || fTipo || fText.trim());
 
@@ -456,12 +492,12 @@ export default function VariantesPage() {
                       Sin foto
                     </div>
                   )}
-                  {v.bed_size && (
+                  {sizeOf(v, bedding) && (
                     <Badge
                       variant="secondary"
                       className="absolute left-2 top-2 text-[10px]"
                     >
-                      {v.bed_size}
+                      {sizeOf(v, bedding)}
                     </Badge>
                   )}
                 </div>
@@ -592,8 +628,8 @@ export default function VariantesPage() {
                               {v.tipo ? (
                                 <span className="text-muted-foreground"> · {v.tipo}</span>
                               ) : null}
-                              {v.bed_size ? (
-                                <span className="text-muted-foreground"> · {v.bed_size}</span>
+                              {sizeOf(v, bedding) ? (
+                                <span className="text-muted-foreground"> · {sizeOf(v, bedding)}</span>
                               ) : null}
                             </div>
                             <div className="flex items-center gap-2">
