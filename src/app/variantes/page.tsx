@@ -58,6 +58,36 @@ function mlImg(url: string | undefined, code: 'O' | 'F' = 'O'): string {
     .replace(/-[A-Z]\.(webp|jpg|jpeg|png)(\?.*)?$/i, `-${code}.$1$2`);
 }
 
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={label}
+      className={`h-9 rounded-md border bg-white px-2 text-sm ${
+        value ? 'border-blue-400 text-blue-700' : 'text-gray-700'
+      }`}
+    >
+      <option value="">{label}: todos</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export default function VariantesPage() {
   const [families, setFamilies] = useState<ProductGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +102,11 @@ export default function VariantesPage() {
   const [loadingAll, setLoadingAll] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [view, setView] = useState<'cards' | 'matrix'>('cards');
+  // Filtros dentro de la familia elegida
+  const [fSize, setFSize] = useState('');
+  const [fColor, setFColor] = useState('');
+  const [fTipo, setFTipo] = useState('');
+  const [fText, setFText] = useState('');
 
   useEffect(() => {
     fetch('/api/productos')
@@ -199,9 +234,44 @@ export default function VariantesPage() {
     setOpen(false);
     setExpanded(new Set());
     setPicsByItem({});
+    setFSize('');
+    setFColor('');
+    setFTipo('');
+    setFText('');
   }
 
   const totalVariantes = selected?.variantes.length ?? 0;
+
+  // Opciones de filtro derivadas de las variantes de la familia elegida.
+  // Solo se muestra un desplegable si esa dimensión tiene 2+ valores distintos.
+  const sizeOpts = useMemo(
+    () => [...new Set((selected?.variantes || []).map((v) => v.bed_size || '').filter(Boolean))].sort(),
+    [selected]
+  );
+  const colorOpts = useMemo(
+    () => [...new Set((selected?.variantes || []).map((v) => v.color || '').filter(Boolean))].sort(),
+    [selected]
+  );
+  const tipoOpts = useMemo(
+    () => [...new Set((selected?.variantes || []).map((v) => v.tipo || '').filter(Boolean))].sort(),
+    [selected]
+  );
+
+  const filteredVariantes = useMemo(() => {
+    const t = fText.trim().toLowerCase();
+    return (selected?.variantes || []).filter((v) => {
+      if (fSize && (v.bed_size || '') !== fSize) return false;
+      if (fColor && (v.color || '') !== fColor) return false;
+      if (fTipo && (v.tipo || '') !== fTipo) return false;
+      if (t) {
+        const hay = `${v.sku} ${v.color} ${v.tipo || ''} ${v.bed_size || ''} ${v.label || ''}`.toLowerCase();
+        if (!hay.includes(t)) return false;
+      }
+      return true;
+    });
+  }, [selected, fSize, fColor, fTipo, fText]);
+
+  const hasFilters = !!(fSize || fColor || fTipo || fText.trim());
 
   return (
     <div className="p-8">
@@ -315,10 +385,48 @@ export default function VariantesPage() {
         </div>
       )}
 
+      {/* Barra de filtros dentro de la familia */}
+      {selected && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {sizeOpts.length >= 2 && (
+            <FilterSelect label="Tamaño" value={fSize} onChange={setFSize} options={sizeOpts} />
+          )}
+          {colorOpts.length >= 2 && (
+            <FilterSelect label="Color" value={fColor} onChange={setFColor} options={colorOpts} />
+          )}
+          {tipoOpts.length >= 2 && (
+            <FilterSelect label="Diseño" value={fTipo} onChange={setFTipo} options={tipoOpts} />
+          )}
+          <input
+            value={fText}
+            onChange={(e) => setFText(e.target.value)}
+            placeholder="Filtrar por SKU o color…"
+            className="h-9 w-56 rounded-md border px-3 text-sm"
+          />
+          <span className="text-xs text-muted-foreground">
+            {filteredVariantes.length} de {totalVariantes}
+          </span>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setFSize('');
+                setFColor('');
+                setFTipo('');
+                setFText('');
+              }}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Grilla de publicaciones (vista Tarjetas) */}
       {selected && view === 'cards' && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {selected.variantes.map((v) => {
+          {filteredVariantes.map((v) => {
             const itemId = v.item_id;
             const state = itemId ? picsByItem[itemId] : undefined;
             const livePics = state?.pics;
@@ -434,7 +542,7 @@ export default function VariantesPage() {
       {/* Matriz de comparación (vista Comparar fotos):
           filas = variantes, columnas = posición de foto (#1..#N) en vivo */}
       {selected && view === 'matrix' && (() => {
-        const rows = selected.variantes;
+        const rows = filteredVariantes;
         const maxCols = rows.reduce((m, v) => {
           const n = v.item_id ? picsByItem[v.item_id]?.pics?.length ?? 0 : 0;
           return Math.max(m, n);
