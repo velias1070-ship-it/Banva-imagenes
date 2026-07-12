@@ -74,16 +74,29 @@ const BEDDING_CATS = new Set([
 // La talla se codifica como el ÚLTIMO token 10/15/20/25 del SKU (con límites de
 // dígito para no cazar números de serie: JSAFAB4[15]P[20]W → toma 20, no 15).
 function plazaFromSku(sku: string): string {
-  const matches = sku.toUpperCase().match(/(?<!\d)(10|15|20|25)(?!\d)/g);
-  if (!matches) return '';
-  const code = matches[matches.length - 1];
-  const map: Record<string, string> = {
-    '10': '1 plaza',
-    '15': '1.5 plazas',
-    '20': '2 plazas',
-    '25': '2.5 plazas',
-  };
-  return map[code] || '';
+  const u = sku.toUpperCase();
+  // Forma estándar: último token 10/15/20/25 (×10 = plazas).
+  const matches = u.match(/(?<!\d)(10|15|20|25)(?!\d)/g);
+  if (matches) {
+    const map: Record<string, string> = {
+      '10': '1 plaza',
+      '15': '1.5 plazas',
+      '20': '2 plazas',
+      '25': '2.5 plazas',
+    };
+    return map[matches[matches.length - 1]] || '';
+  }
+  // Forma corta "<n>P" al final del SKU (ej. …SR2P = 2 plazas).
+  const short = u.match(/(?<!\d)([123])P$/);
+  if (short) {
+    const map: Record<string, string> = {
+      '1': '1 plaza',
+      '2': '2 plazas',
+      '3': '3 plazas',
+    };
+    return map[short[1]] || '';
+  }
+  return '';
 }
 
 // Talla efectiva: bed_size si viene, si no la derivada del SKU (solo cama).
