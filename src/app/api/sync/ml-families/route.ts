@@ -13,6 +13,7 @@ interface MlAttribute {
 interface MlItem {
   id: string;
   title?: string;
+  status?: string;
   family_name?: string | null;
   thumbnail?: string | null;
   permalink?: string | null;
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
 
   for (const batch of batches) {
     const ids = batch.join(',');
-    const path = `/items?ids=${ids}&attributes=id,title,family_name,thumbnail,permalink,price,user_product_id,attributes`;
+    const path = `/items?ids=${ids}&attributes=id,title,status,family_name,thumbnail,permalink,price,user_product_id,attributes`;
     try {
       const result = await mlGet<Array<{ code: number; body: MlItem }>>(path);
       for (const entry of result) {
@@ -114,6 +115,12 @@ export async function POST(request: NextRequest) {
             user_product_id: it.user_product_id ?? null,
             bed_size: extractBedSize(it.attributes),
             attributes: it.attributes ?? null,
+            // Una publicacion "closed" en ML ya no existe para el comprador
+            // (tipicamente sub_status "deleted"). Si queda activo=true, el
+            // cache la sigue mostrando en /variantes y el resolver de SKU
+            // puede elegirla como candidata. Solo desactivamos: este sync lee
+            // filas activo=true, asi que nunca puede resucitar una fila.
+            ...(it.status === 'closed' ? { activo: false } : {}),
             updated_at: new Date().toISOString(),
           })
           .eq('item_id', it.id);
