@@ -141,6 +141,11 @@ export async function GET(request: Request) {
           .from('ml_items_map')
           .select('item_id, titulo, family_name')
           .or(`sku_venta.eq."${skuQuery.replace(/["\\]/g, '')}",sku.eq."${skuQuery.replace(/["\\]/g, '')}"`)
+          // Mismos filtros que el resolver y el listado agrupado: sin esto,
+          // este fallback podia devolver titulo/item_id de una publicacion
+          // cerrada en ML (activo=false) o de una fila de variacion.
+          .eq('activo', true)
+          .is('variation_id', null)
           .limit(1)
           .maybeSingle(),
       ]);
