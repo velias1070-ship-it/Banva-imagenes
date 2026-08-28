@@ -1,0 +1,29 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# Conductor — Banva-imagenes / banva-app (Next.js + npm). Pipeline de imágenes de producto.
+# Checkout principal: ~/Downloads/banva-app. main = auto-deploy Vercel: siempre PR.
+
+file_include_globs = """
+.env.local
+.claude/settings.local.json
+"""
+
+[scripts]
+setup = """
+export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+npm ci
+"""
+run = """
+export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+npx next dev --port "$CONDUCTOR_PORT"
+"""
+run_mode = "concurrent"
+
+[git]
+# Convención del workflow: rama corta -> PR a main -> merge -> borrar rama.
+archive_on_merge = true
+delete_branch_on_archive = true
+
+[[preview_urls]]
+name = "app"
+url = "http://localhost:$CONDUCTOR_PORT"
