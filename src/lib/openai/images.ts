@@ -24,6 +24,20 @@ export interface GPTImageGenRequest {
   size?: '1024x1024' | '1024x1536' | '1536x1024';
 }
 
+/**
+ * Instrucción de sábanas: corta, pieza por pieza, y va SOLA (sin el armador de la app).
+ * El armador exige "UNA SOLA tela uniforme" en toda la superficie y, en las
+ * infografías, descarta la regla de piezas distintas de la estrategia de sábanas.
+ * ChatGPT lo obedece al pie de la letra: en la prueba del 2026-09-26 pintó el juego
+ * entero con un solo diseño en 3 de 6 (Verny, Garden, Notre). Con esta instrucción,
+ * 6 de 6 salieron bien (juicio visual, un intento por caso). Texto idéntico al probado.
+ */
+const INSTRUCCION_SABANAS =
+  `Image 1 is a product photo of a bed sheet set. Image 2 shows the same kind of set in a new design.\n\n` +
+  `Change ONLY the fabric of the set in image 1 so it matches image 2, piece by piece: each piece in image 1 takes the color and pattern of the SAME piece in image 2 (flat sheet from the flat sheet, fitted sheet from the fitted sheet, pillowcases from the pillowcases). The pieces in image 2 can have different colors or patterns: keep them different, never copy one piece's design onto another piece.\n\n` +
+  `Keep everything else from image 1 exactly as it is: layout, background, the number and shape of the pieces, folds, shadows and lighting, and every text, number, logo and icon (same words, position, size, font and color).\n\n` +
+  `Photorealistic, square image.`;
+
 interface OpenAIUsage {
   input_tokens_details?: { text_tokens?: number; image_tokens?: number };
   output_tokens?: number;
@@ -87,7 +101,7 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
       `Do NOT keep image 1's original fabric color or pattern on the recolored areas. ` +
       `Product category: "${cat}". Output: photorealistic, 1:1 square, same composition as image 1.\n\n` +
       `Additional context from prompt builder:\n${request.promptText}`;
-    form.append('prompt', reinforcedPrompt);
+    form.append('prompt', cat === 'sabanas' ? INSTRUCCION_SABANAS : reinforcedPrompt);
     form.append('size', request.size || '1024x1024');
     form.append('quality', request.quality || 'medium');
     form.append('output_format', 'png');
