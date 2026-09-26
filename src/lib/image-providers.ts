@@ -235,15 +235,23 @@ export async function generateImageSmart(
   const legacyProvider = familyToLegacyProvider(entry.providerFamily, modelId);
 
   // OpenAI es el 1er intento desde el 2026-09-26. Si falla (límite de 5 fotos/min
-  // en Tier 1, saldo agotado, 5xx, sin hero en from_scratch), process-next deja el
-  // job en 'error' terminal — así que caemos a Gemini Flash en la misma llamada.
+  // en Tier 1, saldo agotado, 5xx, timeout, sin hero en from_scratch), process-next
+  // deja el job en 'error' terminal — así que caemos, en la misma llamada, al Gemini
+  // MÁS BARATO que la cadena de ESTA categoría permite: Flash donde está en la cadena
+  // (= el 1er intento de antes), Pro en frazadas y cortinas sheer, que excluyen Flash.
+  // El límite por minuto es el caso común: medido 2026-09-26 sobre las 637
+  // generaciones de jobs creados en 30 d, el 42 % llegó con >5 en el minuto previo.
   // Un 429 vuelve en <1 s: no reabre la carrera de ~200 s del Issue #0a de abajo.
   if (!result.success && entry.providerFamily === 'openai' && !ctx.forcedModelId) {
-    console.error(`[image-providers] OpenAI falló (${result.errorCode ?? 'sin código'}): ${result.error} — respaldo gemini-flash`);
-    const respaldo = await MODEL_REGISTRY['gemini-flash'].adapter.generate(unifiedReq);
+    const siguientes = resolveChain(loadRoutingRules(), ctx).slice(Math.max(ctx.attempt, 0) + 1);
+    const respaldoId = siguientes
+      .filter((id) => resolveModelEntry(id).providerFamily === 'gemini')
+      .sort((x, y) => resolveModelEntry(x).costPerImageUsd - resolveModelEntry(y).costPerImageUsd)[0] ?? 'gemini-flash';
+    console.error(`[image-providers] OpenAI falló (${result.errorCode ?? 'sin código'}): ${result.error} — respaldo ${respaldoId}`);
+    const respaldo = await resolveModelEntry(respaldoId).adapter.generate(unifiedReq);
     return {
       ...toGeminiResult(respaldo),
-      providerUsed: 'gemini-flash',
+      providerUsed: familyToLegacyProvider('gemini', respaldoId),
       costEstimateUsd: respaldo.costUsd,
       modelIdUsed: respaldo.modelId,
     };

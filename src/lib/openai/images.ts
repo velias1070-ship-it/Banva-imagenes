@@ -96,6 +96,9 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
       body: form,
+      // Tope de espera: 2.5 medium tarda ~20 s (gpt-image-2 ~40 s). Si se cuelga,
+      // el respaldo a Gemini tiene que alcanzar a correr dentro del maxDuration (300 s).
+      signal: AbortSignal.timeout(90_000),
     });
     const durationMs = Date.now() - start;
 

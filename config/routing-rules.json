@@ -2,22 +2,22 @@
   "$schema_note": "Validated at runtime by src/lib/models/routing-rules.schema.ts. Model ids must exist in MODEL_REGISTRY. Order in 'attempts' arrays is the chain order: index 0 = attempt 0.",
   "default_chain": [
     "gpt-image-2",
-    "gemini-flash",
-    "gemini-pro"
+    "gemini-pro",
+    "gemini-flash"
   ],
   "categories": {
     "quilts": {
       "attempts": [
         "gpt-image-2",
-        "gemini-flash",
-        "gemini-pro"
+        "gemini-pro",
+        "gemini-flash"
       ]
     },
     "cortinas": {
       "attempts": [
         "gpt-image-2",
-        "gemini-flash",
-        "gemini-pro"
+        "gemini-pro",
+        "gemini-flash"
       ],
       "swatch_overrides": {
         "sheer": [
@@ -33,8 +33,8 @@
     "alfombras": {
       "attempts": [
         "gpt-image-2",
-        "gemini-flash",
-        "gemini-pro"
+        "gemini-pro",
+        "gemini-flash"
       ],
       "swatch_overrides": {
         "printed_illustration": [
@@ -50,15 +50,15 @@
     "sabanas": {
       "attempts": [
         "gpt-image-2",
-        "gemini-flash",
-        "gemini-pro"
+        "gemini-pro",
+        "gemini-flash"
       ]
     },
     "toallas": {
       "attempts": [
         "gpt-image-2",
-        "gemini-flash",
-        "gemini-pro"
+        "gemini-pro",
+        "gemini-flash"
       ]
     },
     "frazadas": {
@@ -87,5 +87,5 @@
     "frazadas": 0.6,
     "brand": 0.2
   },
-  "_decision_2026_09_26": "OpenAI (slot gpt-image-2 = gpt-image-2.5-sunburst medium) primero en toda categoría salvo brand. Base: prueba a ciegas de 8 fotos reales (toallas x3, frazada, cortina, mantel x2, cubrecama), juicio visual; sabanas y alfombras no estaban en la prueba. Si OpenAI falla, image-providers cae a gemini-flash."
+  "_decision_2026_09_26": "OpenAI (slot gpt-image-2 = gpt-image-2.5-sunburst medium) primero en toda categoría salvo brand; Pro sigue siendo el 2º intento (en 30 d ningún job llegó al 3º: max_retries=2). Base: prueba a ciegas de 8 fotos reales (toallas x3, frazada, cortina, mantel x2, cubrecama), juicio visual; sabanas y alfombras no estaban en la prueba. Si OpenAI falla, image-providers cae al siguiente Gemini de la cadena."
 }
