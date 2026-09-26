@@ -90,10 +90,11 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
     supports: ['edit', 'reference', 'from_scratch'],
     textureGrade: 5,
   },
+  // Slot OpenAI: el modelo real sale de OPENAI_IMAGE_MODEL (default gpt-image-2.5-sunburst, medium).
   'gpt-image-2': {
     adapter: gptImage2Provider,
     providerFamily: 'openai',
-    costPerImageUsd: 0.21,
+    costPerImageUsd: 0.05,
     supports: ['edit', 'reference'],
     textureGrade: 5,
   },

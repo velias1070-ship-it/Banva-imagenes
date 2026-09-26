@@ -1,17 +1,17 @@
 /**
- * OpenAI GPT Image 2 client — selective fallback for jobs where Gemini
- * fails systematically (alfombras with printed illustration patterns,
- * cortinas sheer/velo fabric, pattern_invent rejects).
+ * OpenAI image client (slot "gpt-image-2" del registry; el modelo real sale
+ * de OPENAI_IMAGE_MODEL, default gpt-image-2.5-sunburst).
  *
- * Used as a last-resort or profile-based override in the pipeline, NOT
- * as the primary generator. Gemini Nano Banana 2 remains the default
- * ($0.045/img vs $0.21/img GPT Image 2 standard, $0.10/img batch).
- *
- * See scripts/ab_test_gpt_image_2.ts for the validation script.
+ * Desde el 2026-09-26 es el PRIMER intento de la cadena: prueba a ciegas sobre
+ * 8 fotos reales (toallas, frazada, cortina, manteles, cubrecama; mismas fotos
+ * y misma instrucción sin la pista de color del hero) — 2.5 en calidad medium
+ * dejó el color más cerca de la muestra que Gemini Flash en las toallas y la
+ * cortina dúo, a ~US$0,04 por foto (Flash 1K ≈ US$0,069). Juicio visual, n=8.
+ * Si OpenAI falla, generateImageSmart cae a Gemini Flash en la misma llamada.
  */
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2';
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.5-sunburst';
 
 export interface GPTImageGenRequest {
   heroImageBase64: string;
@@ -22,6 +22,23 @@ export interface GPTImageGenRequest {
   category?: string;
   quality?: 'low' | 'medium' | 'high' | 'auto';
   size?: '1024x1024' | '1024x1536' | '1536x1024';
+}
+
+interface OpenAIUsage {
+  input_tokens_details?: { text_tokens?: number; image_tokens?: number };
+  output_tokens?: number;
+}
+
+/**
+ * Precio oficial de gpt-image-2 / 2.5 (platform.openai.com/docs/pricing, 2026-09):
+ * texto de entrada US$5/M, imagen de entrada US$8/M, imagen de salida US$30/M.
+ * Medido 2026-09-26: 2.5 medium ≈ 2.900 tokens de imagen de entrada + ~440 de
+ * salida ≈ US$0,04 por foto.
+ */
+function costoPorTokens(usage?: OpenAIUsage): number | undefined {
+  if (!usage) return undefined;
+  const det = usage.input_tokens_details ?? {};
+  return (det.text_tokens ?? 0) * 5e-6 + (det.image_tokens ?? 0) * 8e-6 + (usage.output_tokens ?? 0) * 30e-6;
 }
 
 export interface GPTImageGenResult {
@@ -40,7 +57,7 @@ export interface GPTImageGenResult {
  * as two reference images. The prompt explicitly references "image 1" and
  * "image 2" — GPT Image 2 handles multi-reference via labeled prompts.
  *
- * Cost: ~$0.21/img for 1024×1024 high quality standard, ~$0.10 with batch API.
+ * Costo: se calcula con los tokens que devuelve la API (ver costoPorTokens).
  */
 export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GPTImageGenResult> {
   if (!OPENAI_API_KEY) {
@@ -60,15 +77,19 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
     form.append('image[]', swatchBlob, 'swatch.png');
 
     const cat = request.category || 'textile';
+    // La versión anterior decía "ALL textile surfaces" y no protegía textos: en la
+    // prueba del 2026-09-26 borró el logo BANVA HOME (mantel olivas), tiñó un párrafo
+    // (cortina) y pintó el reverso blanco del cubrecama. Esta versión no lo hizo en 8/8.
     const reinforcedPrompt =
-      `Apply the exact color and fabric pattern from image 2 (the swatch reference) to ALL textile/fabric surfaces of the product shown in image 1 (the composition hero). ` +
-      `Preserve exactly from image 1: composition, camera angle, lighting, background scene, furniture, shadows, and reflections. ` +
-      `Do NOT keep any of image 1's original fabric color or pattern — replace it completely with image 2's fabric. ` +
+      `Apply the color and fabric pattern of the product in image 2 (the swatch reference) to the product shown in image 1 (the composition hero). ` +
+      `Recolor ONLY the product fabric. If image 2 shows parts of the product in a different color (for example a white reverse side, a border or a trim), keep those parts as they look in image 2. ` +
+      `Preserve exactly from image 1: composition, camera angle, lighting, background scene, furniture, shadows, reflections, and EVERY logo, brand name, label, text, typography and text color — do not add, remove, move or recolor any of them. ` +
+      `Do NOT keep image 1's original fabric color or pattern on the recolored areas. ` +
       `Product category: "${cat}". Output: photorealistic, 1:1 square, same composition as image 1.\n\n` +
       `Additional context from prompt builder:\n${request.promptText}`;
     form.append('prompt', reinforcedPrompt);
     form.append('size', request.size || '1024x1024');
-    form.append('quality', request.quality || 'high');
+    form.append('quality', request.quality || 'medium');
     form.append('output_format', 'png');
 
     const res = await fetch('https://api.openai.com/v1/images/edits', {
@@ -92,7 +113,7 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
       };
     }
 
-    const data = (await res.json()) as { data?: Array<{ b64_json?: string }> };
+    const data = (await res.json()) as { data?: Array<{ b64_json?: string }>; usage?: OpenAIUsage };
     const b64 = data.data?.[0]?.b64_json;
     if (!b64) {
       return {
@@ -103,8 +124,9 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
       };
     }
 
-    // Cost: rough estimate for 1024×1024 high quality. Batch API halves this.
-    const costEstimate = (request.quality === 'high' || request.quality === 'auto') ? 0.21 : 0.08;
+    // Costo real por tokens; si la API no manda usage, queda undefined y el
+    // adapter usa su estimación fija.
+    const costEstimate = costoPorTokens(data.usage);
 
     return {
       success: true,
