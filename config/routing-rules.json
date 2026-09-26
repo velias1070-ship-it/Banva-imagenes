@@ -1,23 +1,23 @@
 {
   "$schema_note": "Validated at runtime by src/lib/models/routing-rules.schema.ts. Model ids must exist in MODEL_REGISTRY. Order in 'attempts' arrays is the chain order: index 0 = attempt 0.",
   "default_chain": [
-    "gemini-flash",
+    "gpt-image-2",
     "gemini-pro",
-    "gpt-image-2"
+    "gemini-flash"
   ],
   "categories": {
     "quilts": {
       "attempts": [
-        "gemini-flash",
+        "gpt-image-2",
         "gemini-pro",
-        "gpt-image-2"
+        "gemini-flash"
       ]
     },
     "cortinas": {
       "attempts": [
-        "gemini-flash",
+        "gpt-image-2",
         "gemini-pro",
-        "gpt-image-2"
+        "gemini-flash"
       ],
       "swatch_overrides": {
         "sheer": [
@@ -32,9 +32,9 @@
     },
     "alfombras": {
       "attempts": [
-        "gemini-flash",
+        "gpt-image-2",
         "gemini-pro",
-        "gpt-image-2"
+        "gemini-flash"
       ],
       "swatch_overrides": {
         "printed_illustration": [
@@ -49,25 +49,25 @@
     },
     "sabanas": {
       "attempts": [
-        "gemini-flash",
+        "gpt-image-2",
         "gemini-pro",
-        "gpt-image-2"
+        "gemini-flash"
       ]
     },
     "toallas": {
       "attempts": [
-        "gemini-flash",
+        "gpt-image-2",
         "gemini-pro",
-        "gpt-image-2"
+        "gemini-flash"
       ]
     },
     "frazadas": {
       "attempts": [
+        "gpt-image-2",
         "gemini-pro",
-        "gemini-pro",
-        "gpt-image-2"
+        "gemini-pro"
       ],
-      "_decision_basis": "Skip Flash (leaks 50/50 bicolor on flannel-ribbed heroes per jobs 3a78ac3b, 5b8e0e99). Pro twice gives a second chance with different temperature (0.1 → 0.2). gpt-image-2 third for model diversity — Pro is reliable but on hard heroes a different model bias can succeed. OpenAI billing must be live for that fallback."
+      "_decision_basis": "2026-09-26: gpt-image-2.5 medium primero (prueba a ciegas, frazada rosa OK). Sigue sin Flash (filtra 50/50 bicolor en frazadas acanaladas, jobs 3a78ac3b, 5b8e0e99); Pro dos veces de respaldo."
     },
     "brand": {
       "attempts": [
@@ -86,5 +86,6 @@
     "alfombras": 0.5,
     "frazadas": 0.6,
     "brand": 0.2
-  }
+  },
+  "_decision_2026_09_26": "OpenAI (slot gpt-image-2 = gpt-image-2.5-sunburst medium) primero en toda categoría salvo brand; Pro sigue siendo el 2º intento (en 30 d ningún job llegó al 3º: max_retries=2). Base: prueba a ciegas de 8 fotos reales (toallas x3, frazada, cortina, mantel x2, cubrecama), juicio visual; sabanas y alfombras no estaban en la prueba. Si OpenAI falla, image-providers cae al siguiente Gemini de la cadena."
 }

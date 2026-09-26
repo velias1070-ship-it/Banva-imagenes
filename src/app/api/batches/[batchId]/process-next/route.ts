@@ -1008,7 +1008,6 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
       // cream wall the wall dominates the bin counts. Job 5b673072 regen
       // detected "crema #e5ddd3" instead of "azul claro" because of this.
       // The center 50% × 50% crop typically falls on the product.
-      let heroColorHint: { hex?: string | null; name?: string | null } | null = null;
       try {
         const sharpHero = (await import('sharp')).default;
         const heroMeta = await sharpHero(heroBuffer).metadata();
@@ -1025,7 +1024,6 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         const heroRgb = await getProductBaseColor(heroProductBuf);
         const heroHex = `#${[heroRgb.r, heroRgb.g, heroRgb.b].map(n => n.toString(16).padStart(2, '0')).join('')}`;
         const heroName = rgbToSpanishColorName(heroRgb.r, heroRgb.g, heroRgb.b);
-        heroColorHint = { hex: heroHex, name: heroName };
         logPipelineEvent(job.id, 'HERO_COLOR_HINT', `${heroName} ${heroHex}`);
       } catch (err) {
         console.error('[process-next] hero color sample failed (non-blocking):', err);
@@ -1042,7 +1040,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         swatchHex,
         patternSimilarity === false,
         detectedHeroOverlays ?? null,
-        heroColorHint,
+        // La pista NO va a la instrucción: mide fondo/panel de texto (59 % de las
+        // pistas de 30 d eran casi blancas) y le decía "el producto es crema" a una
+        // toalla negra (job e308ca1d). Queda sólo en el log HERO_COLOR_HINT.
+        null,
       );
     }
 

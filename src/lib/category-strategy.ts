@@ -998,7 +998,9 @@ Solo la composición (muebles, personas, animales, almohadas, fondo, iluminació
   const heroLeakClause = heroPhrase
     ? `NINGÚN píxel de color ${heroPhrase} (que es el color que el producto tiene en la Imagen 1)`
     : `NINGÚN píxel del color del hero original`;
-  const heroAvoidShort = heroNamePart || (heroPhrase ? heroPhrase : 'azul/celeste/cualquier color del hero');
+  // Sin pista, no nombrar un color fijo: "sin tinte azul/celeste" le prohibía el azul
+  // a una muestra turquesa.
+  const heroAvoidShort = heroNamePart || (heroPhrase ? heroPhrase : 'del color original del hero');
   const uniformFabricNote = shotType === 'infografia' ? '' : `
 
 SUPERFICIES UNIFORMES — REGLA CRÍTICA:
