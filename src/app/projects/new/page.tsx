@@ -36,6 +36,24 @@ interface ProductGroup {
   variantes: Variante[];
 }
 
+interface ProyectoRef {
+  id: string;
+  name: string;
+}
+
+// SKU (MAYÚSCULAS) → proyectos que lo tienen (/api/projects/indice-skus).
+type IndiceSkus = Record<string, ProyectoRef[]>;
+
+// Un proyecto por familia de ML: si alguna variante del grupo ya está en un
+// proyecto, las nuevas se agregan desde ese proyecto en vez de crear otro.
+function proyectosDelGrupo(p: ProductGroup, indice: IndiceSkus): ProyectoRef[] {
+  const porId = new Map<string, ProyectoRef>();
+  for (const v of p.variantes) {
+    for (const ref of indice[v.sku.toUpperCase()] ?? []) porId.set(ref.id, ref);
+  }
+  return [...porId.values()];
+}
+
 function resumenGrupo(p: ProductGroup): string {
   const n = p.variantes.length;
   const pausadas = p.variantes.filter((v) => v.status_ml === 'paused').length;
@@ -98,6 +116,7 @@ function ProductCombobox({
   onClear,
   onAddGroups,
   onPickVariant,
+  indice,
 }: {
   productos: ProductGroup[];
   loading: boolean;
@@ -106,6 +125,7 @@ function ProductCombobox({
   onClear: () => void;
   onAddGroups: (groups: ProductGroup[]) => void;
   onPickVariant: (group: ProductGroup, variante: Variante) => void;
+  indice: IndiceSkus;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -206,6 +226,24 @@ function ProductCombobox({
             ) : (
               filtered.map((p) => {
                 const isSelected = selectedSet.has(p.slug);
+                const proyectos = proyectosDelGrupo(p, indice);
+                if (proyectos.length > 0 && !isSelected) {
+                  return (
+                    <div key={p.slug} className="px-3 py-2 pl-9 text-sm">
+                      <div className="font-medium text-muted-foreground">
+                        {p.base_name}
+                        {p.tamano ? ` — ${p.tamano}` : ''}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Ya tiene proyecto:{' '}
+                        <Link href={`/projects/${proyectos[0].id}/swatches`} className="text-blue-600 hover:underline">
+                          {proyectos[0].name}
+                        </Link>
+                        {proyectos.length > 1 && ` (y ${proyectos.length - 1} más)`}. Agrega las variantes nuevas desde ahí.
+                      </div>
+                    </div>
+                  );
+                }
                 // Buscando un SKU o color dentro de una familia: además de la
                 // familia completa, se ofrece ese SKU solo.
                 const q = query.trim().toLowerCase();
@@ -299,8 +337,17 @@ export default function NewProjectPage() {
   const [description, setDescription] = useState('');
   const [brandId, setBrandId] = useState('');
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [indice, setIndice] = useState<IndiceSkus>({});
+  const [errorIndice, setErrorIndice] = useState<string | null>(null);
 
   useEffect(() => {
+    fetch('/api/projects/indice-skus')
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        setIndice(data);
+      })
+      .catch((err) => setErrorIndice(err instanceof Error ? err.message : 'Error'));
     fetch('/api/productos')
       .then((res) => res.json())
       .then((data) => {
@@ -471,7 +518,13 @@ export default function NewProjectPage() {
                 onClear={handleClearProductos}
                 onAddGroups={handleAddGroups}
                 onPickVariant={handleSoloVariante}
+                indice={indice}
               />
+            )}
+            {mode === 'catalog' && errorIndice && (
+              <p className="text-xs text-destructive">
+                No pude revisar qué productos ya tienen proyecto ({errorIndice}): fíjate antes de crear uno repetido.
+              </p>
             )}
 
             <div className="space-y-2">

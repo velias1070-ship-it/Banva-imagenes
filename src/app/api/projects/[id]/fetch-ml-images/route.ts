@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { mlGet, resolveItemIdForSku } from '@/lib/ml';
 
@@ -7,12 +6,6 @@ export const maxDuration = 60;
 
 interface RouteContext {
   params: Promise<{ id: string }>;
-}
-
-function getInventorySupabase() {
-  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, key);
 }
 
 interface MlItem {
@@ -36,7 +29,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const syncNew = body.sync_new !== false; // Also check for new variants in ML (default true)
 
   const supabase = createAdminClient();
-  const inventoryDb = getInventorySupabase();
 
   // 1. Get project metadata first (needed to bootstrap swatches if empty)
   const { data: project } = await supabase
@@ -100,9 +92,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   if (syncNew) {
     const existingSkus = new Set(swatches.map((s) => s.sku_suffix).filter(Boolean));
-    let newRows: { project_id: string; name: string; sku_suffix: string; color_description: string; storage_path: string; display_order: number }[] = [];
+    const newRows: { project_id: string; name: string; sku_suffix: string; color_description: string; storage_path: string; display_order: number }[] = [];
 
-    // Source 1: catalog variantes from project metadata
+    // Variantes de metadata.variantes que todavía no tienen swatch. Las variantes
+    // nuevas de la familia se agregan a propósito desde /variantes-nuevas: antes
+    // también se sumaban solas por prefijo de SKU, sin filtrar catálogo ni cerradas.
     if (project?.metadata) {
       const catalogVariantes = (project.metadata as { variantes?: { sku: string; color: string }[] }).variantes || [];
       const newFromCatalog = catalogVariantes.filter((v) => !existingSkus.has(v.sku));
@@ -119,59 +113,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
-    // Source 2: discover new SKUs from ml_items_map that share the SKU prefix
-    // e.g. if existing SKUs are TXV23QLAT25BE, TXV23QLAT25BC → prefix = TXV23QLAT25
-    // This ensures we only find variants of the SAME size, not 15P/20P/30P mixed in
-    const currentSkus = Array.from(existingSkus);
-    if (currentSkus.length > 0) {
-      let skuPrefix = currentSkus[0];
-      for (let i = 1; i < currentSkus.length; i++) {
-        while (!currentSkus[i].startsWith(skuPrefix)) {
-          skuPrefix = skuPrefix.slice(0, -1);
-          if (skuPrefix.length === 0) break;
-        }
-      }
-
-      if (skuPrefix.length >= 6) {
-        const { data: mlMatches } = await inventoryDb
-          .from('ml_items_map')
-          .select('sku_venta, item_id, titulo')
-          .like('sku_venta', `${skuPrefix}%`)
-          .eq('activo', true)
-          .is('variation_id', null)
-          .limit(50);
-
-        if (mlMatches) {
-          for (const ml of mlMatches) {
-            if (existingSkus.has(ml.sku_venta)) continue;
-
-            const titleWords = ml.titulo.split(/\s+/);
-            let colorGuess = ml.sku_venta;
-            for (let i = titleWords.length - 1; i >= 0; i--) {
-              const w = titleWords[i];
-              if (w && !/^\d/.test(w) && w.length > 1 && !['Cm', 'M', 'Plazas', 'Plaza', 'King', 'Super'].includes(w)) {
-                colorGuess = w;
-                break;
-              }
-            }
-
-            existingSkus.add(ml.sku_venta);
-            newRows.push({
-              project_id: projectId,
-              name: colorGuess,
-              sku_suffix: ml.sku_venta,
-              color_description: colorGuess,
-              storage_path: '',
-              display_order: swatches.length + newRows.length,
-            });
-          }
-        }
-      }
-    }
-
     // Insert new swatches
     if (newRows.length > 0) {
-      await supabase.from('swatches').insert(newRows);
+      const { error: syncErr } = await supabase.from('swatches').insert(newRows);
+      if (syncErr) {
+        console.error('[fetch-ml-images] sync insert error:', syncErr);
+        return NextResponse.json({ error: `Failed to create swatches: ${syncErr.message}` }, { status: 500 });
+      }
 
       const { data: updatedSwatches } = await supabase
         .from('swatches')
