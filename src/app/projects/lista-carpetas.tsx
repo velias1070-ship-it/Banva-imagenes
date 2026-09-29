@@ -246,7 +246,7 @@ function SkuRelacionados({ skus, nombres }: { skus: ResultadoSkus; nombres: Map<
         </div>
       ))}
       {skus.ocultos > 0 && (
-        <p className="text-xs text-muted-foreground">Y {skus.ocultos} SKU origen más: escribe más para acotar.</p>
+        <p className="text-xs text-muted-foreground">Y {skus.ocultos} más: escribe más para acotar.</p>
       )}
     </div>
   );

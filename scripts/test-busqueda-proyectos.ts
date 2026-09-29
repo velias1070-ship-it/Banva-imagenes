@@ -134,16 +134,38 @@ async function main() {
   const muchos: IndiceBusqueda = {
     ventas: [
       ...Array.from({ length: 25 }, (_, i) => ({ sku: `S${i}`, titulo: 'Toalla', origenes: [{ sku: `O${i}`, unidades: 1 }], proyectos: [`P${i}`] })),
-      { sku: 'SINO', titulo: 'Toalla', origenes: [], proyectos: ['PX'] },
+      ...Array.from({ length: 12 }, (_, i) => ({ sku: `SINO${i}`, titulo: 'Toalla', origenes: [], proyectos: [`PX${i}`] })),
     ],
     nombres: {},
   };
   const tope = buscarSkus(muchos, tokens('toalla'), 20);
+  const sinOrigen = tope.grupos[tope.grupos.length - 1];
   afirmar(
-    tope.grupos.length === 21 && tope.grupos[20].origen === null && tope.ocultos === 5 && tope.proyectos.size === 21,
-    `tope de 20 SKU origen + el grupo sin origen; 5 ocultos; proyectos sólo de lo que se muestra (${tope.grupos.length}, ${tope.ocultos}, ${tope.proyectos.size})`,
+    tope.grupos.length === 21 && sinOrigen.origen === null && sinOrigen.ventas.length === 12 && tope.ocultos === 5 && tope.proyectos.size === 32,
+    `tope de 20 SKU origen + el grupo sin origen; 5 ocultos (${tope.grupos.length}, ${sinOrigen.ventas.length}, ${tope.ocultos}, ${tope.proyectos.size})`,
   );
-  afirmar(buscarSkus(muchos, tokens('toalla')).grupos.length === MAX_GRUPOS + 1, `tope por defecto ${MAX_GRUPOS}`);
+  const topeDefecto = buscarSkus(muchos, tokens('toalla'));
+  const sinOrigenDefecto = topeDefecto.grupos[topeDefecto.grupos.length - 1];
+  afirmar(
+    topeDefecto.grupos.length === MAX_GRUPOS + 1 &&
+      sinOrigenDefecto.ventas.length === MAX_GRUPOS &&
+      topeDefecto.ocultos === 25 - MAX_GRUPOS + 12 - MAX_GRUPOS &&
+      topeDefecto.proyectos.size === 2 * MAX_GRUPOS,
+    `el grupo sin origen también tiene tope; ocultos y proyectos sólo de lo que se muestra (${topeDefecto.grupos.length}, ${sinOrigenDefecto.ventas.length}, ${topeDefecto.ocultos}, ${topeDefecto.proyectos.size})`,
+  );
+
+  // Lo buscado va antes que lo que trajo un combo, aunque el nombre ordene al revés.
+  const conCombo: IndiceBusqueda = {
+    ventas: [
+      { sku: 'TR1', titulo: 'Toalla Rizo Blanca', origenes: [{ sku: 'OZ', unidades: 1 }], proyectos: [] },
+      { sku: 'CMB', titulo: 'Combo Toalla Rizo Con Bata', origenes: [{ sku: 'OB', unidades: 1 }, { sku: 'OA', unidades: 1 }], proyectos: [] },
+    ],
+    nombres: { OZ: 'Zeta Toalla', OB: 'Bata', OA: 'Alfombra' },
+  };
+  const orden = buscarSkus(conCombo, tokens('toalla rizo')).grupos.map((x) => x.origen).join(',');
+  afirmar(orden === 'OZ,OA,OB', `lo buscado primero, después lo del combo por nombre (${orden})`);
+  const corto = buscarSkus(conCombo, tokens('toalla rizo'), 1);
+  afirmar(corto.grupos.map((x) => x.origen).join(',') === 'OZ' && corto.ocultos === 2, 'con tope, lo que se corta es lo del combo');
 
   // --- Ruta ---
   // Base simulada: filtra, respeta `select` y corta en 1.000 filas. Sin `order`

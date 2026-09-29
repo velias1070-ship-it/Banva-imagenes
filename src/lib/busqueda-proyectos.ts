@@ -109,7 +109,7 @@ export interface GrupoOrigen {
 export interface ResultadoSkus {
   /** Los SKU origen que calzan y, al final, el grupo sin origen si hay. */
   grupos: GrupoOrigen[];
-  /** SKU origen que calzan pero no se muestran (se acota escribiendo más). */
+  /** Lo que calza y no se muestra, SKU origen o SKU venta sin origen (se acota escribiendo más). */
   ocultos: number;
   /** Proyectos de los SKU venta que se muestran. */
   proyectos: Set<string>;
@@ -158,11 +158,19 @@ export function buscarSkus(indice: IndiceBusqueda, tokens: string[], maxGrupos =
         (a, b) => Number(a.combo) - Number(b.combo) || a.unidades! - b.unidades! || a.sku.localeCompare(b.sku),
       ),
     }))
-    .sort((a, b) => (a.nombre ?? a.origen).localeCompare(b.nombre ?? b.origen, 'es'));
+    // Primero lo buscado; después lo que trajo un combo.
+    .sort(
+      (a, b) =>
+        Number(!base.has(a.origen)) - Number(!base.has(b.origen)) ||
+        (a.nombre ?? a.origen).localeCompare(b.nombre ?? b.origen, 'es'),
+    );
   const grupos = todos.slice(0, maxGrupos);
   const sinOrigen = directas.filter((v) => v.origenes.length === 0);
-  if (sinOrigen.length > 0) grupos.push({ origen: null, nombre: null, ventas: sinOrigen.map((v) => fila(v, null)) });
+  if (sinOrigen.length > 0) {
+    grupos.push({ origen: null, nombre: null, ventas: sinOrigen.slice(0, maxGrupos).map((v) => fila(v, null)) });
+  }
 
   const proyectos = new Set(grupos.flatMap((g) => g.ventas.flatMap((v) => v.proyectos)));
-  return { grupos, ocultos: Math.max(0, todos.length - maxGrupos), proyectos };
+  const ocultos = Math.max(0, todos.length - maxGrupos) + Math.max(0, sinOrigen.length - maxGrupos);
+  return { grupos, ocultos, proyectos };
 }
