@@ -1,9 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { leerTodo, listarFamilias, type ProductGroup, type Variante } from '@/lib/familias-ml';
+import { carpetaGuardada, carpetasDeProyectos } from '@/lib/carpetas';
 
-// Un proyecto por familia de ML. La familia de un proyecto no se guarda: sale
-// de sus SKUs (metadata.variantes y swatches) cruzados con ml_items_map, así
-// sobrevive a que ML renombre la familia.
+// Los proyectos van en carpetas por producto (src/lib/carpetas.ts). La familia
+// de ML de un proyecto no se guarda: sale de sus SKUs (metadata.variantes y
+// swatches) cruzados con ml_items_map, así sobrevive a que ML la renombre.
+// Un SKU puede estar en varios proyectos de la misma carpeta, no en proyectos
+// de carpetas distintas.
 
 export interface ProyectoRef {
   id: string;
@@ -15,12 +18,18 @@ export interface ProyectoSkus extends ProyectoRef {
   skus: Set<string>;
   /** Los que tienen swatch (MAYÚSCULAS). Borrar un swatch no lo saca de metadata.variantes. */
   enGrilla: Set<string>;
+  /** metadata.carpeta, o null si nunca se guardó (va a la de su producto). */
+  carpeta: string | null;
+  status: string | null;
+  created_at: string | null;
 }
 
 interface FilaProyecto {
   id: string;
   name: string;
-  metadata: { variantes?: unknown } | null;
+  status: string | null;
+  created_at: string | null;
+  metadata: { variantes?: unknown; carpeta?: unknown } | null;
 }
 
 interface FilaSwatch {
@@ -31,7 +40,7 @@ interface FilaSwatch {
 export async function leerProyectosConSkus(supabase: SupabaseClient): Promise<ProyectoSkus[]> {
   const [proyectos, swatches] = await Promise.all([
     leerTodo<FilaProyecto>((desde, hasta) =>
-      supabase.from('projects').select('id, name, metadata').order('id').range(desde, hasta),
+      supabase.from('projects').select('id, name, status, created_at, metadata').order('id').range(desde, hasta),
     ),
     leerTodo<FilaSwatch>((desde, hasta) =>
       supabase
@@ -51,7 +60,15 @@ export async function leerProyectosConSkus(supabase: SupabaseClient): Promise<Pr
       const sku = (v as { sku?: unknown } | null)?.sku;
       if (typeof sku === 'string' && sku) skus.add(sku.toUpperCase());
     }
-    porId.set(p.id, { id: p.id, name: p.name, skus, enGrilla: new Set() });
+    porId.set(p.id, {
+      id: p.id,
+      name: p.name,
+      skus,
+      enGrilla: new Set(),
+      carpeta: carpetaGuardada(p.metadata),
+      status: p.status ?? null,
+      created_at: p.created_at ?? null,
+    });
   }
   for (const s of swatches) {
     const proyecto = s.sku_suffix ? porId.get(s.project_id) : undefined;
@@ -85,6 +102,9 @@ export interface VariantesNuevas {
    * ofrecen como nuevas, pero se pueden volver a agregar desde el buscador.
    */
   borradas: string[];
+  /** Carpeta del proyecto y los otros proyectos de esa carpeta. */
+  carpeta: string;
+  hermanos: ProyectoRef[];
   /** Variantes de esas familias que ya están en OTRO proyecto: no se ofrecen, se avisan. */
   en_otros_proyectos: (ProyectoRef & { variantes: number })[];
 }
@@ -100,6 +120,12 @@ export function calcularVariantesNuevas(
 
   const suyas = familias.filter((g) => g.variantes.some((v) => proyecto.skus.has(v.sku.toUpperCase())));
   const indice = indicePorSku(proyectos.filter((p) => p.id !== projectId));
+  const carpetas = carpetasDeProyectos(familias, proyectos);
+  const carpeta = carpetas.get(projectId)!;
+  const hermanos = proyectos
+    .filter((p) => p.id !== projectId && carpetas.get(p.id) === carpeta)
+    .map((p) => ({ id: p.id, name: p.name }));
+  const esHermano = new Set(hermanos.map((h) => h.id));
 
   const nuevas: Variante[] = [];
   const otros = new Map<string, ProyectoRef & { variantes: number }>();
@@ -114,7 +140,7 @@ export function calcularVariantesNuevas(
       const ajenos = indice[sku];
       if (proyecto.skus.has(sku)) {
         if (proyecto.enGrilla.has(sku)) enProyecto += 1;
-        else if (!ajenos) borradas.push(v.sku);
+        else if (!ajenos || ajenos.every((r) => esHermano.has(r.id))) borradas.push(v.sku);
         continue;
       }
       if (!ajenos) {
@@ -134,13 +160,16 @@ export function calcularVariantesNuevas(
     nuevas,
     en_proyecto: enProyecto,
     borradas,
+    carpeta,
+    hermanos,
     en_otros_proyectos: [...otros.values()].sort((a, b) => b.variantes - a.variantes),
   };
 }
 
 // Lo que se puede agregar al proyecto (SKU en MAYÚSCULAS → variante): las
-// publicaciones de cualquier familia que no están en ningún proyecto, y las
-// suyas que se borraron de la grilla.
+// publicaciones de cualquier familia que no están en su grilla ni en proyectos
+// de OTRA carpeta. Incluye las suyas que se borraron de la grilla y las que
+// están en otro proyecto de su carpeta.
 export function variantesLibres(
   familias: ProductGroup[],
   proyectos: ProyectoSkus[],
@@ -148,14 +177,16 @@ export function variantesLibres(
 ): Map<string, Variante> {
   const indice = indicePorSku(proyectos);
   const propio = proyectos.find((p) => p.id === projectId);
+  if (!propio) return new Map();
+  const carpetas = carpetasDeProyectos(familias, proyectos);
+  const carpeta = carpetas.get(projectId);
   const libres = new Map<string, Variante>();
   for (const g of familias) {
     for (const v of g.variantes) {
       const sku = v.sku.toUpperCase();
-      if (libres.has(sku)) continue;
-      const refs = indice[sku];
-      const borrada = !!propio && refs?.length === 1 && refs[0].id === projectId && !propio.enGrilla.has(sku);
-      if (!refs || borrada) libres.set(sku, v);
+      if (libres.has(sku) || propio.enGrilla.has(sku)) continue;
+      const ajenos = (indice[sku] ?? []).filter((r) => r.id !== projectId);
+      if (ajenos.every((r) => carpetas.get(r.id) === carpeta)) libres.set(sku, v);
     }
   }
   return libres;

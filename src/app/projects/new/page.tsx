@@ -44,8 +44,8 @@ interface ProyectoRef {
 // SKU (MAYÚSCULAS) → proyectos que lo tienen (/api/projects/indice-skus).
 type IndiceSkus = Record<string, ProyectoRef[]>;
 
-// Un proyecto por familia de ML: si alguna variante del grupo ya está en un
-// proyecto, las nuevas se agregan desde ese proyecto en vez de crear otro.
+// Proyectos que ya tienen alguna variante del grupo: el nuevo queda en su misma
+// carpeta (src/lib/carpetas.ts). Se avisa, no se bloquea.
 function proyectosDelGrupo(p: ProductGroup, indice: IndiceSkus): ProyectoRef[] {
   const porId = new Map<string, ProyectoRef>();
   for (const v of p.variantes) {
@@ -228,23 +228,6 @@ function ProductCombobox({
               filtered.map((p) => {
                 const isSelected = selectedSet.has(p.slug);
                 const proyectos = indice ? proyectosDelGrupo(p, indice) : [];
-                if (proyectos.length > 0 && !isSelected) {
-                  return (
-                    <div key={p.slug} className="px-3 py-2 pl-9 text-sm">
-                      <div className="font-medium text-muted-foreground">
-                        {p.base_name}
-                        {p.tamano ? ` — ${p.tamano}` : ''}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Ya tiene proyecto:{' '}
-                        <Link href={`/projects/${proyectos[0].id}/swatches`} className="text-blue-600 hover:underline">
-                          {proyectos[0].name}
-                        </Link>
-                        {proyectos.length > 1 && ` (y ${proyectos.length - 1} más)`}. Agrega las variantes nuevas desde ahí.
-                      </div>
-                    </div>
-                  );
-                }
                 // Buscando un SKU o color dentro de una familia: además de la
                 // familia completa, se ofrece ese SKU solo.
                 const q = query.trim().toLowerCase();
@@ -259,8 +242,7 @@ function ProductCombobox({
                     <button
                       type="button"
                       onClick={() => onToggle(p.slug)}
-                      disabled={!indice && !isSelected}
-                      className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent disabled:cursor-wait disabled:opacity-60 ${isSelected ? 'bg-accent' : ''}`}
+                      className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent ${isSelected ? 'bg-accent' : ''}`}
                     >
                       <div className={`mt-0.5 h-4 w-4 flex-shrink-0 rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground'}`}>
                         {isSelected && <span className="block text-center text-xs leading-3">✓</span>}
@@ -270,16 +252,19 @@ function ProductCombobox({
                           {p.base_name}
                           {p.tamano ? ` — ${p.tamano}` : ''}
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {indice ? resumenGrupo(p) : 'Revisando si ya tiene proyecto…'}
-                        </div>
+                        <div className="text-xs text-muted-foreground">{resumenGrupo(p)}</div>
+                        {proyectos.length > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            Ya tiene proyecto: {proyectos[0].name}
+                            {proyectos.length > 1 && ` (y ${proyectos.length - 1} más)`}. El nuevo queda en su misma carpeta.
+                          </div>
+                        )}
                       </div>
                     </button>
                     {sueltas.map((v) => (
                       <button
                         key={v.sku}
                         type="button"
-                        disabled={!indice}
                         onClick={() => onPickVariant(p, v)}
                         className="block w-full py-1 pl-9 pr-3 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
                       >
@@ -532,7 +517,7 @@ export default function NewProjectPage() {
             )}
             {mode === 'catalog' && errorIndice && (
               <p className="text-xs text-destructive">
-                No pude revisar qué productos ya tienen proyecto ({errorIndice}): fíjate antes de crear uno repetido.
+                No pude revisar qué productos ya tienen proyecto ({errorIndice}).
               </p>
             )}
 

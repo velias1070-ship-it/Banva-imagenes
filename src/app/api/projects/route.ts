@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 import { mlGet } from '@/lib/ml';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { clienteInventario } from '@/lib/familias-ml';
+import { leerFamiliasYProyectos } from '@/lib/proyectos-familia';
+import { carpetaParaNuevo } from '@/lib/carpetas';
+
+// Crear lee además todas las publicaciones de ML para elegir la carpeta.
+export const maxDuration = 60;
 
 function getInventorySupabase() {
   const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -136,5 +143,32 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(project, { status: 201 });
+  // Carpeta: si los otros proyectos de su producto están en una carpeta puesta
+  // a mano (renombrada o movida), se guarda esa (src/lib/carpetas.ts). Si no, o
+  // si esto falla, no se guarda nada: la lista lo muestra en la de su producto.
+  let carpeta: string | null = null;
+  let carpetaError: string | null = null;
+  const inventario = clienteInventario();
+  if (!inventario) {
+    carpetaError = 'faltan INVENTORY_SUPABASE_*';
+  } else if (project) {
+    try {
+      const admin = createAdminClient();
+      const { familias, proyectos } = await leerFamiliasYProyectos(inventario, admin);
+      carpeta = carpetaParaNuevo(familias, proyectos, project.id);
+      if (carpeta) {
+        const { error: carpetaErr } = await admin
+          .from('projects')
+          .update({ metadata: { ...((project.metadata as Record<string, unknown> | null) ?? {}), carpeta } })
+          .eq('id', project.id);
+        if (carpetaErr) throw new Error(carpetaErr.message);
+      }
+    } catch (err) {
+      carpeta = null;
+      carpetaError = err instanceof Error ? err.message : 'Error';
+      console.error('[POST /api/projects] carpeta:', err);
+    }
+  }
+
+  return NextResponse.json({ ...project, carpeta, carpeta_error: carpetaError }, { status: 201 });
 }
