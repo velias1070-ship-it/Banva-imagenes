@@ -11,8 +11,16 @@ import type { ProyectoSkus } from '@/lib/proyectos-familia';
 //   o la creación del proyecto);
 // - si no tiene, la de su producto: la familia donde tiene más SKUs, con las
 //   medidas juntas. Sin familia de ML → «Sin familia de ML».
+//
+// Límite: una carpeta guardada con el nombre de una automática (p.ej. mover
+// Bruselas 1.5 a la carpeta de Bruselas 2 plazas) se separa si ML cambia ese
+// nombre (renombra o cierra la familia que lo da): se vuelve a mover una vez.
 
 export const SIN_FAMILIA = 'Sin familia de ML';
+/** La de todos los proyectos sin carpeta guardada cuando no se pudieron leer las familias. */
+export const SIN_AGRUPAR = 'Sin agrupar';
+/** Nombres que no se pueden guardar: son de las carpetas comodín. */
+export const CARPETAS_RESERVADAS = [SIN_FAMILIA, SIN_AGRUPAR];
 
 // Palabras de medida, sin tildes y en singular. Los demás números se quedan:
 // sábanas de 300 hilos y de 500 hilos son productos distintos.
@@ -57,11 +65,10 @@ export function carpetaPorFamilia(familias: ProductGroup[]): Map<string, string>
   }
   const resultado = new Map<string, string>();
   for (const grupo of porClave.values()) {
-    // El nombre sale de la familia con más variantes (empate: alfabético).
-    const [mayor] = [...grupo].sort(
-      (a, b) => b.variantes.length - a.variantes.length || a.base_name.localeCompare(b.base_name),
-    );
-    const nombre = nombreProducto(mayor.base_name);
+    // El nombre sale de la primera familia por abecedario, no de la que tiene
+    // más colores: así no cambia cada vez que ML agrega un color.
+    const [primera] = [...grupo].sort((a, b) => a.base_name.localeCompare(b.base_name));
+    const nombre = nombreProducto(primera.base_name);
     for (const g of grupo) resultado.set(g.base_name, nombre);
   }
   return resultado;
@@ -112,10 +119,10 @@ export function carpetasDeProyectos(
 
 /**
  * Carpeta a guardar en un proyecto recién creado, o null para no guardar nada
- * (queda en la de su producto y la sigue si ML la renombra). Se guarda sólo si
- * la mayoría de los otros proyectos del mismo producto (cualquier medida) está
- * en una carpeta puesta a mano; en un empate gana la del producto, así un
- * proyecto movido no arrastra a los nuevos.
+ * (queda en la de su producto y la sigue si ML la renombra). Se mira a los
+ * otros proyectos que comparten SKUs con el nuevo; si ninguno, a los de su
+ * mismo producto (cualquier medida). Gana la carpeta de la mayoría; en un
+ * empate, la del producto, así un proyecto movido no arrastra a los nuevos.
  */
 export function carpetaParaNuevo(
   familias: ProductGroup[],
@@ -131,19 +138,23 @@ export function carpetaParaNuevo(
     return principal ? porFamilia.get(principal)! : null;
   };
   const suyo = producto(nuevo);
-  if (!suyo) return null;
+  const propia = suyo ?? SIN_FAMILIA;
 
-  const carpetas = carpetasDeProyectos(familias, proyectos);
-  const cuenta = new Map<string, number>([[suyo, 0]]);
-  for (const p of proyectos) {
-    if (p.id === projectId || producto(p) !== suyo) continue;
-    const c = carpetas.get(p.id)!;
-    cuenta.set(c, (cuenta.get(c) ?? 0) + 1);
+  const otros = proyectos.filter((p) => p.id !== projectId);
+  const comparten = otros.filter((p) => [...nuevo.skus].some((sku) => p.skus.has(sku)));
+  const vecinos = comparten.length > 0 ? comparten : otros.filter((p) => suyo !== null && producto(p) === suyo);
+
+  // Voto de cada vecino: la carpeta donde está, o null si está en la del
+  // producto del nuevo sin haberla guardado (entonces no hay nada que guardar).
+  const cuenta = new Map<string | null, number>([[null, 0]]);
+  for (const p of vecinos) {
+    const efectiva = p.carpeta ?? producto(p) ?? SIN_FAMILIA;
+    const voto = p.carpeta === null && efectiva === propia ? null : efectiva;
+    cuenta.set(voto, (cuenta.get(voto) ?? 0) + 1);
   }
-  const [masComun] = [...cuenta.entries()].sort(
-    (a, b) => b[1] - a[1] || Number(b[0] === suyo) - Number(a[0] === suyo) || a[0].localeCompare(b[0]),
-  );
-  return masComun[0] === suyo ? null : masComun[0];
+  // La mayoría; en un empate gana null (la del producto: '' va primero en el abecedario).
+  const [ganador] = [...cuenta.entries()].sort((a, b) => b[1] - a[1] || (a[0] ?? '').localeCompare(b[0] ?? ''));
+  return ganador[0];
 }
 
 export interface Carpeta {

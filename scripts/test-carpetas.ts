@@ -8,9 +8,10 @@
  *   plazas NO se juntan solas (ML les puso palabras distintas): se mueven a mano.
  * - La carpeta guardada manda; si no hay, la del producto de su familia
  *   principal; sin familia, «Sin familia de ML».
- * - Proyecto nuevo: guarda la carpeta puesta a mano donde está la mayoría de
- *   los otros proyectos de su producto (cualquier medida); si no, no guarda
- *   nada y sigue a la del producto. Un empate lo gana la del producto.
+ * - Proyecto nuevo: sigue a los proyectos que comparten sus SKUs o, si no hay,
+ *   a los de su producto (cualquier medida); guarda la carpeta sólo si la
+ *   mayoría está en una puesta a mano. Un empate lo gana la del producto.
+ * - El nombre de la carpeta no cambia cuando ML agrega colores.
  * - La lista: carpetas por nombre con «Sin familia de ML» al final; adentro, lo
  *   más nuevo primero.
  * - POST /api/projects/carpeta: valida, guarda metadata.carpeta sin perder las
@@ -89,7 +90,7 @@ async function main() {
   const familias = [
     familia(ATENAS[0], ['AT15A', 'AT15B']),
     familia(ATENAS[1], ['AT20A', 'AT20B', 'AT20C']),
-    familia(BRUSELAS_15, ['BR15A', 'BR15B']),
+    familia(BRUSELAS_15, ['BR15A', 'BR15B', 'BR15C']),
     familia(BRUSELAS_2, ['BR20A']),
   ];
   const nombreAtenas = 'Cubrecamas Quilt Cobertor Acolchado Liviano Atenas';
@@ -108,10 +109,12 @@ async function main() {
   afirmar(c.get('mixto') === nombreBr15, `el mixto va a la familia donde tiene más SKUs (${c.get('mixto')})`);
   afirmar(c.get('sin-sku') === SIN_FAMILIA, 'sin familia → «Sin familia de ML»');
   afirmar(carpetasDeProyectos([], proyectos, 'Sin agrupar').get('at15') === 'Sin agrupar', 'sin familias leídas → la carpeta que se pasa');
-  // King («Cobertores», 1 variante) y Super King («Atena», 3): el nombre sale de la que tiene más.
+  // King («Cobertores», 1 color) y Super King («Atena», 3): el nombre sale de la
+  // primera por abecedario (King), no de la que tiene más colores, así no cambia
+  // cuando ML agrega un color.
   const kings = [familia(ATENAS[2], ['K1']), familia(ATENAS[3], ['SK1', 'SK2', 'SK3'])];
   const cKing = carpetasDeProyectos(kings, [proyecto('k', ['K1'])]).get('k');
-  afirmar(cKing === 'Cubrecamas Quilt Cobertor Acolchado Liviano Atena', `el nombre de la carpeta sale de la familia con más variantes (${cKing})`);
+  afirmar(cKing === 'Cubrecamas Quilt Cobertores Acolchado Liviano Atenas', `el nombre de la carpeta no depende de cuántos colores tiene cada familia (${cKing})`);
 
   // --- Proyecto nuevo: guarda carpeta sólo si la mayoría de su producto está en una puesta a mano ---
   const renombrados = [
@@ -133,15 +136,26 @@ async function main() {
     proyecto('br-a', ['BR15A']),
     proyecto('br-b', ['BR15B']),
     proyecto('movido', ['BR15A'], 'Quilt Atenas'), // mal puesto, movido a mano
-    proyecto('br-nuevo', ['BR15B']),
+    proyecto('br-nuevo', ['BR15C']), // no comparte SKUs: mira a su producto
   ];
   afirmar(carpetaParaNuevo(familias, conMovido, 'br-nuevo') === null, 'un proyecto movido no arrastra a los nuevos (2 a 1)');
   const empate = [
     proyecto('br-a', ['BR15A']),
     proyecto('movido', ['BR15B'], 'Atenas quilts'), // antes que «Cubrecamas…» por abecedario
-    proyecto('br-nuevo', ['BR15B']),
+    proyecto('br-nuevo', ['BR15C']),
   ];
   afirmar(carpetaParaNuevo(familias, empate, 'br-nuevo') === null, 'en un empate gana la del producto');
+  const mismosSkus = [
+    proyecto('a1', ['AT15A']),
+    proyecto('a2', ['AT15B']),
+    proyecto('p', ['AT20A', 'AT20B'], 'Z'), // movido a mano
+    proyecto('n', ['AT20A', 'AT20B']), // mismos SKUs que «p»
+  ];
+  afirmar(carpetaParaNuevo(familias, mismosSkus, 'n') === 'Z', 'el nuevo sigue al proyecto con sus mismos SKUs aunque la mayoría del producto esté en otra');
+  afirmar(
+    carpetaParaNuevo(familias, [proyecto('a', ['AT15A'], nombreAtenas), proyecto('n', ['AT20B'])], 'n') === nombreAtenas,
+    'una carpeta guardada con el nombre automático se guarda igual (no queda siguiendo a la automática)',
+  );
 
   // --- Lista ---
   const lista = agruparEnCarpetas(familias, [
@@ -204,6 +218,8 @@ async function main() {
   afirmar((await post(null)).status === 400, 'body null → 400');
   afirmar((await post({ project_ids: ['p1'], carpeta: '  ' })).status === 400, 'carpeta vacía → 400');
   afirmar((await post({ project_ids: ['p1'], carpeta: 'x'.repeat(81) })).status === 400, 'carpeta de más de 80 → 400');
+  afirmar((await post({ project_ids: ['p1'], carpeta: ' Sin familia de ML ' })).status === 400, 'nombre de carpeta comodín → 400');
+  afirmar((await post({ project_ids: ['p1'], carpeta: 'Sin agrupar' })).status === 400, '«Sin agrupar» → 400');
 
   const r = await post({ project_ids: ['p1', 'p2', 'p3', 'p1', 'no-existe'], carpeta: '  Quilt Atenas ' });
   afirmar(r.status === 200 && r.body.actualizados === 3, `guarda las tres, una vez cada una (${JSON.stringify(r.body)})`);

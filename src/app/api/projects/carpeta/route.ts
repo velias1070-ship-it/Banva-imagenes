@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { CARPETAS_RESERVADAS } from '@/lib/carpetas';
 
 const MAX_NOMBRE = 80;
 
@@ -21,6 +22,9 @@ export async function POST(request: NextRequest) {
   }
   if (!carpeta || carpeta.length > MAX_NOMBRE) {
     return NextResponse.json({ error: `carpeta: nombre de 1 a ${MAX_NOMBRE} caracteres` }, { status: 400 });
+  }
+  if (CARPETAS_RESERVADAS.includes(carpeta)) {
+    return NextResponse.json({ error: `«${carpeta}» no se puede usar: elige otro nombre` }, { status: 400 });
   }
 
   const supabase = createAdminClient();
