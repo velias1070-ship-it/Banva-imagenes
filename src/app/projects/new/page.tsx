@@ -12,24 +12,36 @@ import { PRODUCT_CATEGORIES } from '@/lib/constants';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
+interface Variante {
+  sku: string;
+  color: string;
+  color_slug: string;
+  item_id?: string;
+  titulo?: string;
+  thumbnail?: string;
+  permalink?: string;
+  tipo?: string | null;
+  bed_size?: string | null;
+  label?: string;
+  status_ml?: string | null;
+}
+
 interface ProductGroup {
   base_name: string;
   slug: string;
   tamano: string;
+  // '' = no se pudo deducir: el formulario obliga a elegirla.
   categoria: string;
   family_name?: string | null;
-  variantes: {
-    sku: string;
-    color: string;
-    color_slug: string;
-    item_id?: string;
-    titulo?: string;
-    thumbnail?: string;
-    permalink?: string;
-    tipo?: string | null;
-    bed_size?: string | null;
-    label?: string;
-  }[];
+  variantes: Variante[];
+}
+
+function resumenGrupo(p: ProductGroup): string {
+  const n = p.variantes.length;
+  const pausadas = p.variantes.filter((v) => v.status_ml === 'paused').length;
+  const cantidad = n === 1 ? 'Producto suelto · 1 variante' : `${n} variantes`;
+  const nota = pausadas === 0 ? '' : n === 1 ? ' (pausada)' : ` (${pausadas} pausada${pausadas === 1 ? '' : 's'})`;
+  return `${cantidad}${nota} · ${p.categoria || 'sin categoría'}`;
 }
 
 // El query "parece un SKU" cuando no tiene espacios, mide >= 6 y es
@@ -85,6 +97,7 @@ function ProductCombobox({
   onToggle,
   onClear,
   onAddGroups,
+  onPickVariant,
 }: {
   productos: ProductGroup[];
   loading: boolean;
@@ -92,6 +105,7 @@ function ProductCombobox({
   onToggle: (slug: string) => void;
   onClear: () => void;
   onAddGroups: (groups: ProductGroup[]) => void;
+  onPickVariant: (group: ProductGroup, variante: Variante) => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -192,25 +206,44 @@ function ProductCombobox({
             ) : (
               filtered.map((p) => {
                 const isSelected = selectedSet.has(p.slug);
+                // Buscando un SKU o color dentro de una familia: además de la
+                // familia completa, se ofrece ese SKU solo.
+                const q = query.trim().toLowerCase();
+                const sueltas =
+                  q && p.variantes.length > 1
+                    ? p.variantes
+                        .filter((v) => v.sku.toLowerCase().includes(q) || (v.label || v.color).toLowerCase().includes(q))
+                        .slice(0, 3)
+                    : [];
                 return (
-                  <button
-                    key={p.slug}
-                    type="button"
-                    onClick={() => onToggle(p.slug)}
-                    className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent ${isSelected ? 'bg-accent' : ''}`}
-                  >
-                    <div className={`mt-0.5 h-4 w-4 flex-shrink-0 rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground'}`}>
-                      {isSelected && <span className="block text-center text-xs leading-3">✓</span>}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{p.base_name} — {p.tamano}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {p.variantes.length === 1
-                          ? `Producto suelto · 1 variante · ${p.categoria}`
-                          : `${p.variantes.length} variantes · ${p.categoria}`}
+                  <div key={p.slug}>
+                    <button
+                      type="button"
+                      onClick={() => onToggle(p.slug)}
+                      className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent ${isSelected ? 'bg-accent' : ''}`}
+                    >
+                      <div className={`mt-0.5 h-4 w-4 flex-shrink-0 rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                        {isSelected && <span className="block text-center text-xs leading-3">✓</span>}
                       </div>
-                    </div>
-                  </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">
+                          {p.base_name}
+                          {p.tamano ? ` — ${p.tamano}` : ''}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{resumenGrupo(p)}</div>
+                      </div>
+                    </button>
+                    {sueltas.map((v) => (
+                      <button
+                        key={v.sku}
+                        type="button"
+                        onClick={() => onPickVariant(p, v)}
+                        className="block w-full py-1 pl-9 pr-3 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                      >
+                        Solo {v.label || v.color} ({v.sku}){v.status_ml === 'paused' ? ' · pausada' : ''}
+                      </button>
+                    ))}
+                  </div>
                 );
               })
             )}
@@ -230,11 +263,15 @@ function ProductCombobox({
                 ✕
               </button>
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium">{p.base_name} — {p.tamano}</div>
+                <div className="text-xs font-medium">
+                  {p.base_name}
+                  {p.tamano ? ` — ${p.tamano}` : ''}
+                </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {p.variantes.map((v) => (
                     <span key={v.sku} className="rounded bg-background px-1.5 py-0.5 text-[10px]">
                       {v.label || v.color} <span className="text-muted-foreground">({v.sku})</span>
+                      {v.status_ml === 'paused' && <span className="text-amber-600"> · pausada</span>}
                     </span>
                   ))}
                 </div>
@@ -278,45 +315,63 @@ export default function NewProjectPage() {
   }, []);
 
   function handleProductoToggle(slug: string) {
-    setSelectedProductos((prev) => {
-      const next = prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug];
-      // Auto-fill form fields based on the new selection
-      const selected = productos.filter((p) => next.includes(p.slug));
-      if (selected.length === 0) {
-        setName('');
-        setCategory('');
-        setSkuBase('');
-        setDescription('');
-      } else if (selected.length === 1) {
-        const prod = selected[0];
-        setName(prod.base_name);
-        setCategory(prod.categoria);
-        setSkuBase(prod.slug);
-        const varList = prod.variantes.map((v) => `${v.sku} (${v.color})`).join(', ');
-        setDescription(`${prod.tamano} — ${prod.variantes.length} variantes: ${varList}`);
-      } else {
-        // Multiple products combined — derive a generic name
-        const totalVariants = selected.reduce((sum, p) => sum + p.variantes.length, 0);
-        const categorias = [...new Set(selected.map((p) => p.categoria))];
-        const tamanos = [...new Set(selected.map((p) => p.tamano))];
-        // Find common prefix from base_name (e.g. "Jgo Sabana Polar AF 100%Pol Est")
-        const names = selected.map((p) => p.base_name);
-        let commonPrefix = names[0];
-        for (let i = 1; i < names.length; i++) {
-          while (commonPrefix && !names[i].startsWith(commonPrefix)) {
-            commonPrefix = commonPrefix.slice(0, -1);
-          }
+    const next = selectedProductos.includes(slug)
+      ? selectedProductos.filter((s) => s !== slug)
+      : [...selectedProductos, slug];
+    setSelectedProductos(next);
+    autocompletar(productos.filter((p) => next.includes(p.slug)));
+  }
+
+  // Un solo SKU de una familia: se arma su propio grupo y se selecciona.
+  function handleSoloVariante(p: ProductGroup, v: Variante) {
+    const grupo: ProductGroup = {
+      ...p,
+      base_name: `${p.base_name} ${v.label || v.color}`.trim(),
+      slug: `${p.slug}--${v.sku.toLowerCase()}`,
+      variantes: [v],
+    };
+    const lista = productos.some((x) => x.slug === grupo.slug) ? productos : [...productos, grupo];
+    if (lista !== productos) setProductos(lista);
+    const next = selectedProductos.includes(grupo.slug) ? selectedProductos : [...selectedProductos, grupo.slug];
+    setSelectedProductos(next);
+    autocompletar(lista.filter((x) => next.includes(x.slug)));
+  }
+
+  // Auto-fill form fields based on the selection
+  function autocompletar(selected: ProductGroup[]) {
+    if (selected.length === 0) {
+      setName('');
+      setCategory('');
+      setSkuBase('');
+      setDescription('');
+    } else if (selected.length === 1) {
+      const prod = selected[0];
+      setName(prod.base_name);
+      setCategory(prod.categoria);
+      setSkuBase(prod.slug);
+      const varList = prod.variantes.map((v) => `${v.sku} (${v.color})`).join(', ');
+      setDescription(`${prod.tamano ? `${prod.tamano} — ` : ''}${prod.variantes.length} variantes: ${varList}`);
+    } else {
+      // Multiple products combined — derive a generic name
+      const totalVariants = selected.reduce((sum, p) => sum + p.variantes.length, 0);
+      const categorias = [...new Set(selected.map((p) => p.categoria).filter(Boolean))];
+      const tamanos = [...new Set(selected.map((p) => p.tamano).filter(Boolean))];
+      // Find common prefix from base_name (e.g. "Jgo Sabana Polar AF 100%Pol Est")
+      const names = selected.map((p) => p.base_name);
+      let commonPrefix = names[0];
+      for (let i = 1; i < names.length; i++) {
+        while (commonPrefix && !names[i].startsWith(commonPrefix)) {
+          commonPrefix = commonPrefix.slice(0, -1);
         }
-        const prefix = commonPrefix.trim().replace(/[—-]+$/, '').trim();
-        setName(prefix || `${selected.length} productos combinados`);
-        setCategory(categorias[0]);
-        setSkuBase('');
-        setDescription(
-          `${selected.length} productos · ${totalVariants} variantes · ${tamanos.join(', ')}`
-        );
       }
-      return next;
-    });
+      const prefix = commonPrefix.trim().replace(/[—-]+$/, '').trim();
+      setName(prefix || `${selected.length} productos combinados`);
+      setCategory(categorias[0] ?? '');
+      setSkuBase('');
+      setDescription(
+        `${selected.length} productos · ${totalVariants} variantes${tamanos.length ? ` · ${tamanos.join(', ')}` : ''}`
+      );
+    }
   }
 
   // Suma grupos traidos por SKU a la lista que ya maneja el estado, dedup por
@@ -341,10 +396,12 @@ export default function NewProjectPage() {
     e.preventDefault();
     setLoading(true);
 
-    // Combine variants from all selected products
+    // Combine variants from all selected products (un SKU elegido solo y
+    // también dentro de su familia va una vez)
     const allVariantes = productos
       .filter((p) => selectedProductos.includes(p.slug))
-      .flatMap((p) => p.variantes);
+      .flatMap((p) => p.variantes)
+      .filter((v, i, arr) => arr.findIndex((x) => x.sku === v.sku) === i);
 
     try {
       const res = await fetch('/api/projects', {
@@ -413,6 +470,7 @@ export default function NewProjectPage() {
                 onToggle={handleProductoToggle}
                 onClear={handleClearProductos}
                 onAddGroups={handleAddGroups}
+                onPickVariant={handleSoloVariante}
               />
             )}
 
