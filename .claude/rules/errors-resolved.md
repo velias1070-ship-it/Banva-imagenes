@@ -18,6 +18,7 @@ Errores descubiertos y solucionados durante el desarrollo. Documentados para no 
 | 10 | GitHub push auth | Permission denied al hacer git push | No hay SSH key ni credential helper configurado | Crear Personal Access Token (classic, repo scope, 90 dias), usar como password HTTPS | N/A (configuracion) |
 | 11 | npm global install fail | Permission denied para `npm install -g vercel` | Permisos de sistema en macOS | Usar `npx vercel` en vez de instalacion global | N/A (configuracion) |
 | 12 | Vercel deploy network | EADDRNOTAVAIL en primer intento de deploy | Error de red transitorio | Reintentar despues de 5 segundos | N/A (configuracion) |
+| 13 | Toallas ChatGPT: texto doble y rizos gigantes (2026-09-29, job 066ae13a) | Textos de la infografia doblados o engordados; rizo de la toalla como "fideos" | (a) El pegado del texto del hero (`compositeHeroOverlays`) asume que el modelo no mueve pixeles; ChatGPT redibuja todo y el texto pegado cae corrido. (b) A ChatGPT le llegaba el recorte ampliado de la muestra (`crop_swatch`) y copiaba el rizo a esa escala. (c) Instruccion de 4-5 mil caracteres con contradicciones | No pegar el texto cuando la imagen es de ChatGPT (todas las categorias); en toallas, ChatGPT recibe la muestra completa (max 1536 px) y una instruccion corta sola. Test: `scripts/test-toallas-chatgpt.ts` | `lib/openai/images.ts`, `process-next/route.ts`, `results/[jobId]/route.ts` |
 
 ## Notas
 

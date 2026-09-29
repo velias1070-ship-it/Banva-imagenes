@@ -32,6 +32,8 @@ export interface GeminiGenerateRequest {
   heroMimeType?: string;      // Optional for Tier 2 (generation from scratch)
   swatchImageBase64: string;
   swatchMimeType: string;
+  /** Muestra en PNG tal como la subió el usuario, ANTES del recorte. Solo la usa ChatGPT (ver openai/images.ts). */
+  swatchCompletaBase64?: string;
   promptText: string;
   temperature?: number;
   useProModel?: boolean;      // Escalate to Pro model for difficult cases

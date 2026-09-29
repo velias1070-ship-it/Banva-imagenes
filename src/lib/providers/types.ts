@@ -25,6 +25,8 @@ export interface UnifiedRequest {
   heroMimeType?: string;
   swatchImageBase64: string;
   swatchMimeType: string;
+  /** Muestra en PNG tal como la subió el usuario, ANTES del recorte. Solo la usa ChatGPT (ver openai/images.ts). */
+  swatchCompletaBase64?: string;
   promptText: string;
   temperature?: number;
   category?: string;

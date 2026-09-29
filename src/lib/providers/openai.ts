@@ -28,6 +28,7 @@ export const gptImage2Provider: ImageGenerator = {
       heroMimeType: req.heroMimeType || 'image/png',
       swatchImageBase64: req.swatchImageBase64,
       swatchMimeType: req.swatchMimeType,
+      swatchCompletaBase64: req.swatchCompletaBase64,
       promptText: req.promptText,
       category: req.category,
       quality,
