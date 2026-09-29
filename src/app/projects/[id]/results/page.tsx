@@ -261,9 +261,19 @@ export default function ResultsPage() {
           }
           return next;
         });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        console.error('[resultados] no se pudo cargar:', res.status, data.error);
+        // Mismo id: el refresco cada 10 s no apila avisos.
+        toast.error(`No se pudieron cargar los resultados (${data.error || res.status}). Recarga la página.`, {
+          id: 'resultados-carga',
+        });
       }
-    } catch {
-      // silent
+    } catch (err) {
+      console.error('[resultados] no se pudo cargar:', err);
+      toast.error('No se pudieron cargar los resultados (error de conexión). Recarga la página.', {
+        id: 'resultados-carga',
+      });
     }
   }, [id]);
 
