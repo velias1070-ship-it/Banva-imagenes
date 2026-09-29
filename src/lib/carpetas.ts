@@ -14,7 +14,8 @@ import type { ProyectoSkus } from '@/lib/proyectos-familia';
 //
 // Límite: una carpeta guardada con el nombre de una automática (p.ej. mover
 // Bruselas 1.5 a la carpeta de Bruselas 2 plazas) se separa si ML cambia ese
-// nombre (renombra o cierra la familia que lo da): se vuelve a mover una vez.
+// nombre (renombra o cierra la familia que lo da, o publica una medida nueva
+// que va antes por abecedario): se vuelve a mover una vez.
 
 export const SIN_FAMILIA = 'Sin familia de ML';
 /** La de todos los proyectos sin carpeta guardada cuando no se pudieron leer las familias. */
@@ -148,6 +149,9 @@ export function carpetaParaNuevo(
   // producto del nuevo sin haberla guardado (entonces no hay nada que guardar).
   const cuenta = new Map<string | null, number>([[null, 0]]);
   for (const p of vecinos) {
+    // Sin carpeta guardada ni familia de ML (SKUs aún sin publicar): no vota,
+    // si no el nuevo quedaría guardado en «Sin familia de ML».
+    if (p.carpeta === null && producto(p) === null) continue;
     const efectiva = p.carpeta ?? producto(p) ?? SIN_FAMILIA;
     const voto = p.carpeta === null && efectiva === propia ? null : efectiva;
     cuenta.set(voto, (cuenta.get(voto) ?? 0) + 1);

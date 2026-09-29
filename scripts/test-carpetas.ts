@@ -153,6 +153,10 @@ async function main() {
   ];
   afirmar(carpetaParaNuevo(familias, mismosSkus, 'n') === 'Z', 'el nuevo sigue al proyecto con sus mismos SKUs aunque la mayoría del producto esté en otra');
   afirmar(
+    carpetaParaNuevo(familias, [proyecto('viejo', ['SINPUBLICAR']), proyecto('n', ['AT20A', 'SINPUBLICAR'])], 'n') === null,
+    'un vecino sin familia de ML no deja al nuevo guardado en «Sin familia de ML»',
+  );
+  afirmar(
     carpetaParaNuevo(familias, [proyecto('a', ['AT15A'], nombreAtenas), proyecto('n', ['AT20B'])], 'n') === nombreAtenas,
     'una carpeta guardada con el nombre automático se guarda igual (no queda siguiendo a la automática)',
   );
