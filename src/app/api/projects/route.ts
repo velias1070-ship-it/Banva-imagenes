@@ -7,6 +7,9 @@ import { clienteInventario } from '@/lib/familias-ml';
 import { leerFamiliasYProyectos } from '@/lib/proyectos-familia';
 import { carpetaParaNuevo } from '@/lib/carpetas';
 
+// Crear lee además todas las publicaciones de ML para elegir la carpeta.
+export const maxDuration = 60;
+
 function getInventorySupabase() {
   const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.INVENTORY_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -140,9 +143,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Carpeta: la de los otros proyectos de su familia de ML (src/lib/carpetas.ts),
-  // así cae en la carpeta aunque la hayan renombrado. Si falla, el proyecto
-  // queda creado y la lista lo muestra en la carpeta de su producto.
+  // Carpeta: si los otros proyectos de su producto están en una carpeta puesta
+  // a mano (renombrada o movida), se guarda esa (src/lib/carpetas.ts). Si no, o
+  // si esto falla, no se guarda nada: la lista lo muestra en la de su producto.
   let carpeta: string | null = null;
   let carpetaError: string | null = null;
   const inventario = clienteInventario();
@@ -150,10 +153,11 @@ export async function POST(request: NextRequest) {
     carpetaError = 'faltan INVENTORY_SUPABASE_*';
   } else if (project) {
     try {
-      const { familias, proyectos } = await leerFamiliasYProyectos(inventario, createAdminClient());
+      const admin = createAdminClient();
+      const { familias, proyectos } = await leerFamiliasYProyectos(inventario, admin);
       carpeta = carpetaParaNuevo(familias, proyectos, project.id);
       if (carpeta) {
-        const { error: carpetaErr } = await supabase
+        const { error: carpetaErr } = await admin
           .from('projects')
           .update({ metadata: { ...((project.metadata as Record<string, unknown> | null) ?? {}), carpeta } })
           .eq('id', project.id);

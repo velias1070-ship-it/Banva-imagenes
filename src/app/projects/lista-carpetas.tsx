@@ -13,6 +13,8 @@ import type { Carpeta } from '@/lib/carpetas';
 
 interface IProps {
   carpetas: Carpeta[];
+  /** La de los proyectos sin producto: no se renombra ni es destino. */
+  sinGrupo: string;
   aviso: string | null;
 }
 
@@ -20,7 +22,7 @@ const NUEVA = '__nueva__';
 
 // Proyectos por carpeta (una por producto). Para corregir: «Mover» un proyecto
 // a otra carpeta, o «Renombrar» una carpeta (con el nombre de otra, se juntan).
-export function ListaCarpetas({ carpetas, aviso }: IProps) {
+export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
   const router = useRouter();
   const [busqueda, setBusqueda] = useState('');
   const [abiertas, setAbiertas] = useState<Set<string>>(new Set());
@@ -33,7 +35,7 @@ export function ListaCarpetas({ carpetas, aviso }: IProps) {
         return tokens.every((t) => texto.includes(t));
       })
     : carpetas;
-  const nombres = carpetas.map((c) => c.nombre);
+  const destinos = carpetas.map((c) => c.nombre).filter((n) => n !== sinGrupo);
 
   function alternar(nombre: string) {
     setAbiertas((prev) => {
@@ -54,7 +56,10 @@ export function ListaCarpetas({ carpetas, aviso }: IProps) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.error || `No se guardó (${data.errores?.length ?? res.status} con error)`);
+        toast.error(
+          data.error ||
+            `${data.actualizados ? `Se guardaron ${data.actualizados}, pero ` : ''}${data.errores?.length ?? 'alguno'} no se pudo guardar`,
+        );
       } else {
         toast.success(`Listo: ${data.actualizados} en «${data.carpeta}»`);
         setAbiertas((prev) => new Set(prev).add(abrir));
@@ -131,18 +136,23 @@ export function ListaCarpetas({ carpetas, aviso }: IProps) {
                       onChange={(e) => mover(p.id, c.nombre, e.target.value)}
                       className="h-8 w-36 rounded-md border bg-background px-2 text-xs"
                     >
-                      {nombres.map((n) => (
-                        <option key={n} value={n}>
-                          {n === c.nombre ? 'Mover a…' : n}
-                        </option>
-                      ))}
+                      <option value={c.nombre}>Mover a…</option>
+                      {destinos
+                        .filter((n) => n !== c.nombre)
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
                       <option value={NUEVA}>Carpeta nueva…</option>
                     </select>
                   </div>
                 ))}
-                <Button variant="ghost" size="sm" disabled={guardando} onClick={() => renombrar(c)}>
-                  Renombrar carpeta
-                </Button>
+                {c.nombre !== sinGrupo && (
+                  <Button variant="ghost" size="sm" disabled={guardando} onClick={() => renombrar(c)}>
+                    Renombrar carpeta
+                  </Button>
+                )}
               </div>
             )}
           </div>

@@ -5,7 +5,7 @@ import { FolderPlus, ImageIcon, Package } from 'lucide-react';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clienteInventario, listarFamilias, type ProductGroup } from '@/lib/familias-ml';
 import { leerProyectosConSkus, type ProyectoSkus } from '@/lib/proyectos-familia';
-import { agruparEnCarpetas } from '@/lib/carpetas';
+import { SIN_FAMILIA, agruparEnCarpetas } from '@/lib/carpetas';
 import { ListaCarpetas } from './lista-carpetas';
 
 export const dynamic = 'force-dynamic';
@@ -35,7 +35,8 @@ export default async function ProjectsPage() {
       errorFamilias = err instanceof Error ? err.message : 'Error';
     }
   }
-  const carpetas = agruparEnCarpetas(familias, proyectos, errorFamilias ? 'Sin agrupar' : undefined);
+  const sinGrupo = errorFamilias ? 'Sin agrupar' : SIN_FAMILIA;
+  const carpetas = agruparEnCarpetas(familias, proyectos, sinGrupo);
 
   return (
     <div className="p-8">
@@ -79,6 +80,7 @@ export default async function ProjectsPage() {
       ) : (
         <ListaCarpetas
           carpetas={carpetas}
+          sinGrupo={sinGrupo}
           aviso={
             errorFamilias &&
             `No pude leer las familias de ML (${errorFamilias}): los proyectos sin carpeta guardada van en «Sin agrupar».`

@@ -111,9 +111,11 @@ export function carpetasDeProyectos(
 }
 
 /**
- * Carpeta para un proyecto recién creado: la más común entre los otros
- * proyectos de su misma familia principal (así cae en la carpeta renombrada o
- * movida); si no hay, la de su producto. null = no tiene familia de ML.
+ * Carpeta a guardar en un proyecto recién creado, o null para no guardar nada
+ * (queda en la de su producto y la sigue si ML la renombra). Se guarda sólo si
+ * la mayoría de los otros proyectos del mismo producto (cualquier medida) está
+ * en una carpeta puesta a mano; en un empate gana la del producto, así un
+ * proyecto movido no arrastra a los nuevos.
  */
 export function carpetaParaNuevo(
   familias: ProductGroup[],
@@ -123,18 +125,25 @@ export function carpetaParaNuevo(
   const nuevo = proyectos.find((p) => p.id === projectId);
   if (!nuevo) return null;
   const porSku = familiasPorSku(familias);
-  const principal = familiaPrincipal(nuevo.skus, porSku);
-  if (!principal) return null;
+  const porFamilia = carpetaPorFamilia(familias);
+  const producto = (p: ProyectoSkus) => {
+    const principal = familiaPrincipal(p.skus, porSku);
+    return principal ? porFamilia.get(principal)! : null;
+  };
+  const suyo = producto(nuevo);
+  if (!suyo) return null;
 
   const carpetas = carpetasDeProyectos(familias, proyectos);
-  const cuenta = new Map<string, number>();
+  const cuenta = new Map<string, number>([[suyo, 0]]);
   for (const p of proyectos) {
-    if (p.id === projectId || familiaPrincipal(p.skus, porSku) !== principal) continue;
+    if (p.id === projectId || producto(p) !== suyo) continue;
     const c = carpetas.get(p.id)!;
     cuenta.set(c, (cuenta.get(c) ?? 0) + 1);
   }
-  const [masComun] = [...cuenta.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  return masComun?.[0] ?? carpetaPorFamilia(familias).get(principal)!;
+  const [masComun] = [...cuenta.entries()].sort(
+    (a, b) => b[1] - a[1] || Number(b[0] === suyo) - Number(a[0] === suyo) || a[0].localeCompare(b[0]),
+  );
+  return masComun[0] === suyo ? null : masComun[0];
 }
 
 export interface Carpeta {

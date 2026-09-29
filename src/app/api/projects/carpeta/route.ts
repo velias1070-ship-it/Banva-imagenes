@@ -13,7 +13,7 @@ const MAX_NOMBRE = 80;
  * metadata no es atómico: con un solo operador no se justifica una RPC.
  */
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => ({}));
+  const body = (await request.json().catch(() => null)) ?? {};
   const ids: unknown = body.project_ids;
   const carpeta = typeof body.carpeta === 'string' ? body.carpeta.trim() : '';
   if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => typeof id === 'string')) {

@@ -8,9 +8,9 @@
  *   plazas NO se juntan solas (ML les puso palabras distintas): se mueven a mano.
  * - La carpeta guardada manda; si no hay, la del producto de su familia
  *   principal; sin familia, «Sin familia de ML».
- * - Proyecto nuevo: la carpeta más común entre los de su misma familia
- *   principal (la renombrada), y un proyecto movido a otra carpeta no arrastra
- *   a los nuevos de su familia.
+ * - Proyecto nuevo: guarda la carpeta puesta a mano donde está la mayoría de
+ *   los otros proyectos de su producto (cualquier medida); si no, no guarda
+ *   nada y sigue a la del producto. Un empate lo gana la del producto.
  * - La lista: carpetas por nombre con «Sin familia de ML» al final; adentro, lo
  *   más nuevo primero.
  * - POST /api/projects/carpeta: valida, guarda metadata.carpeta sin perder las
@@ -113,28 +113,35 @@ async function main() {
   const cKing = carpetasDeProyectos(kings, [proyecto('k', ['K1'])]).get('k');
   afirmar(cKing === 'Cubrecamas Quilt Cobertor Acolchado Liviano Atena', `el nombre de la carpeta sale de la familia con más variantes (${cKing})`);
 
-  // --- Proyecto nuevo ---
+  // --- Proyecto nuevo: guarda carpeta sólo si la mayoría de su producto está en una puesta a mano ---
   const renombrados = [
     proyecto('at15', ['AT15A'], 'Quilt Atenas'),
-    proyecto('at20', ['AT20A'], 'Quilt Atenas'),
-    proyecto('nuevo', ['AT20B']),
-    // De otra familia: no cuentan (si contaran, empatan 2 a 2 y gana «Aaa»).
+    proyecto('at15b', ['AT15B'], 'Quilt Atenas'),
+    proyecto('nuevo', ['AT20B']), // 2 plazas: otra medida del mismo producto
+    // De otro producto: no cuentan (si contaran, empatan 2 a 2 y gana «Aaa»).
     proyecto('br-x', ['BR15A'], 'Aaa otra'),
     proyecto('br-y', ['BR15B'], 'Aaa otra'),
   ];
-  afirmar(carpetaParaNuevo(familias, renombrados, 'nuevo') === 'Quilt Atenas', 'el nuevo cae en la carpeta renombrada');
-  afirmar(carpetaParaNuevo(familias, [proyecto('solo', ['AT20A'])], 'solo') === nombreAtenas, 'sin otros de su familia → la de su producto');
-  afirmar(carpetaParaNuevo(familias, [proyecto('x', ['NOESTA'])], 'x') === null, 'sin familia → null (no se guarda)');
+  afirmar(carpetaParaNuevo(familias, renombrados, 'nuevo') === 'Quilt Atenas', 'el nuevo cae en la carpeta renombrada aunque sea de otra medida');
+  afirmar(
+    carpetaParaNuevo(familias, [proyecto('viejo', ['AT20A']), proyecto('solo', ['AT20B'])], 'solo') === null,
+    'los otros de su producto en la automática → no guarda (sigue a la del producto si ML la renombra)',
+  );
+  afirmar(carpetaParaNuevo(familias, [proyecto('solo', ['AT20A'])], 'solo') === null, 'sin otros de su producto → no guarda');
+  afirmar(carpetaParaNuevo(familias, [proyecto('x', ['NOESTA'])], 'x') === null, 'sin familia → no guarda');
   const conMovido = [
     proyecto('br-a', ['BR15A']),
     proyecto('br-b', ['BR15B']),
     proyecto('movido', ['BR15A'], 'Quilt Atenas'), // mal puesto, movido a mano
     proyecto('br-nuevo', ['BR15B']),
   ];
-  afirmar(
-    carpetaParaNuevo(familias, conMovido, 'br-nuevo') === nombreBr15,
-    'un proyecto movido a otra carpeta no arrastra a los nuevos de su familia',
-  );
+  afirmar(carpetaParaNuevo(familias, conMovido, 'br-nuevo') === null, 'un proyecto movido no arrastra a los nuevos (2 a 1)');
+  const empate = [
+    proyecto('br-a', ['BR15A']),
+    proyecto('movido', ['BR15B'], 'Atenas quilts'), // antes que «Cubrecamas…» por abecedario
+    proyecto('br-nuevo', ['BR15B']),
+  ];
+  afirmar(carpetaParaNuevo(familias, empate, 'br-nuevo') === null, 'en un empate gana la del producto');
 
   // --- Lista ---
   const lista = agruparEnCarpetas(familias, [
@@ -194,6 +201,7 @@ async function main() {
     return { status: res.status, body: await res.json() };
   };
   afirmar((await post({ carpeta: 'X' })).status === 400, 'sin project_ids → 400');
+  afirmar((await post(null)).status === 400, 'body null → 400');
   afirmar((await post({ project_ids: ['p1'], carpeta: '  ' })).status === 400, 'carpeta vacía → 400');
   afirmar((await post({ project_ids: ['p1'], carpeta: 'x'.repeat(81) })).status === 400, 'carpeta de más de 80 → 400');
 
