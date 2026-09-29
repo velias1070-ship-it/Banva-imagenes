@@ -41,8 +41,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
  *
  * Agrega al proyecto las publicaciones pedidas que no están en ningún proyecto
  * —de su familia o buscadas en la lista, p.ej. el mismo quilt que ML separa por
- * tamaño en otra familia— (las demás van en `no_agregadas`): primero a
- * metadata.variantes y después como swatch sin foto.
+ * tamaño en otra familia— y las suyas que se borraron de la grilla (las demás
+ * van en `no_agregadas`): primero a metadata.variantes (salvo las que ya están)
+ * y después como swatch sin foto.
  * Si falla el segundo paso, «Traer fotos de ML» (fetch-ml-images con sync_new)
  * crea los swatches que falten desde metadata. Las fotos las baja
  * fetch-ml-images. Dos POST simultáneos pueden duplicar (leer-modificar-escribir
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const libres = variantesLibres(familias, proyectos);
+    const libres = variantesLibres(familias, proyectos, projectId);
     const agregar = [...new Set((pedidos as string[]).map((s) => s.toUpperCase()))]
       .map((sku) => libres.get(sku))
       .filter((v): v is NonNullable<typeof v> => !!v);
@@ -87,11 +88,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (proyErr) throw new Error(`leer proyecto: ${proyErr.message}`);
     const metadata = (proyecto.metadata as Record<string, unknown> | null) ?? {};
     const variantes = Array.isArray(metadata.variantes) ? metadata.variantes : [];
-    const { error: updErr } = await supabase
-      .from('projects')
-      .update({ metadata: { ...metadata, variantes: [...variantes, ...agregar] } })
-      .eq('id', projectId);
-    if (updErr) throw new Error(`guardar metadata: ${updErr.message}`);
+    const yaEnMetadata = new Set(
+      variantes
+        .map((v) => (v as { sku?: unknown } | null)?.sku)
+        .filter((sku): sku is string => typeof sku === 'string')
+        .map((sku) => sku.toUpperCase()),
+    );
+    const aMetadata = agregar.filter((v) => !yaEnMetadata.has(v.sku.toUpperCase()));
+    if (aMetadata.length > 0) {
+      const { error: updErr } = await supabase
+        .from('projects')
+        .update({ metadata: { ...metadata, variantes: [...variantes, ...aMetadata] } })
+        .eq('id', projectId);
+      if (updErr) throw new Error(`guardar metadata: ${updErr.message}`);
+    }
 
     const { data: ultimo, error: ordErr } = await supabase
       .from('swatches')

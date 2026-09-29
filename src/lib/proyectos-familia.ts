@@ -13,6 +13,8 @@ export interface ProyectoRef {
 export interface ProyectoSkus extends ProyectoRef {
   /** SKUs en MAYÚSCULAS: metadata.variantes ∪ swatches.sku_suffix. */
   skus: Set<string>;
+  /** Los que tienen swatch (MAYÚSCULAS). Borrar un swatch no lo saca de metadata.variantes. */
+  enGrilla: Set<string>;
 }
 
 interface FilaProyecto {
@@ -49,10 +51,13 @@ export async function leerProyectosConSkus(supabase: SupabaseClient): Promise<Pr
       const sku = (v as { sku?: unknown } | null)?.sku;
       if (typeof sku === 'string' && sku) skus.add(sku.toUpperCase());
     }
-    porId.set(p.id, { id: p.id, name: p.name, skus });
+    porId.set(p.id, { id: p.id, name: p.name, skus, enGrilla: new Set() });
   }
   for (const s of swatches) {
-    if (s.sku_suffix) porId.get(s.project_id)?.skus.add(s.sku_suffix.toUpperCase());
+    const proyecto = s.sku_suffix ? porId.get(s.project_id) : undefined;
+    if (!proyecto || !s.sku_suffix) continue;
+    proyecto.skus.add(s.sku_suffix.toUpperCase());
+    proyecto.enGrilla.add(s.sku_suffix.toUpperCase());
   }
   return [...porId.values()];
 }
@@ -73,8 +78,13 @@ export interface VariantesNuevas {
   familias: string[];
   /** Variantes de esas familias que no están en ningún proyecto. */
   nuevas: Variante[];
-  /** Variantes de esas familias que ya están en este proyecto. */
+  /** Variantes de esas familias que están en la grilla de este proyecto. */
   en_proyecto: number;
+  /**
+   * SKUs del proyecto cuyo swatch se borró (siguen en metadata.variantes): no se
+   * ofrecen como nuevas, pero se pueden volver a agregar desde el buscador.
+   */
+  borradas: string[];
   /** Variantes de esas familias que ya están en OTRO proyecto: no se ofrecen, se avisan. */
   en_otros_proyectos: (ProyectoRef & { variantes: number })[];
 }
@@ -94,17 +104,19 @@ export function calcularVariantesNuevas(
   const nuevas: Variante[] = [];
   const otros = new Map<string, ProyectoRef & { variantes: number }>();
   const vistas = new Set<string>();
+  const borradas: string[] = [];
   let enProyecto = 0;
   for (const g of suyas) {
     for (const v of g.variantes) {
       const sku = v.sku.toUpperCase();
       if (vistas.has(sku)) continue;
       vistas.add(sku);
+      const ajenos = indice[sku];
       if (proyecto.skus.has(sku)) {
-        enProyecto += 1;
+        if (proyecto.enGrilla.has(sku)) enProyecto += 1;
+        else if (!ajenos) borradas.push(v.sku);
         continue;
       }
-      const ajenos = indice[sku];
       if (!ajenos) {
         nuevas.push(v);
         continue;
@@ -121,19 +133,29 @@ export function calcularVariantesNuevas(
     familias: suyas.map((g) => g.base_name),
     nuevas,
     en_proyecto: enProyecto,
+    borradas,
     en_otros_proyectos: [...otros.values()].sort((a, b) => b.variantes - a.variantes),
   };
 }
 
-// Publicaciones (de cualquier familia) que no están en ningún proyecto: lo que
-// se puede agregar, sea de la familia del proyecto o buscado en la lista.
-export function variantesLibres(familias: ProductGroup[], proyectos: ProyectoSkus[]): Map<string, Variante> {
+// Lo que se puede agregar al proyecto (SKU en MAYÚSCULAS → variante): las
+// publicaciones de cualquier familia que no están en ningún proyecto, y las
+// suyas que se borraron de la grilla.
+export function variantesLibres(
+  familias: ProductGroup[],
+  proyectos: ProyectoSkus[],
+  projectId: string,
+): Map<string, Variante> {
   const indice = indicePorSku(proyectos);
+  const propio = proyectos.find((p) => p.id === projectId);
   const libres = new Map<string, Variante>();
   for (const g of familias) {
     for (const v of g.variantes) {
       const sku = v.sku.toUpperCase();
-      if (!indice[sku] && !libres.has(sku)) libres.set(sku, v);
+      if (libres.has(sku)) continue;
+      const refs = indice[sku];
+      const borrada = !!propio && refs?.length === 1 && refs[0].id === projectId && !propio.enGrilla.has(sku);
+      if (!refs || borrada) libres.set(sku, v);
     }
   }
   return libres;

@@ -14,6 +14,11 @@
  *   (sin perder las otras llaves) y después el swatch sin foto, con el orden a
  *   continuación. No agrega las de otro proyecto, catálogo ni cerradas.
  *   Pedirlo dos veces no lo duplica. Un error de la base responde 500.
+ * - Un SKU del proyecto sin swatch (se borró de la grilla; sigue en metadata)
+ *   no cuenta como «en el proyecto» ni se ofrece como nuevo: va en `borradas`,
+ *   el POST lo vuelve a crear sin repetirlo en metadata y otro proyecto no lo
+ *   puede tomar.
+ * - Un SKU que en ML viene en minúsculas se agrega igual.
  * - GET indice-skus: SKU en mayúsculas → proyectos, sin repetir el proyecto;
  *   un proyecto con metadata malformada no lo tumba.
  * - Un SKU publicado en dos familias del proyecto se ofrece una vez.
@@ -74,6 +79,7 @@ mlItems.push(
   // el mismo SKU publicado en las dos familias del proyecto
   aviso({ item_id: 'MLC14', sku_venta: 'QRDOS', titulo: `${QR2} Dos`, family_name: QR2 }),
   aviso({ item_id: 'MLC15', sku_venta: 'QRDOS', titulo: `${QR15} Dos`, family_name: QR15 }),
+  aviso({ item_id: 'MLC16', sku_venta: 'qr2lila', titulo: `${QR2} Lila`, family_name: QR2 }),
 );
 
 // --- App ---
@@ -85,7 +91,7 @@ const projects: Fila[] = [
   {
     id: P1,
     name: 'Quilt Roma',
-    // qr15ne: sólo en metadata y en minúsculas
+    // QR15BE y qr15ne (en minúsculas): sólo en metadata, su swatch se borró
     metadata: { variantes: [{ sku: 'QR2BE', color: 'Beige' }, { sku: 'QR15BE', color: 'Beige' }, { sku: 'qr15ne', color: 'Negro' }], otra_cosa: 'x' },
   },
   { id: P2, name: 'roma nuevo', metadata: { variantes: [{ sku: 'QR2NE', color: 'Negro' }] } },
@@ -188,6 +194,7 @@ function afirmar(cond: boolean, msg: string) {
 interface Respuesta {
   familias: string[];
   en_proyecto: number;
+  borradas: string[];
   nuevas: { sku: string; status_ml?: string | null }[];
   en_otros_proyectos: { id: string; name: string; variantes: number }[];
 }
@@ -214,12 +221,16 @@ async function main() {
   afirmar(JSON.stringify(fams) === JSON.stringify([QR15, QR2]), `las dos familias del proyecto partido por tamaño (${fams.join(' | ')})`);
   const skus = (r1.body.nuevas ?? []).map((v) => v.sku).sort();
   afirmar(
-    JSON.stringify(skus) === JSON.stringify(['QR15AZ', 'QR2AZ', 'QR2RO', 'QRDOS']),
+    JSON.stringify(skus) === JSON.stringify(['QR15AZ', 'QR2AZ', 'QR2RO', 'QRDOS', 'qr2lila']),
     `ofrece sólo las nuevas: sin las propias, las de otro proyecto, catálogo, cerrada ni otra familia (${skus.join(', ')})`,
   );
   afirmar(!skus.includes('QR2GR'), 'el swatch en minúsculas cuenta como propio');
   afirmar(!skus.includes('QR15NE'), 'el SKU de metadata en minúsculas cuenta como propio');
-  afirmar(r1.body.en_proyecto === 4, `cuenta las variantes de la familia que ya están en el proyecto (${r1.body.en_proyecto})`);
+  afirmar(r1.body.en_proyecto === 2, `cuenta sólo las de la familia que están en la grilla (${r1.body.en_proyecto})`);
+  afirmar(
+    JSON.stringify([...(r1.body.borradas ?? [])].sort()) === JSON.stringify(['QR15BE', 'QR15NE']),
+    `las de metadata sin swatch van como borradas (${r1.body.borradas})`,
+  );
   afirmar(r1.body.nuevas?.filter((v) => v.sku === 'QRDOS').length === 1, 'el SKU que está en dos familias se ofrece una vez');
   afirmar(r1.body.nuevas?.find((v) => v.sku === 'QR2RO')?.status_ml === 'paused', 'la pausada viene marcada');
   const otros = Object.fromEntries((r1.body.en_otros_proyectos ?? []).map((o) => [o.id, o.variantes]));
@@ -266,6 +277,26 @@ async function main() {
   afirmar(!r2.body.nuevas.some((v) => v.sku === 'QR2AZ'), 'después de agregarla ya no se ofrece');
   const rOtra = await post(P1, { skus: ['QR2AZ'] });
   afirmar(rOtra.body.agregadas === 0 && swatches.filter((s) => s.sku_suffix === 'QR2AZ').length === 1, 'pedirla de nuevo no la duplica');
+
+  const rAjena = await post(P2, { skus: ['QR15BE'] });
+  afirmar(rAjena.body.agregadas === 0, `otro proyecto no toma la borrada de la grilla (${JSON.stringify(rAjena.body)})`);
+  escrituras.length = 0;
+  const rRest = await post(P1, { skus: ['QR15NE'] });
+  afirmar(rRest.body.agregadas === 1, `la borrada se vuelve a agregar (${JSON.stringify(rRest.body)})`);
+  afirmar(escrituras.join(',') === 'POST swatches', `sin tocar metadata, donde ya estaba (${escrituras.join(',')})`);
+  afirmar(
+    p1.variantes.filter((v) => v.sku.toUpperCase() === 'QR15NE').length === 1 &&
+      swatches.filter((s) => s.project_id === P1 && s.sku_suffix === 'QR15NE').length === 1,
+    'queda una vez en metadata y una vez en la grilla',
+  );
+  const rTras = await get(P1);
+  afirmar(JSON.stringify(rTras.body.borradas) === JSON.stringify(['QR15BE']), `ya no es borrada (${rTras.body.borradas})`);
+
+  const rMin = await post(P1, { skus: ['QRDOS', 'QR2LILA'] });
+  afirmar(rMin.body.agregadas === 2, `agrega el SKU que ML trae en minúsculas (${JSON.stringify(rMin.body)})`);
+  const rCuenta = await get(P1);
+  // QR2BE, QR2GR, QR2AZ, SO1, QR15NE, QRDOS (en dos familias: una vez), qr2lila
+  afirmar(rCuenta.body.en_proyecto === 7, `el SKU de dos familias cuenta una vez (${rCuenta.body.en_proyecto})`);
 
   const url = process.env.INVENTORY_SUPABASE_URL;
   delete process.env.INVENTORY_SUPABASE_URL;

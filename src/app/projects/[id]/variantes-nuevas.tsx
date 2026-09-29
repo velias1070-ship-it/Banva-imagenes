@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Loader2, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -48,39 +48,49 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
   const [indice, setIndice] = useState<Record<string, ProyectoRef[]>>({});
   const [errorLista, setErrorLista] = useState<string | null>(null);
   const [cargandoLista, setCargandoLista] = useState(false);
+  // Descarta una carga de la lista que termina después de agregar (índice viejo).
+  const generacionLista = useRef(0);
 
-  const cargar = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/missing-variants`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      const d = data as Datos;
-      setDatos(d);
-      setError(null);
-      setMarcadas(new Set(d.nuevas.map((v) => v.sku)));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error');
-    }
-  }, [projectId]);
+  // marcarNuevas: sólo al abrir. Después de agregar, las nuevas que aparezcan
+  // (p.ej. las de la familia de una publicación buscada) no se marcan solas.
+  const cargar = useCallback(
+    async (marcarNuevas: boolean) => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/missing-variants`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const d = data as Datos;
+        setDatos(d);
+        setError(null);
+        if (marcarNuevas) setMarcadas(new Set(d.nuevas.map((v) => v.sku)));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error');
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
-    cargar();
+    cargar(true);
   }, [cargar]);
 
   // La lista completa (y a qué proyecto va cada SKU) se lee recién al buscar.
   async function cargarLista() {
+    const generacion = ++generacionLista.current;
     setCargandoLista(true);
     try {
       const [rProd, rIdx] = await Promise.all([fetch('/api/productos'), fetch('/api/projects/indice-skus')]);
       const [prod, idx] = await Promise.all([rProd.json().catch(() => ({})), rIdx.json().catch(() => ({}))]);
       if (!rProd.ok || !Array.isArray(prod)) throw new Error(prod.error || `productos HTTP ${rProd.status}`);
       if (!rIdx.ok) throw new Error(idx.error || `índice HTTP ${rIdx.status}`);
+      if (generacion !== generacionLista.current) return;
+      // Sin distinguir mayúsculas, como el servidor.
       const vistas = new Set<string>();
       const lista: Opcion[] = [];
       for (const g of prod as ProductGroup[]) {
         for (const v of g.variantes) {
-          if (vistas.has(v.sku)) continue;
-          vistas.add(v.sku);
+          if (vistas.has(v.sku.toUpperCase())) continue;
+          vistas.add(v.sku.toUpperCase());
           const label = v.label || v.color;
           lista.push({ sku: v.sku, label, familia: g.base_name, status_ml: v.status_ml, texto: sinTildes(`${g.base_name} ${label} ${v.sku}`) });
         }
@@ -89,9 +99,9 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
       setOpciones(lista);
       setErrorLista(null);
     } catch (err) {
-      setErrorLista(err instanceof Error ? err.message : 'Error');
+      if (generacion === generacionLista.current) setErrorLista(err instanceof Error ? err.message : 'Error');
     } finally {
-      setCargandoLista(false);
+      if (generacion === generacionLista.current) setCargandoLista(false);
     }
   }
 
@@ -122,13 +132,18 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
         toast.error(data.error || 'Error agregando variantes');
         return;
       }
+      // Todo lo marcado se mandó: quedó agregado o rechazado. La lista y el índice
+      // se vuelven a leer en la próxima búsqueda.
+      setMarcadas(new Set());
+      setBusqueda('');
+      setOpciones(null);
+      generacionLista.current++;
+      setCargandoLista(false);
       if (data.no_agregadas?.length) {
         toast.info(`${data.no_agregadas.length} no se agregaron: ya están en un proyecto o ya no están publicadas`);
       }
       if (!data.agregadas) return;
       toast.success(`${data.agregadas} variantes agregadas. Bajando sus fotos de ML…`);
-      setBusqueda('');
-      setOpciones(null);
 
       // sync_new: false — los swatches ya existen; con true también revivía los
       // que el usuario borró y siguen en metadata.variantes.
@@ -145,24 +160,26 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
     } catch {
       toast.error('Error de conexion');
     } finally {
-      await cargar();
+      await cargar(false);
       setAgregando(false);
     }
   }
 
-  if (error) {
-    return <p className="text-xs text-destructive">No pude revisar las variantes de la familia: {error}</p>;
-  }
-  if (!datos) {
-    return (
-      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        Buscando variantes de la familia…
-      </p>
-    );
-  }
+  const errorFamilia = error && (
+    <p className="text-xs text-destructive">No pude revisar las variantes de la familia: {error}</p>
+  );
+  const cargandoFamilia = !datos && !error && (
+    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      Buscando variantes de la familia…
+    </p>
+  );
+  // Sin buscador (Generar) sólo se muestra si hay nuevas. Con buscador el cuadro
+  // se ve siempre: el buscador no depende de la familia.
+  if (!conBuscador && !datos) return errorFamilia || cargandoFamilia;
 
-  const otros = datos.en_otros_proyectos;
+  const nuevas = datos?.nuevas ?? [];
+  const otros = datos?.en_otros_proyectos ?? [];
   const notaOtros = otros.length > 0 && (
     <p className="text-xs text-muted-foreground">
       Otras variantes de esta familia ya están en:{' '}
@@ -179,28 +196,31 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
     </p>
   );
 
-  if (!conBuscador && datos.nuevas.length === 0) return notaOtros || null;
+  if (!conBuscador && nuevas.length === 0) return notaOtros || null;
 
   const tokens = sinTildes(busqueda).split(/\s+/).filter(Boolean);
   const resultados =
     tokens.length && opciones ? opciones.filter((o) => tokens.every((t) => o.texto.includes(t))) : [];
-  const deFamilia = new Set(datos.nuevas.map((v) => v.sku));
+  const deFamilia = new Set(nuevas.map((v) => v.sku));
   const marcadasFuera = opciones?.filter((o) => marcadas.has(o.sku) && !deFamilia.has(o.sku)) ?? [];
+  const borradas = new Set((datos?.borradas ?? []).map((s) => s.toUpperCase()));
 
   return (
-    <Card className={datos.nuevas.length > 0 ? 'border-amber-300 bg-amber-50/50' : undefined}>
+    <Card className={nuevas.length > 0 ? 'border-amber-300 bg-amber-50/50' : undefined}>
       <CardHeader>
         <CardTitle>Agregar variantes</CardTitle>
-        {datos.familias.length > 0 && (
+        {datos && datos.familias.length > 0 && (
           <p className="text-xs text-muted-foreground">Familia de ML: {datos.familias.join(' · ')}</p>
         )}
       </CardHeader>
       <CardContent className="space-y-3">
-        {datos.nuevas.length > 0 ? (
+        {errorFamilia}
+        {cargandoFamilia}
+        {nuevas.length > 0 ? (
           <div className="space-y-1">
-            <p className="text-sm font-medium">Nuevas de la familia ({datos.nuevas.length})</p>
+            <p className="text-sm font-medium">Nuevas de la familia ({nuevas.length})</p>
             <div className="max-h-64 space-y-1 overflow-y-auto">
-              {datos.nuevas.map((v) => (
+              {nuevas.map((v) => (
                 <label key={v.sku} className="flex cursor-pointer items-center gap-2 text-sm">
                   <Checkbox checked={marcadas.has(v.sku)} onCheckedChange={() => alternar(v.sku)} />
                   <span className="min-w-0 flex-1 truncate">{v.label || v.color}</span>
@@ -210,11 +230,17 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
               ))}
             </div>
           </div>
-        ) : datos.familias.length > 0 ? (
+        ) : datos && datos.familias.length > 0 ? (
           <p className="text-sm text-muted-foreground">
-            ✓ Las {datos.en_proyecto} variantes de la familia ya están en el proyecto.
+            ✓ No hay variantes nuevas en la familia: {datos.en_proyecto} ya están en este proyecto.
           </p>
         ) : null}
+        {conBuscador && borradas.size > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {borradas.size} {borradas.size === 1 ? 'variante se borró' : 'variantes se borraron'} de la grilla: búscalas
+            abajo para volver a agregarlas.
+          </p>
+        )}
         {notaOtros}
 
         {conBuscador && (
@@ -240,9 +266,10 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
                 {resultados.length === 0 && <p className="text-xs text-muted-foreground">Sin resultados</p>}
                 {resultados.slice(0, MAX_RESULTADOS).map((o) => {
                   const refs = indice[o.sku.toUpperCase()] ?? [];
-                  const aca = refs.some((r) => r.id === projectId);
+                  const borrada = borradas.has(o.sku.toUpperCase());
+                  const aca = !borrada && refs.some((r) => r.id === projectId);
                   const otro = refs.find((r) => r.id !== projectId);
-                  const libre = refs.length === 0;
+                  const libre = refs.length === 0 || borrada;
                   return (
                     <label
                       key={o.sku}
@@ -253,6 +280,7 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
                         {o.label} <span className="text-xs text-muted-foreground">· {o.familia}</span>
                       </span>
                       {o.status_ml === 'paused' && <span className="text-xs text-amber-600">pausada</span>}
+                      {borrada && <span className="text-xs text-amber-600">borrada de la grilla</span>}
                       {aca && <span className="text-xs text-muted-foreground">ya está</span>}
                       {!aca && otro && <span className="max-w-40 truncate text-xs text-muted-foreground">en {otro.name}</span>}
                       <span className="font-mono text-xs text-muted-foreground">{o.sku}</span>
@@ -281,7 +309,7 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
           </div>
         )}
 
-        {(datos.nuevas.length > 0 || conBuscador) && (
+        {(nuevas.length > 0 || conBuscador) && (
           <Button size="sm" onClick={agregar} disabled={agregando || marcadas.size === 0}>
             {agregando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Agregar {marcadas.size}
