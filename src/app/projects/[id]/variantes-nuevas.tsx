@@ -65,25 +65,28 @@ export function VariantesNuevas({ projectId, onAgregadas }: IProps) {
         toast.error(data.error || 'Error agregando variantes');
         return;
       }
-      toast.success(`${data.agregadas} variantes agregadas. Bajando sus fotos de ML…`);
       if (data.no_agregadas?.length) {
-        toast.info(`${data.no_agregadas.length} no se agregaron: ya están en otro proyecto o ya no están publicadas`);
+        toast.info(`${data.no_agregadas.length} no se agregaron: ya están en un proyecto o ya no están publicadas`);
       }
+      if (!data.agregadas) return;
+      toast.success(`${data.agregadas} variantes agregadas. Bajando sus fotos de ML…`);
 
+      // sync_new: false — los swatches ya existen; con true también revivía los
+      // que el usuario borró y siguen en metadata.variantes.
       const fotos = await fetch(`/api/projects/${projectId}/fetch-ml-images`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: false, sync_new: true }),
+        body: JSON.stringify({ force: false, sync_new: false }),
       });
       const f = await fotos.json().catch(() => ({}));
-      if (!fotos.ok) toast.error(`No se bajaron las fotos (${f.error || fotos.status}): usa «Traer fotos de ML»`);
+      if (!fotos.ok) toast.error(`No se bajaron las fotos (${f.error || fotos.status}): usa «Traer fotos de ML» en Variantes`);
       else if (f.errors > 0) toast.error(`${f.errors} fotos no se pudieron bajar`);
 
       onAgregadas();
-      await cargar();
     } catch {
       toast.error('Error de conexion');
     } finally {
+      await cargar();
       setAgregando(false);
     }
   }

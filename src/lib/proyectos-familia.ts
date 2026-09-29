@@ -18,7 +18,7 @@ export interface ProyectoSkus extends ProyectoRef {
 interface FilaProyecto {
   id: string;
   name: string;
-  metadata: { variantes?: { sku?: string | null }[] } | null;
+  metadata: { variantes?: unknown } | null;
 }
 
 interface FilaSwatch {
@@ -44,8 +44,10 @@ export async function leerProyectosConSkus(supabase: SupabaseClient): Promise<Pr
   const porId = new Map<string, ProyectoSkus>();
   for (const p of proyectos) {
     const skus = new Set<string>();
-    for (const v of p.metadata?.variantes ?? []) {
-      if (v?.sku) skus.add(v.sku.toUpperCase());
+    const variantes = p.metadata?.variantes;
+    for (const v of Array.isArray(variantes) ? variantes : []) {
+      const sku = (v as { sku?: unknown } | null)?.sku;
+      if (typeof sku === 'string' && sku) skus.add(sku.toUpperCase());
     }
     porId.set(p.id, { id: p.id, name: p.name, skus });
   }

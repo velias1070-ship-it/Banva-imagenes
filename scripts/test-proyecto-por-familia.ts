@@ -12,7 +12,10 @@
  * - POST agrega sólo lo ofrecido: primero a metadata.variantes (sin perder las
  *   otras llaves) y después el swatch sin foto, con el orden a continuación.
  *   Pedirlo dos veces no lo duplica. Un error de la base responde 500.
- * - GET indice-skus: SKU en mayúsculas → proyectos, sin repetir el proyecto.
+ * - GET indice-skus: SKU en mayúsculas → proyectos, sin repetir el proyecto;
+ *   un proyecto con metadata malformada no lo tumba.
+ * - Un SKU publicado en dos familias del proyecto se ofrece una vez.
+ * - Sin las variables INVENTORY_* responde 500: no cae a la base de la app.
  *
  * Uso: npx tsx scripts/test-proyecto-por-familia.ts  (no llama a ninguna API)
  */
@@ -65,6 +68,10 @@ mlItems.push(
   aviso({ item_id: 'MLC10', sku_venta: 'QR15BE', titulo: `${QR15} Beige`, family_name: QR15 }),
   aviso({ item_id: 'MLC11', sku_venta: 'QR15AZ', titulo: `${QR15} Azul`, family_name: QR15 }),
   aviso({ item_id: 'MLC12', sku_venta: 'SO1', titulo: 'Sabana Otra Blanca', family_name: 'Sabana Otra' }),
+  aviso({ item_id: 'MLC13', sku_venta: 'QR15NE', titulo: `${QR15} Negro`, family_name: QR15 }),
+  // el mismo SKU publicado en las dos familias del proyecto
+  aviso({ item_id: 'MLC14', sku_venta: 'QRDOS', titulo: `${QR2} Dos`, family_name: QR2 }),
+  aviso({ item_id: 'MLC15', sku_venta: 'QRDOS', titulo: `${QR15} Dos`, family_name: QR15 }),
 );
 
 // --- App ---
@@ -73,10 +80,17 @@ const P2 = 'p2-roma-nuevo';
 const P3 = 'p3-relleno';
 const P4 = 'p4-vacio';
 const projects: Fila[] = [
-  { id: P1, name: 'Quilt Roma', metadata: { variantes: [{ sku: 'QR2BE', color: 'Beige' }, { sku: 'QR15BE', color: 'Beige' }], otra_cosa: 'x' } },
+  {
+    id: P1,
+    name: 'Quilt Roma',
+    // qr15ne: sólo en metadata y en minúsculas
+    metadata: { variantes: [{ sku: 'QR2BE', color: 'Beige' }, { sku: 'QR15BE', color: 'Beige' }, { sku: 'qr15ne', color: 'Negro' }], otra_cosa: 'x' },
+  },
   { id: P2, name: 'roma nuevo', metadata: { variantes: [{ sku: 'QR2NE', color: 'Negro' }] } },
   { id: P3, name: 'Relleno', metadata: {} },
   { id: P4, name: 'Vacío', metadata: null },
+  { id: 'p5-malformado', name: 'Malformado', metadata: { variantes: { no: 'es lista' } } },
+  { id: 'p6-sku-raro', name: 'SKU raro', metadata: { variantes: [{ sku: 123 }, null, { color: 'sin sku' }] } },
 ];
 const swatches: Fila[] = [];
 const swatch = (project_id: string, sku_suffix: string | null, display_order: number): Fila => ({
@@ -92,13 +106,14 @@ swatches.push(
   swatch(P3, 'QR2MO', 1100), // después de la fila 1.000
   swatch(P3, null, 1101),
   swatch(P1, 'QR2BE', 0),
-  swatch(P1, 'qr2gr', 1), // sólo como swatch y en minúsculas
+  swatch(P1, 'qr2gr', 5), // sólo como swatch y en minúsculas; orden con hueco
   swatch(P2, 'QR2NE', 0),
 );
 
 const bases: Record<string, Record<string, Fila[]>> = {
   'inventario.test': { ml_items_map: mlItems, productos: [] },
-  'app-db.test': { projects, swatches },
+  // Como la real (gwkarh…), la base de la app tiene una copia vieja de las tablas de inventario.
+  'app-db.test': { projects, swatches, ml_items_map: [], productos: [] },
 };
 const escrituras: string[] = [];
 let fallar: { tabla: string; metodo: string } | null = null;
@@ -196,10 +211,12 @@ async function main() {
   afirmar(JSON.stringify(fams) === JSON.stringify([QR15, QR2]), `las dos familias del proyecto partido por tamaño (${fams.join(' | ')})`);
   const skus = (r1.body.nuevas ?? []).map((v) => v.sku).sort();
   afirmar(
-    JSON.stringify(skus) === JSON.stringify(['QR15AZ', 'QR2AZ', 'QR2RO']),
+    JSON.stringify(skus) === JSON.stringify(['QR15AZ', 'QR2AZ', 'QR2RO', 'QRDOS']),
     `ofrece sólo las nuevas: sin las propias, las de otro proyecto, catálogo, cerrada ni otra familia (${skus.join(', ')})`,
   );
   afirmar(!skus.includes('QR2GR'), 'el swatch en minúsculas cuenta como propio');
+  afirmar(!skus.includes('QR15NE'), 'el SKU de metadata en minúsculas cuenta como propio');
+  afirmar(r1.body.nuevas?.filter((v) => v.sku === 'QRDOS').length === 1, 'el SKU que está en dos familias se ofrece una vez');
   afirmar(r1.body.nuevas?.find((v) => v.sku === 'QR2RO')?.status_ml === 'paused', 'la pausada viene marcada');
   const otros = Object.fromEntries((r1.body.en_otros_proyectos ?? []).map((o) => [o.id, o.variantes]));
   afirmar(otros[P2] === 1, `avisa la variante que está en «roma nuevo» (${otros[P2]})`);
@@ -215,6 +232,7 @@ async function main() {
   afirmar(indice.QR2GR?.[0]?.id === P1, 'índice: SKU del swatch en mayúsculas → su proyecto');
   afirmar(indice.QR2BE?.length === 1, `índice: SKU en metadata y en swatch → el proyecto una vez (${indice.QR2BE?.length})`);
   afirmar(indice.QR2MO?.[0]?.id === P3, 'índice: ve el swatch después de la fila 1.000');
+  afirmar(resIndice.status === 200 && indice.QR15NE?.[0]?.id === P1, 'índice: metadata malformada de otro proyecto no lo tumba; SKU de metadata en mayúsculas');
 
   const rMal = await post(P1, {});
   afirmar(rMal.status === 400, `POST sin skus → 400 (${rMal.status})`);
@@ -228,15 +246,21 @@ async function main() {
   );
   afirmar(escrituras.join(',') === 'PATCH projects,POST swatches', `metadata primero, swatch después (${escrituras.join(',')})`);
   const p1 = projects.find((p) => p.id === P1)!.metadata as { variantes: { sku: string }[]; otra_cosa?: string };
-  afirmar(p1.variantes.map((v) => v.sku).join(',') === 'QR2BE,QR15BE,QR2AZ', 'metadata.variantes suma la nueva al final');
+  afirmar(p1.variantes.map((v) => v.sku).join(',') === 'QR2BE,QR15BE,qr15ne,QR2AZ', 'metadata.variantes suma la nueva al final');
   afirmar(p1.otra_cosa === 'x', 'metadata conserva sus otras llaves');
   const nuevoSw = swatches.filter((s) => s.project_id === P1 && s.sku_suffix === 'QR2AZ');
-  afirmar(nuevoSw.length === 1 && nuevoSw[0].storage_path === '' && nuevoSw[0].display_order === 2, 'swatch sin foto, con el orden a continuación');
+  afirmar(nuevoSw.length === 1 && nuevoSw[0].storage_path === '' && nuevoSw[0].display_order === 6, `swatch sin foto, con el orden a continuación del mayor (${nuevoSw[0]?.display_order})`);
 
   const r2 = await get(P1);
   afirmar(!r2.body.nuevas.some((v) => v.sku === 'QR2AZ'), 'después de agregarla ya no se ofrece');
   const rOtra = await post(P1, { skus: ['QR2AZ'] });
   afirmar(rOtra.body.agregadas === 0 && swatches.filter((s) => s.sku_suffix === 'QR2AZ').length === 1, 'pedirla de nuevo no la duplica');
+
+  const url = process.env.INVENTORY_SUPABASE_URL;
+  delete process.env.INVENTORY_SUPABASE_URL;
+  const rSinEnv = await get(P1);
+  afirmar(rSinEnv.status === 500, `sin INVENTORY_SUPABASE_URL → 500, no la base de la app (${rSinEnv.status})`);
+  process.env.INVENTORY_SUPABASE_URL = url;
 
   fallar = { tabla: 'swatches', metodo: 'POST' };
   const rErr = await post(P1, { skus: ['QR2RO'] });

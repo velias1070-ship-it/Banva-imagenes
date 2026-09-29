@@ -41,8 +41,11 @@ export async function GET(_request: NextRequest, context: RouteContext) {
  *
  * Agrega al proyecto las variantes pedidas que el GET ofrece (las demás van en
  * `no_agregadas`): primero a metadata.variantes y después como swatch sin foto.
- * Si falla el segundo paso, fetch-ml-images crea los swatches que falten desde
- * metadata. Las fotos las baja fetch-ml-images.
+ * Si falla el segundo paso, «Traer fotos de ML» (fetch-ml-images con sync_new)
+ * crea los swatches que falten desde metadata. Las fotos las baja
+ * fetch-ml-images. Dos POST simultáneos pueden duplicar (leer-modificar-escribir
+ * sobre metadata, sin único en swatches): con un solo operador no se justifica
+ * una RPC.
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   const { id: projectId } = await context.params;
@@ -105,7 +108,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         display_order: desde + i,
       })),
     );
-    if (insErr) throw new Error(`crear swatches: ${insErr.message}`);
+    if (insErr) {
+      throw new Error(
+        `las variantes quedaron guardadas en el proyecto pero no se crearon sus swatches (${insErr.message}): usa «Traer fotos de ML» en la página de Variantes`,
+      );
+    }
 
     return NextResponse.json({
       agregadas: agregar.length,

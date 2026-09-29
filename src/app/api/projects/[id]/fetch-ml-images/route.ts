@@ -121,11 +121,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
         return NextResponse.json({ error: `Failed to create swatches: ${syncErr.message}` }, { status: 500 });
       }
 
-      const { data: updatedSwatches } = await supabase
+      const { data: updatedSwatches, error: rereadErr } = await supabase
         .from('swatches')
         .select('id, name, sku_suffix, storage_path')
         .eq('project_id', projectId)
         .order('display_order');
+      if (rereadErr) {
+        console.error('[fetch-ml-images] swatch reread error:', rereadErr);
+        return NextResponse.json({ error: `Failed to reload swatches: ${rereadErr.message}` }, { status: 500 });
+      }
 
       if (updatedSwatches) {
         swatches.length = 0;

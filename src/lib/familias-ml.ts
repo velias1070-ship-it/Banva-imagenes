@@ -174,11 +174,13 @@ export interface ProductGroup {
   variantes: Variante[];
 }
 
-// Base de inventario (ml_items_map, productos: la de Bodega), o null si faltan
-// las variables. Las mismas que siempre usó /api/productos.
+// Base de inventario (ml_items_map, productos: la de Bodega prod), o null si
+// faltan las variables. Sin respaldo a NEXT_PUBLIC_SUPABASE_URL: esa es la base
+// de la app (gwkarh…), que tiene una copia de ml_items_map congelada en mayo
+// 2026 y daría familias viejas sin ningún error.
 export function clienteInventario(): SupabaseClient | null {
-  const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.INVENTORY_SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = process.env.INVENTORY_SUPABASE_URL;
+  const key = process.env.INVENTORY_SUPABASE_KEY;
   return url && key ? createClient(url, key) : null;
 }
 
