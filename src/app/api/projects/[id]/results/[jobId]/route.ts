@@ -1240,8 +1240,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     // ── Normal single-pass generation (or fallback from multi-pass) ──
-    // generateImageSmart routea entre Gemini y GPT Image 2 segun categoría,
-    // swatch profile y attempt. Default ENABLE_GPT_IMAGE_2=0 = siempre Gemini.
+    // generateImageSmart elige el modelo según categoría, swatch profile y attempt,
+    // con la cadena de config/routing-rules.json (ChatGPT primero en casi todas las
+    // categorías). Si ChatGPT falla, responde con el Gemini más barato que quede de
+    // la cadena y lo anota en PROVIDER_USED (fallback_from). Nada lee ENABLE_GPT_IMAGE_2.
     if (!result) {
       const swatchProfile = (swatch.fabric_profile as unknown as Record<string, unknown> | null | undefined) || null;
       const smartCtx = {

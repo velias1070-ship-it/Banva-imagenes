@@ -44,7 +44,7 @@ Leé (no edites) los siguientes archivos. Cada grupo es un área funcional:
 
 **Prompts (cómo se le habla a Gemini)**
 - `src/lib/category-strategy.ts` — prompts `what_to_change`, `what_to_change_detail`, `reference_instruction`, `shot_compositions` por categoría; `buildEditPrompt`, `buildReferencePrompt`, `buildFromScratchPrompt`, `buildPromptForMode`
-- `src/app/api/projects/[id]/generate/route.ts` — `buildPrompt()` SSOT (CLAUDE.md REGLA CRITICA)
+- `src/app/api/projects/[id]/generate/route.ts` — crea el batch y los jobs; el prompt NO se arma acá (lo arma `buildPromptForMode()`, que llaman `process-next`, `results/[jobId]` y el golden set)
 - `src/lib/swatch-planner.ts` — descripción textual del swatch para verifier (NO se inyecta al prompt de generación por regla — ver `.claude/rules/prompts.md`)
 
 **Image generation**
@@ -178,7 +178,7 @@ Cuando el usuario diga `"aplica propuestas X, Y, Z del último audit"`:
   - El código soporta múltiples brands via tabla `brands`. No propongas cambios que rompan el soporte multi-brand.
 - **Si una propuesta choca con marca**, márcala "requiere decisión" y no la apliques sin confirmación.
 - **Citá rutas con `archivo.ts:línea`** para clickeables.
-- **SSOT `buildPrompt()`**: única función para construir prompts (ver CLAUDE.md). Nunca propongas duplicar lógica fuera de ahí / `category-strategy.ts`.
+- **SSOT `buildPromptForMode()`** (`src/lib/category-strategy.ts`): única función para construir prompts (ver CLAUDE.md). Nunca propongas duplicar esa lógica en otro lado.
 - **Dual-route sync**: cualquier cambio al pipeline se aplica en `process-next/route.ts` Y en `results/[jobId]/route.ts` (ver `.claude/rules/`).
 - **Tests**: repo sin suite automatizada. Verificación válida: commit + push → Vercel deploy → trigger regen sobre jobs conocidos → comparar imagen. No propongas tests unitarios nuevos.
 

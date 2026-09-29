@@ -52,8 +52,8 @@ function buildAdapter(modelId: string, useProModel: boolean, costPerImageUsd: nu
 // Esta es la ÚNICA fuente del precio de Flash: el registro de modelos la lee de acá.
 const FLASH_COST_PER_IMAGE_USD = 0.067;
 
-/** Flash provider — default for attempt 0 in most categories. */
+/** Flash provider — el Gemini más barato: último de la cadena por defecto y único de `brand` (ver config/routing-rules.json). */
 export const geminiFlashProvider: ImageGenerator = buildAdapter(FLASH_MODEL_ID, false, FLASH_COST_PER_IMAGE_USD);
 
-/** Pro provider — escalation for retries and complex categories (quilts/cortinas/alfombras). */
+/** Pro provider — segundo de la cadena por defecto (después de ChatGPT); en frazadas va dos veces. */
 export const geminiProProvider: ImageGenerator = buildAdapter(PRO_MODEL_ID, true, 0.134);

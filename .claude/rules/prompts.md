@@ -33,8 +33,8 @@ Cada prompt tiene 3 capas:
 
 ## Single Source of Truth
 
-`buildPrompt()` en `src/app/api/projects/[id]/generate/route.ts`
-Parametros: `(category, swatchName, colorDescription, shotType, isDarkSwatch)`
+`buildPromptForMode()` en `src/lib/category-strategy.ts` (despacha a `buildEditPrompt` / `buildReferencePrompt` / `buildFromScratchPrompt`)
+Parametros: ver la firma en el codigo (modo, estrategia de la categoria, nombre y color de la muestra, tipo de plano, feedback de QA, etc.)
 Temperatura: **0.2** (determinista, NO subir)
 Resolucion: 1200x1200 (obligatorio MercadoLibre — zoom requiere >800px, 1200 evita degradacion)
 Color space: RGB (NO CMYK)
@@ -136,7 +136,7 @@ Si patron_swatch = patron_hero (solo cambia color):
    - Lift darks: linear(0.843, 40) — mapea 0->40
    - Gaussian blur 1.5 — suaviza bordes embossed
    - Reducir contraste: linear(0.75, 32)
-3. Enviar hero flatten + swatch crop como 2 imagenes + `buildPrompt()`
+3. Enviar hero flatten + swatch crop como 2 imagenes + el prompt de `buildPromptForMode()`
 4. `prompt_metadata = { strategy: 'tier1_preprocess' }`
 
 ### Tier 2: Generacion desde Cero
@@ -145,7 +145,7 @@ Si patron_swatch = patron_hero (solo cambia color):
 
 1. **Swatch Crop**: Igual que Tier 1
 2. **Sin hero**: NO se envia hero — Gemini genera la escena completa
-3. Prompt: `buildGenerationPrompt()` en `generate/route.ts`
+3. Prompt: `buildFromScratchPrompt()` (via `buildPromptForMode()`) en `src/lib/category-strategy.ts`
    - Describe composicion textualmente segun shot_type (lifestyle, detail, main, etc.)
    - Le dice a Gemini que copie color + patron de la imagen proporcionada
 4. Temperatura: **0.4** (un poco mas creativo para generar escena)
@@ -179,7 +179,7 @@ Se guarda en `generation_jobs.prompt_metadata` (JSONB):
 ### Archivos clave
 - `src/lib/image-processing.ts` — `cropSwatchToFabric()`, `flattenHeroEmboss()`, `needsQuiltPreprocessing()`
 - `src/lib/gemini/client.ts` — Hero es opcional (soporta 1 o 2 imagenes)
-- `src/app/api/projects/[id]/generate/route.ts` — `buildGenerationPrompt()` + `buildPrompt()`
+- `src/lib/category-strategy.ts` — `buildPromptForMode()` (fuente unica del prompt) + `buildEditPrompt()` / `buildReferencePrompt()` / `buildFromScratchPrompt()`
 - `src/app/api/batches/[batchId]/process-next/route.ts` — Tier 1 automatico
 - `src/app/api/projects/[id]/results/[jobId]/route.ts` — Tier 1/Tier 2 segun metadata previa
 
@@ -198,7 +198,7 @@ Score de penalizacion por invencion de producto: **-0.5 automatico** (garantiza 
 1. **3 imagenes**: Enviar Image 3 (swatch enhanced) NO funciona — Gemini ignora la 3ra imagen
 2. **CLAHE como Image 2**: Reemplazar swatch con version grayscale enhanced genera colores incorrectos
 3. **Temperatura alta en edit mode**: Subir de 0.2 aumenta creatividad = mas inventos = peor fidelidad
-4. **Duplicar buildPrompt()**: La unica fuente es `generate/route.ts`. NUNCA crear otra copia
+4. **Duplicar `buildPromptForMode()`**: La unica fuente es `src/lib/category-strategy.ts`. NUNCA crear otra copia
 5. **Prompt generico**: Sin category rules, Gemini no sabe que cambiar
 6. **Flatten del swatch**: NUNCA aplanar el swatch — solo el hero
 7. **Edit mode cuando patron ≠**: NUNCA usar edit mode cuando el swatch tiene patron diferente al hero — SIEMPRE produce invencion de producto
