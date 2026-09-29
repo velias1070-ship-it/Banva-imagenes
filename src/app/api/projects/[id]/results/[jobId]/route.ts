@@ -837,6 +837,22 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
       }
     }
 
+    // La muestra tal como la subió el usuario, ANTES del recorte. ChatGPT en
+    // toallas la usa en vez del recorte ampliado (ver openai/images.ts).
+    let swatchCompletaBase64: string | undefined;
+    if (!isBrandOnly && category === 'toallas') {
+      const sharpCompleta = (await import('sharp')).default;
+      // rotate: respeta la orientación EXIF (la foto del celular llega de lado).
+      // resize: una foto de 12 MP en PNG pesa ~18 MB; a 1536 px sobra para ChatGPT.
+      swatchCompletaBase64 = (
+        await sharpCompleta(swatchBuffer)
+          .rotate()
+          .resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true })
+          .png()
+          .toBuffer()
+      ).toString('base64');
+    }
+
     // Preprocessing (skip for BRAND_ONLY — image stays unchanged)
     let swatchBase64 = swatchBuffer.toString('base64');
     if (!isBrandOnly && strategy.preprocessing.crop_swatch) {
@@ -1253,6 +1269,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           heroMimeType: heroShot?.mime_type || 'image/png',
           swatchImageBase64: swatchBase64,
           swatchMimeType: 'image/png',
+          swatchCompletaBase64,
           promptText: prompt,
           temperature,
           useProModel,
@@ -1289,14 +1306,21 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Job 115caddb (mayo 2026): mismo hero+swatch que Job 13396077 (clean),
     // pero overlay introdujo manchas blancas curvas siguiendo los pliegues.
     // Ver scripts/test-overlay-old-vs-new.ts para reproducción.
+    //
+    // Excepción: la imagen de ChatGPT (gpt-image-2) — redibuja el texto corrido
+    // y pegarle el del hero encima lo duplica. Medición en process-next/route.ts.
     const heroOverlaysCount = ((heroShot as unknown as { text_elements?: unknown[] } | null)?.text_elements?.length) ?? 0;
+    if (providerUsed === 'gpt-image-2' && !isBrandOnly && mode === 'edit' && heroOverlaysCount > 0 && category !== 'sabanas') {
+      logPipelineEvent(jobId, 'OVERLAY_SKIPPED', 'gpt-image-2 redibuja el texto');
+    }
     if (
       !isBrandOnly &&
       mode === 'edit' &&
       heroOverlaysCount > 0 &&
       heroShot &&
       heroBuffer.length > 0 &&
-      category !== 'sabanas'
+      category !== 'sabanas' &&
+      providerUsed !== 'gpt-image-2'
     ) {
       try {
         type Bbox = { text?: string; x: number; y: number; width: number; height: number };

@@ -859,6 +859,22 @@ async function processOneJob(batchId: string): Promise<{ chain: boolean; trigger
       }
     }
 
+    // La muestra tal como la subió el usuario (o el collage), ANTES del recorte.
+    // ChatGPT en toallas la usa en vez del recorte ampliado (ver openai/images.ts).
+    let swatchCompletaBase64: string | undefined;
+    if (!isBrandOnly && category === 'toallas') {
+      const sharpCompleta = (await import('sharp')).default;
+      // rotate: respeta la orientación EXIF (la foto del celular llega de lado).
+      // resize: una foto de 12 MP en PNG pesa ~18 MB; a 1536 px sobra para ChatGPT.
+      swatchCompletaBase64 = (
+        await sharpCompleta(swatchBuffer)
+          .rotate()
+          .resize({ width: 1536, height: 1536, fit: 'inside', withoutEnlargement: true })
+          .png()
+          .toBuffer()
+      ).toString('base64');
+    }
+
     if (!isBrandOnly) {
       if (strategy.preprocessing.flatten_hero) {
         const flattenedHero = await flattenHeroEmboss(heroBuffer);
@@ -1268,6 +1284,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
           heroMimeType: isBrandOnly ? 'image/png' : (job.hero_shot.mime_type || 'image/png'),
           swatchImageBase64: swatchBase64,
           swatchMimeType: 'image/png',
+          swatchCompletaBase64,
           promptText: prompt,
           temperature,
           useProModel,
@@ -1307,13 +1324,28 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     // Job 115caddb (mayo 2026): mismo hero+swatch que Job 13396077 (clean),
     // pero overlay introdujo manchas blancas curvas siguiendo los pliegues.
     // Ver scripts/test-overlay-old-vs-new.ts para reproducción.
+    //
+    // Excepción: la imagen de ChatGPT (gpt-image-2). No conserva los píxeles del
+    // hero: redibuja todo y el texto queda corrido unos píxeles, así que pegar el
+    // texto del hero encima deja DOS textos superpuestos (se ve engordado o con
+    // contorno). Medido 2026-09-29 (proyecto e94b8465, toallas): tinta dentro de
+    // las cajas de texto +16 % y +38 % sobre el hero en las 2 de ChatGPT con
+    // bitácora (+46 % en una tercera, borrada, que por la cadena fue ChatGPT),
+    // +1 % y +13 % en las 2 de Gemini Pro; y pegar el texto sobre una imagen
+    // limpia de ChatGPT reproduce el doble texto sin nada más. Medido sólo en
+    // toallas; se aplica a todas las categorías porque la causa (el redibujo)
+    // no depende de la tela.
     const heroHasOverlays = (job.hero_shot?.text_elements as unknown[] | null)?.length ?? 0;
+    if (providerUsed === 'gpt-image-2' && !isBrandOnly && effectiveMode === 'edit' && heroHasOverlays > 0 && category !== 'sabanas') {
+      logPipelineEvent(job.id, 'OVERLAY_SKIPPED', 'gpt-image-2 redibuja el texto');
+    }
     if (
       !isBrandOnly &&
       effectiveMode === 'edit' &&
       heroHasOverlays > 0 &&
       job.hero_shot?.id &&
-      category !== 'sabanas'
+      category !== 'sabanas' &&
+      providerUsed !== 'gpt-image-2'
     ) {
       try {
         type Bbox = { text?: string; x: number; y: number; width: number; height: number };

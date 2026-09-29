@@ -18,6 +18,8 @@ export interface GPTImageGenRequest {
   heroMimeType: string;
   swatchImageBase64: string;
   swatchMimeType: string;
+  /** Muestra en PNG antes del recorte; en toallas reemplaza a la recortada. */
+  swatchCompletaBase64?: string;
   promptText: string;
   category?: string;
   quality?: 'low' | 'medium' | 'high' | 'auto';
@@ -36,6 +38,21 @@ const INSTRUCCION_SABANAS =
   `Image 1 is a product photo of a bed sheet set. Image 2 shows the same kind of set in a new design.\n\n` +
   `Change ONLY the fabric of the set in image 1 so it matches image 2, piece by piece: each piece in image 1 takes the color and pattern of the SAME piece in image 2 (flat sheet from the flat sheet, fitted sheet from the fitted sheet, pillowcases from the pillowcases). The pieces in image 2 can have different colors or patterns: keep them different, never copy one piece's design onto another piece.\n\n` +
   `Keep everything else from image 1 exactly as it is: layout, background, the number and shape of the pieces, folds, shadows and lighting, and every text, number, logo and icon (same words, position, size, font and color).\n\n` +
+  `Photorealistic, square image.`;
+
+/**
+ * Instrucción de toallas: corta y SOLA, y va con la muestra COMPLETA (no el recorte).
+ * Con el armador anexado (4-5 mil caracteres: "UNA SOLA tela uniforme", cambiar los
+ * colores del texto a los de la marca, bloques de cubrecama y dormitorio) y el
+ * recorte ampliado de la muestra, ChatGPT copiaba los rizos a escala macro (textura
+ * de "fideos"). Prueba del 2026-09-29, proyecto e94b8465 (toalla Beige, 3 fotos base
+ * con infografía): con esta instrucción y la muestra completa, 3 de 3 limpias (juicio
+ * visual, un intento por caso). Texto idéntico al probado.
+ */
+const INSTRUCCION_TOALLAS =
+  `Image 1 is a product photo of a towel set. Image 2 shows the same towels in a new color.\n\n` +
+  `Change ONLY the towels in image 1 so they match the towels in image 2: same color, same terry texture and the same woven border band, at the same scale as a real towel.\n\n` +
+  `Keep everything else from image 1 exactly as it is: layout, background, people, the number, shape and folds of the towels, shadows and lighting, and every text, number, logo and icon (same words, position, size, font and color).\n\n` +
   `Photorealistic, square image.`;
 
 interface OpenAIUsage {
@@ -83,14 +100,16 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
     const form = new FormData();
     form.append('model', OPENAI_IMAGE_MODEL);
 
+    const cat = request.category || 'textile';
+    const muestraCompleta = cat === 'toallas' && request.swatchCompletaBase64 ? request.swatchCompletaBase64 : null;
+
     const heroBuf = Buffer.from(request.heroImageBase64, 'base64');
-    const swatchBuf = Buffer.from(request.swatchImageBase64, 'base64');
+    const swatchBuf = Buffer.from(muestraCompleta ?? request.swatchImageBase64, 'base64');
     const heroBlob = new Blob([new Uint8Array(heroBuf)], { type: request.heroMimeType });
-    const swatchBlob = new Blob([new Uint8Array(swatchBuf)], { type: request.swatchMimeType });
+    const swatchBlob = new Blob([new Uint8Array(swatchBuf)], { type: muestraCompleta ? 'image/png' : request.swatchMimeType });
     form.append('image[]', heroBlob, 'hero.png');
     form.append('image[]', swatchBlob, 'swatch.png');
 
-    const cat = request.category || 'textile';
     // La versión anterior decía "ALL textile surfaces" y no protegía textos: en la
     // prueba del 2026-09-26 borró el logo BANVA HOME (mantel olivas), tiñó un párrafo
     // (cortina) y pintó el reverso blanco del cubrecama. Esta versión no lo hizo en 8/8.
@@ -101,7 +120,7 @@ export async function generateImageGPT2(request: GPTImageGenRequest): Promise<GP
       `Do NOT keep image 1's original fabric color or pattern on the recolored areas. ` +
       `Product category: "${cat}". Output: photorealistic, 1:1 square, same composition as image 1.\n\n` +
       `Additional context from prompt builder:\n${request.promptText}`;
-    form.append('prompt', cat === 'sabanas' ? INSTRUCCION_SABANAS : reinforcedPrompt);
+    form.append('prompt', cat === 'sabanas' ? INSTRUCCION_SABANAS : cat === 'toallas' ? INSTRUCCION_TOALLAS : reinforcedPrompt);
     form.append('size', request.size || '1024x1024');
     form.append('quality', request.quality || 'medium');
     form.append('output_format', 'png');

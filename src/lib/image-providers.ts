@@ -197,6 +197,7 @@ function toUnifiedRequest(req: GeminiGenerateRequest, category?: string): Unifie
     heroMimeType: req.heroMimeType,
     swatchImageBase64: req.swatchImageBase64,
     swatchMimeType: req.swatchMimeType,
+    swatchCompletaBase64: req.swatchCompletaBase64,
     promptText: req.promptText,
     temperature: req.temperature,
     category,
