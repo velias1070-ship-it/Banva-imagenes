@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clienteInventario } from '@/lib/familias-ml';
-import { leerVariantesNuevas } from '@/lib/proyectos-familia';
+import { leerFamiliasYProyectos, leerVariantesNuevas, variantesLibres } from '@/lib/proyectos-familia';
 
 export const maxDuration = 60;
 
@@ -39,8 +39,10 @@ export async function GET(_request: NextRequest, context: RouteContext) {
  * POST /api/projects/{id}/missing-variants
  * Body: { skus: ["TXSBAF144DL20", ...] }
  *
- * Agrega al proyecto las variantes pedidas que el GET ofrece (las demás van en
- * `no_agregadas`): primero a metadata.variantes y después como swatch sin foto.
+ * Agrega al proyecto las publicaciones pedidas que no están en ningún proyecto
+ * —de su familia o buscadas en la lista, p.ej. el mismo quilt que ML separa por
+ * tamaño en otra familia— (las demás van en `no_agregadas`): primero a
+ * metadata.variantes y después como swatch sin foto.
  * Si falla el segundo paso, «Traer fotos de ML» (fetch-ml-images con sync_new)
  * crea los swatches que falten desde metadata. Las fotos las baja
  * fetch-ml-images. Dos POST simultáneos pueden duplicar (leer-modificar-escribir
@@ -62,13 +64,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const supabase = createAdminClient();
 
   try {
-    const resultado = await leerVariantesNuevas(inventario, supabase, projectId);
-    if (!resultado) {
+    const { familias, proyectos } = await leerFamiliasYProyectos(inventario, supabase);
+    if (!proyectos.some((p) => p.id === projectId)) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const pedidosSet = new Set((pedidos as string[]).map((s) => s.toUpperCase()));
-    const agregar = resultado.nuevas.filter((v) => pedidosSet.has(v.sku.toUpperCase()));
+    const libres = variantesLibres(familias, proyectos);
+    const agregar = [...new Set((pedidos as string[]).map((s) => s.toUpperCase()))]
+      .map((sku) => libres.get(sku))
+      .filter((v): v is NonNullable<typeof v> => !!v);
     const agregadasSet = new Set(agregar.map((v) => v.sku.toUpperCase()));
     const noAgregadas = (pedidos as string[]).filter((s) => !agregadasSet.has(s.toUpperCase()));
     if (agregar.length === 0) {

@@ -18,8 +18,6 @@ export default function SwatchesPage() {
   const [uploading, setUploading] = useState(false);
   const [fetchingML, setFetchingML] = useState(false);
   const [imgVersion, setImgVersion] = useState(0);
-  const [skuInput, setSkuInput] = useState('');
-  const [addingSku, setAddingSku] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [urlName, setUrlName] = useState('');
   const [addingUrl, setAddingUrl] = useState(false);
@@ -118,31 +116,6 @@ export default function SwatchesPage() {
       toast.error('Error de conexion');
     } finally {
       setFetchingML(false);
-    }
-  }
-
-  async function handleAddFromSku() {
-    const sku = skuInput.trim();
-    if (!sku) return;
-    setAddingSku(true);
-    try {
-      const res = await fetch(`/api/projects/${id}/swatches/from-sku`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sku }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        toast.success(`Swatch "${data.swatch.name}" creado desde ML (${data.ml_title})`);
-        setSkuInput('');
-        fetchSwatches();
-      } else {
-        toast.error(data.error || 'Error agregando SKU');
-      }
-    } catch {
-      toast.error('Error de conexion');
-    } finally {
-      setAddingSku(false);
     }
   }
 
@@ -355,36 +328,12 @@ export default function SwatchesPage() {
         <div className="lg:col-span-2 space-y-6">
           <VariantesNuevas
             projectId={id}
+            conBuscador
             onAgregadas={() => {
               setImgVersion((v) => v + 1);
               fetchSwatches();
             }}
           />
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Agregar desde SKU</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="SKU de MercadoLibre (ej: TXV23QLAT25BE)"
-                  value={skuInput}
-                  onChange={(e) => setSkuInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddFromSku()}
-                  className="font-mono"
-                  disabled={addingSku}
-                />
-                <Button onClick={handleAddFromSku} disabled={addingSku || !skuInput.trim()}>
-                  {addingSku ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  {addingSku ? 'Buscando...' : 'Agregar'}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Busca el SKU en ML, descarga la foto y crea el swatch automaticamente
-              </p>
-            </CardContent>
-          </Card>
 
           <Card>
             <CardHeader>

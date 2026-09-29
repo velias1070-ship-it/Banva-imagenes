@@ -9,8 +9,10 @@
  *   de catálogo o cerradas, ni las de otra familia. Un producto que ML parte en
  *   dos familias por tamaño trae las dos.
  * - El SKU de otro proyecto que está después de la fila 1.000 de swatches se ve.
- * - POST agrega sólo lo ofrecido: primero a metadata.variantes (sin perder las
- *   otras llaves) y después el swatch sin foto, con el orden a continuación.
+ * - POST agrega cualquier publicación visible que no esté en ningún proyecto,
+ *   también de otra familia (buscada en la lista): primero a metadata.variantes
+ *   (sin perder las otras llaves) y después el swatch sin foto, con el orden a
+ *   continuación. No agrega las de otro proyecto, catálogo ni cerradas.
  *   Pedirlo dos veces no lo duplica. Un error de la base responde 500.
  * - GET indice-skus: SKU en mayúsculas → proyectos, sin repetir el proyecto;
  *   un proyecto con metadata malformada no lo tumba.
@@ -185,6 +187,7 @@ function afirmar(cond: boolean, msg: string) {
 
 interface Respuesta {
   familias: string[];
+  en_proyecto: number;
   nuevas: { sku: string; status_ml?: string | null }[];
   en_otros_proyectos: { id: string; name: string; variantes: number }[];
 }
@@ -216,6 +219,7 @@ async function main() {
   );
   afirmar(!skus.includes('QR2GR'), 'el swatch en minúsculas cuenta como propio');
   afirmar(!skus.includes('QR15NE'), 'el SKU de metadata en minúsculas cuenta como propio');
+  afirmar(r1.body.en_proyecto === 4, `cuenta las variantes de la familia que ya están en el proyecto (${r1.body.en_proyecto})`);
   afirmar(r1.body.nuevas?.filter((v) => v.sku === 'QRDOS').length === 1, 'el SKU que está en dos familias se ofrece una vez');
   afirmar(r1.body.nuevas?.find((v) => v.sku === 'QR2RO')?.status_ml === 'paused', 'la pausada viene marcada');
   const otros = Object.fromEntries((r1.body.en_otros_proyectos ?? []).map((o) => [o.id, o.variantes]));
@@ -250,6 +254,13 @@ async function main() {
   afirmar(p1.otra_cosa === 'x', 'metadata conserva sus otras llaves');
   const nuevoSw = swatches.filter((s) => s.project_id === P1 && s.sku_suffix === 'QR2AZ');
   afirmar(nuevoSw.length === 1 && nuevoSw[0].storage_path === '' && nuevoSw[0].display_order === 6, `swatch sin foto, con el orden a continuación del mayor (${nuevoSw[0]?.display_order})`);
+
+  const rCat = await post(P1, { skus: ['QR2CAT', 'QR2VE'] });
+  afirmar(rCat.body.agregadas === 0, `no agrega la de catálogo ni la cerrada (${JSON.stringify(rCat.body)})`);
+  const rOtraFam = await post(P1, { skus: ['SO1'] });
+  afirmar(rOtraFam.body.agregadas === 1, `agrega una publicación de otra familia elegida en la lista (${JSON.stringify(rOtraFam.body)})`);
+  const rConOtra = await get(P1);
+  afirmar(rConOtra.body.familias.includes('Sabana Otra'), 'desde entonces esa familia es parte del proyecto');
 
   const r2 = await get(P1);
   afirmar(!r2.body.nuevas.some((v) => v.sku === 'QR2AZ'), 'después de agregarla ya no se ofrece');

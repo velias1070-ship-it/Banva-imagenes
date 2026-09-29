@@ -73,6 +73,8 @@ export interface VariantesNuevas {
   familias: string[];
   /** Variantes de esas familias que no están en ningún proyecto. */
   nuevas: Variante[];
+  /** Variantes de esas familias que ya están en este proyecto. */
+  en_proyecto: number;
   /** Variantes de esas familias que ya están en OTRO proyecto: no se ofrecen, se avisan. */
   en_otros_proyectos: (ProyectoRef & { variantes: number })[];
 }
@@ -92,11 +94,16 @@ export function calcularVariantesNuevas(
   const nuevas: Variante[] = [];
   const otros = new Map<string, ProyectoRef & { variantes: number }>();
   const vistas = new Set<string>();
+  let enProyecto = 0;
   for (const g of suyas) {
     for (const v of g.variantes) {
       const sku = v.sku.toUpperCase();
-      if (proyecto.skus.has(sku) || vistas.has(sku)) continue;
+      if (vistas.has(sku)) continue;
       vistas.add(sku);
+      if (proyecto.skus.has(sku)) {
+        enProyecto += 1;
+        continue;
+      }
       const ajenos = indice[sku];
       if (!ajenos) {
         nuevas.push(v);
@@ -113,8 +120,31 @@ export function calcularVariantesNuevas(
   return {
     familias: suyas.map((g) => g.base_name),
     nuevas,
+    en_proyecto: enProyecto,
     en_otros_proyectos: [...otros.values()].sort((a, b) => b.variantes - a.variantes),
   };
+}
+
+// Publicaciones (de cualquier familia) que no están en ningún proyecto: lo que
+// se puede agregar, sea de la familia del proyecto o buscado en la lista.
+export function variantesLibres(familias: ProductGroup[], proyectos: ProyectoSkus[]): Map<string, Variante> {
+  const indice = indicePorSku(proyectos);
+  const libres = new Map<string, Variante>();
+  for (const g of familias) {
+    for (const v of g.variantes) {
+      const sku = v.sku.toUpperCase();
+      if (!indice[sku] && !libres.has(sku)) libres.set(sku, v);
+    }
+  }
+  return libres;
+}
+
+export async function leerFamiliasYProyectos(
+  inventario: SupabaseClient,
+  app: SupabaseClient,
+): Promise<{ familias: ProductGroup[]; proyectos: ProyectoSkus[] }> {
+  const [familias, proyectos] = await Promise.all([listarFamilias(inventario), leerProyectosConSkus(app)]);
+  return { familias, proyectos };
 }
 
 export async function leerVariantesNuevas(
@@ -122,6 +152,6 @@ export async function leerVariantesNuevas(
   app: SupabaseClient,
   projectId: string,
 ): Promise<VariantesNuevas | null> {
-  const [familias, proyectos] = await Promise.all([listarFamilias(inventario), leerProyectosConSkus(app)]);
+  const { familias, proyectos } = await leerFamiliasYProyectos(inventario, app);
   return calcularVariantesNuevas(familias, proyectos, projectId);
 }
