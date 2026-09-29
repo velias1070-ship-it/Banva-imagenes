@@ -204,6 +204,8 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
   const deFamilia = new Set(nuevas.map((v) => v.sku));
   const marcadasFuera = opciones?.filter((o) => marcadas.has(o.sku) && !deFamilia.has(o.sku)) ?? [];
   const borradas = new Set((datos?.borradas ?? []).map((s) => s.toUpperCase()));
+  // Lo que está en otro proyecto de la misma carpeta se puede agregar igual.
+  const hermanos = new Set((datos?.hermanos ?? []).map((h) => h.id));
 
   return (
     <Card className={nuevas.length > 0 ? 'border-amber-300 bg-amber-50/50' : undefined}>
@@ -268,8 +270,9 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
                   const refs = indice[o.sku.toUpperCase()] ?? [];
                   const borrada = borradas.has(o.sku.toUpperCase());
                   const aca = !borrada && refs.some((r) => r.id === projectId);
-                  const otro = refs.find((r) => r.id !== projectId);
-                  const libre = refs.length === 0 || borrada;
+                  const ajenos = refs.filter((r) => r.id !== projectId);
+                  const otraCarpeta = ajenos.find((r) => !hermanos.has(r.id));
+                  const libre = !aca && !otraCarpeta;
                   return (
                     <label
                       key={o.sku}
@@ -282,7 +285,10 @@ export function VariantesNuevas({ projectId, onAgregadas, conBuscador = false }:
                       {o.status_ml === 'paused' && <span className="text-xs text-amber-600">pausada</span>}
                       {borrada && <span className="text-xs text-amber-600">borrada de la grilla</span>}
                       {aca && <span className="text-xs text-muted-foreground">ya está</span>}
-                      {!aca && otro && <span className="max-w-40 truncate text-xs text-muted-foreground">en {otro.name}</span>}
+                      {otraCarpeta && <span className="max-w-40 truncate text-xs text-muted-foreground">en {otraCarpeta.name}</span>}
+                      {libre && ajenos.length > 0 && (
+                        <span className="max-w-40 truncate text-xs text-muted-foreground">también en {ajenos[0].name}</span>
+                      )}
                       <span className="font-mono text-xs text-muted-foreground">{o.sku}</span>
                     </label>
                   );

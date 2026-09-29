@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createClient } from '@supabase/supabase-js';
 import { mlGet } from '@/lib/ml';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { clienteInventario } from '@/lib/familias-ml';
+import { leerFamiliasYProyectos } from '@/lib/proyectos-familia';
+import { carpetaParaNuevo } from '@/lib/carpetas';
 
 function getInventorySupabase() {
   const url = process.env.INVENTORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -136,5 +140,31 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(project, { status: 201 });
+  // Carpeta: la de los otros proyectos de su familia de ML (src/lib/carpetas.ts),
+  // así cae en la carpeta aunque la hayan renombrado. Si falla, el proyecto
+  // queda creado y la lista lo muestra en la carpeta de su producto.
+  let carpeta: string | null = null;
+  let carpetaError: string | null = null;
+  const inventario = clienteInventario();
+  if (!inventario) {
+    carpetaError = 'faltan INVENTORY_SUPABASE_*';
+  } else if (project) {
+    try {
+      const { familias, proyectos } = await leerFamiliasYProyectos(inventario, createAdminClient());
+      carpeta = carpetaParaNuevo(familias, proyectos, project.id);
+      if (carpeta) {
+        const { error: carpetaErr } = await supabase
+          .from('projects')
+          .update({ metadata: { ...((project.metadata as Record<string, unknown> | null) ?? {}), carpeta } })
+          .eq('id', project.id);
+        if (carpetaErr) throw new Error(carpetaErr.message);
+      }
+    } catch (err) {
+      carpeta = null;
+      carpetaError = err instanceof Error ? err.message : 'Error';
+      console.error('[POST /api/projects] carpeta:', err);
+    }
+  }
+
+  return NextResponse.json({ ...project, carpeta, carpeta_error: carpetaError }, { status: 201 });
 }

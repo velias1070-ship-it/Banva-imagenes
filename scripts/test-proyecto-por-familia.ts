@@ -19,6 +19,9 @@
  *   el POST lo vuelve a crear sin repetirlo en metadata y otro proyecto no lo
  *   puede tomar.
  * - Un SKU que en ML viene en minúsculas se agrega igual.
+ * - Carpetas: un SKU que está en otro proyecto de la MISMA carpeta (el
+ *   «hermano», sin carpeta guardada: cae en la de su producto, con las medidas
+ *   juntas) se puede agregar; el de otra carpeta, no.
  * - GET indice-skus: SKU en mayúsculas → proyectos, sin repetir el proyecto;
  *   un proyecto con metadata malformada no lo tumba.
  * - Un SKU publicado en dos familias del proyecto se ofrece una vez.
@@ -80,6 +83,7 @@ mlItems.push(
   aviso({ item_id: 'MLC14', sku_venta: 'QRDOS', titulo: `${QR2} Dos`, family_name: QR2 }),
   aviso({ item_id: 'MLC15', sku_venta: 'QRDOS', titulo: `${QR15} Dos`, family_name: QR15 }),
   aviso({ item_id: 'MLC16', sku_venta: 'qr2lila', titulo: `${QR2} Lila`, family_name: QR2 }),
+  aviso({ item_id: 'MLC17', sku_venta: 'QR2CR', titulo: `${QR2} Crema`, family_name: QR2 }),
 );
 
 // --- App ---
@@ -87,6 +91,7 @@ const P1 = 'p1-quilt-roma';
 const P2 = 'p2-roma-nuevo';
 const P3 = 'p3-relleno';
 const P4 = 'p4-vacio';
+const P7 = 'p7-hermano';
 const projects: Fila[] = [
   {
     id: P1,
@@ -94,8 +99,10 @@ const projects: Fila[] = [
     // QR15BE y qr15ne (en minúsculas): sólo en metadata, su swatch se borró
     metadata: { variantes: [{ sku: 'QR2BE', color: 'Beige' }, { sku: 'QR15BE', color: 'Beige' }, { sku: 'qr15ne', color: 'Negro' }], otra_cosa: 'x' },
   },
-  { id: P2, name: 'roma nuevo', metadata: { variantes: [{ sku: 'QR2NE', color: 'Negro' }] } },
-  { id: P3, name: 'Relleno', metadata: {} },
+  { id: P2, name: 'roma nuevo', metadata: { variantes: [{ sku: 'QR2NE', color: 'Negro' }], carpeta: 'Otra carpeta' } },
+  { id: P3, name: 'Relleno', metadata: { carpeta: 'Relleno' } },
+  // sin carpeta guardada: cae en «Quilt Roma», la de P1
+  { id: P7, name: 'Quilt Roma 2', metadata: {} },
   { id: P4, name: 'Vacío', metadata: null },
   { id: 'p5-malformado', name: 'Malformado', metadata: { variantes: { no: 'es lista' } } },
   { id: 'p6-sku-raro', name: 'SKU raro', metadata: { variantes: [{ sku: 123 }, null, { color: 'sin sku' }] } },
@@ -116,6 +123,7 @@ swatches.push(
   swatch(P1, 'QR2BE', 0),
   swatch(P1, 'qr2gr', 5), // sólo como swatch y en minúsculas; orden con hueco
   swatch(P2, 'QR2NE', 0),
+  swatch(P7, 'QR2CR', 0),
 );
 
 const bases: Record<string, Record<string, Fila[]>> = {
@@ -195,6 +203,8 @@ interface Respuesta {
   familias: string[];
   en_proyecto: number;
   borradas: string[];
+  carpeta: string;
+  hermanos: { id: string; name: string }[];
   nuevas: { sku: string; status_ml?: string | null }[];
   en_otros_proyectos: { id: string; name: string; variantes: number }[];
 }
@@ -236,6 +246,12 @@ async function main() {
   const otros = Object.fromEntries((r1.body.en_otros_proyectos ?? []).map((o) => [o.id, o.variantes]));
   afirmar(otros[P2] === 1, `avisa la variante que está en «roma nuevo» (${otros[P2]})`);
   afirmar(otros[P3] === 1, `ve el swatch de otro proyecto después de la fila 1.000 (${otros[P3]})`);
+  afirmar(r1.body.carpeta === 'Quilt Roma', `carpeta del producto con las medidas juntas (${r1.body.carpeta})`);
+  afirmar(
+    JSON.stringify(r1.body.hermanos?.map((h) => h.id)) === JSON.stringify([P7]),
+    `hermanos: sólo el de su carpeta (${JSON.stringify(r1.body.hermanos)})`,
+  );
+  afirmar(!skus.includes('QR2CR'), 'la del hermano no se ofrece como nueva');
 
   const r404 = await get('no-existe');
   afirmar(r404.status === 404, `proyecto que no existe → 404 (${r404.status})`);
@@ -292,11 +308,14 @@ async function main() {
   const rTras = await get(P1);
   afirmar(JSON.stringify(rTras.body.borradas) === JSON.stringify(['QR15BE']), `ya no es borrada (${rTras.body.borradas})`);
 
+  const rHermano = await post(P1, { skus: ['QR2CR'] });
+  afirmar(rHermano.body.agregadas === 1, `agrega la que está en un proyecto de su misma carpeta (${JSON.stringify(rHermano.body)})`);
+
   const rMin = await post(P1, { skus: ['QRDOS', 'QR2LILA'] });
   afirmar(rMin.body.agregadas === 2, `agrega el SKU que ML trae en minúsculas (${JSON.stringify(rMin.body)})`);
   const rCuenta = await get(P1);
-  // QR2BE, QR2GR, QR2AZ, SO1, QR15NE, QRDOS (en dos familias: una vez), qr2lila
-  afirmar(rCuenta.body.en_proyecto === 7, `el SKU de dos familias cuenta una vez (${rCuenta.body.en_proyecto})`);
+  // QR2BE, QR2GR, QR2AZ, SO1, QR15NE, QR2CR, QRDOS (en dos familias: una vez), qr2lila
+  afirmar(rCuenta.body.en_proyecto === 8, `el SKU de dos familias cuenta una vez (${rCuenta.body.en_proyecto})`);
 
   const url = process.env.INVENTORY_SUPABASE_URL;
   delete process.env.INVENTORY_SUPABASE_URL;

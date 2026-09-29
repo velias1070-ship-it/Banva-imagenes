@@ -1,29 +1,50 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { FolderPlus, ImageIcon, Package } from 'lucide-react';
-import { createServerSupabase } from '@/lib/supabase/server';
-import type { Project } from '@/types/database';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { clienteInventario, listarFamilias, type ProductGroup } from '@/lib/familias-ml';
+import { leerProyectosConSkus, type ProyectoSkus } from '@/lib/proyectos-familia';
+import { agruparEnCarpetas } from '@/lib/carpetas';
+import { ListaCarpetas } from './lista-carpetas';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ProjectsPage() {
-  const supabase = await createServerSupabase();
+  let proyectos: ProyectoSkus[] = [];
+  let errorProyectos: string | null = null;
+  try {
+    proyectos = await leerProyectosConSkus(createAdminClient());
+  } catch (err) {
+    console.error('[/projects] proyectos:', err);
+    errorProyectos = err instanceof Error ? err.message : 'Error';
+  }
 
-  const { data: projects } = await supabase
-    .from('projects')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  const projectList = (projects || []) as Project[];
+  // Sin las familias de ML los proyectos sin carpeta guardada no se pueden
+  // agrupar: van juntos a una carpeta que lo dice.
+  let familias: ProductGroup[] = [];
+  let errorFamilias: string | null = null;
+  const inventario = clienteInventario();
+  if (!inventario) {
+    errorFamilias = 'faltan INVENTORY_SUPABASE_*';
+  } else {
+    try {
+      familias = await listarFamilias(inventario);
+    } catch (err) {
+      console.error('[/projects] familias de ML:', err);
+      errorFamilias = err instanceof Error ? err.message : 'Error';
+    }
+  }
+  const carpetas = agruparEnCarpetas(familias, proyectos, errorFamilias ? 'Sin agrupar' : undefined);
 
   return (
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Proyectos</h1>
-          <p className="text-muted-foreground">Tandas de generación ({projectList.length})</p>
+          <p className="text-muted-foreground">
+            {proyectos.length} proyectos en {carpetas.length} carpetas, una por producto
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/skus">
@@ -41,7 +62,9 @@ export default async function ProjectsPage() {
         </div>
       </div>
 
-      {projectList.length === 0 ? (
+      {errorProyectos ? (
+        <p className="text-sm text-destructive">No pude leer los proyectos: {errorProyectos}</p>
+      ) : proyectos.length === 0 ? (
         <Card className="mt-8">
           <CardContent className="py-12">
             <div className="flex flex-col items-center justify-center text-center">
@@ -54,31 +77,13 @@ export default async function ProjectsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {projectList.map((project) => (
-            <Link key={project.id} href={`/projects/${project.id}`}>
-              <Card className="cursor-pointer transition-shadow hover:shadow-md">
-                <CardContent className="pt-6">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold">{project.name}</h3>
-                      <p className="text-sm text-muted-foreground">{project.category}</p>
-                    </div>
-                    <Badge variant={project.status === 'active' ? 'default' : 'secondary'}>
-                      {project.status}
-                    </Badge>
-                  </div>
-                  {project.sku_base && (
-                    <p className="mt-2 text-xs text-muted-foreground">SKU: {project.sku_base}</p>
-                  )}
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {new Date(project.created_at).toLocaleDateString('es-CL')}
-                  </p>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+        <ListaCarpetas
+          carpetas={carpetas}
+          aviso={
+            errorFamilias &&
+            `No pude leer las familias de ML (${errorFamilias}): los proyectos sin carpeta guardada van en «Sin agrupar».`
+          }
+        />
       )}
     </div>
   );
