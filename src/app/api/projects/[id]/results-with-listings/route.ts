@@ -101,39 +101,48 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   const supabase = createAdminClient();
   const inventoryDb = getInventorySupabase();
 
-  // 1. Fetch batches for this project
-  const { data: batches } = await supabase
+  // 1. Fetch batches for this project. Sin generaciones todavía igual se
+  //    muestran los swatches (antes volvía vacío hasta generar o importar).
+  const { data: batches, error: batchesError } = await supabase
     .from('generation_batches')
     .select('id')
     .eq('project_id', projectId);
 
-  if (!batches?.length) {
-    return NextResponse.json([]);
+  if (batchesError) {
+    console.error('[results-with-listings] generation_batches:', batchesError.message);
+    return NextResponse.json({ error: batchesError.message }, { status: 500 });
   }
 
-  const batchIds = batches.map((b) => b.id);
+  const batchIds = (batches || []).map((b) => b.id);
 
   // 2. Fetch ALL jobs with hero_shot and swatch relations (same as results endpoint)
-  const { data: jobs, error: jobsError } = await supabase
-    .from('generation_jobs')
-    .select(
-      `*, hero_shot:hero_shots(filename, shot_type, storage_path), swatch:swatches(id, name, color_description, storage_path, display_order)`
-    )
-    .in('batch_id', batchIds)
-    .order('created_at', { ascending: false });
+  let allJobs: JobData[] = [];
+  if (batchIds.length > 0) {
+    const { data: jobs, error: jobsError } = await supabase
+      .from('generation_jobs')
+      .select(
+        `*, hero_shot:hero_shots(filename, shot_type, storage_path), swatch:swatches(id, name, color_description, storage_path, display_order)`
+      )
+      .in('batch_id', batchIds)
+      .order('created_at', { ascending: false });
 
-  if (jobsError) {
-    return NextResponse.json({ error: jobsError.message }, { status: 500 });
+    if (jobsError) {
+      return NextResponse.json({ error: jobsError.message }, { status: 500 });
+    }
+    allJobs = (jobs || []) as JobData[];
   }
 
-  const allJobs = (jobs || []) as JobData[];
-
   // 3. Fetch ALL swatches for the project
-  const { data: swatches } = await supabase
+  const { data: swatches, error: swatchesError } = await supabase
     .from('swatches')
     .select('id, name, sku_suffix, color_description, storage_path, display_order, marked_done_at')
     .eq('project_id', projectId)
     .order('display_order');
+
+  if (swatchesError) {
+    console.error('[results-with-listings] swatches:', swatchesError.message);
+    return NextResponse.json({ error: swatchesError.message }, { status: 500 });
+  }
 
   const allSwatches = (swatches || []) as SwatchData[];
 
