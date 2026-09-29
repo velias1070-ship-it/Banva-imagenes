@@ -27,7 +27,8 @@ npm run golden       # golden set (ver .claude/rules/golden-set.md)
 
 ## Flujo principal
 ```
-Subir heroes (fotos base) + swatches (muestras de tela), o traerlos desde MercadoLibre / por SKU
+Crear el proyecto en /projects/new (uno por familia de ML) y subir heroes (fotos base) + swatches (muestras de tela), o traerlos desde MercadoLibre («Traer fotos de ML» = fetch-ml-images)
+    -> las variantes nuevas se agregan eligiéndolas de una lista (POST /api/projects/{id}/missing-variants), no escribiendo el SKU
     -> /projects/{id}/generate: elegir heroes y swatches
     -> POST /api/projects/{id}/generate                      (crea el batch y los jobs)
     -> cadena serverless /api/batches/{batchId}/process-next  (1 job por invocación; se re-invoca sola con APP_URL)
@@ -37,6 +38,12 @@ Subir heroes (fotos base) + swatches (muestras de tela), o traerlos desde Mercad
     -> ZIP de aprobadas (/api/projects/{id}/download) y /projects/{id}/publish (MercadoLibre)
 ```
 **Dual-route sync** (convención del repo): todo cambio al pipeline de generación se aplica en `process-next/route.ts` Y en `results/[jobId]/route.ts`.
+
+## Lista de proyectos (`/projects`)
+- **Carpetas, una por producto** (`src/lib/carpetas.ts`): cada proyecto va en la carpeta guardada en `projects.metadata.carpeta` (la escriben «Mover», «Renombrar» —`POST /api/projects/carpeta`— o la creación del proyecto) o, si no tiene, en la de su producto: la familia de ML donde tiene más SKU, con las medidas (1.5, 2 plazas, King…) juntas. Sin familia → «Sin familia de ML»; si no se pudieron leer las familias → «Sin agrupar», con un aviso.
+- **La familia de un proyecto no se guarda**: sale de sus SKU (`metadata.variantes` ∪ `swatches.sku_suffix`) cruzados con `ml_items_map` (`src/lib/proyectos-familia.ts`, `src/lib/familias-ml.ts`), así sobrevive a que ML la renombre.
+- **Buscador**: encuentra por carpeta, proyecto, SKU de venta, SKU de origen, nombre de origen o título de ML (`src/lib/busqueda-proyectos.ts`). Su índice se pide al empezar a buscar (`GET /api/projects/indice-busqueda`); el origen de cada SKU de venta sale de `composicion_venta` de bodega.
+- Las lecturas de bodega usan `clienteInventario()`, que devuelve `null` si faltan las variables: **no cae a la base propia** (su copia de `ml_items_map` está congelada desde mayo de 2026 y daría familias viejas sin ningún error).
 
 ## Quién genera qué
 - **`config/routing-rules.json`** define, por categoría, la cadena de modelos por intento (posición 0 = primer intento). Se valida con Zod (`src/lib/models/routing-rules.schema.ts`) contra `MODEL_REGISTRY` (`src/lib/models/registry.ts`). `selectModelId()` (`src/lib/image-providers.ts`) elige con esta precedencia: `swatch_overrides` > `shot_types` > `attempts` de la categoría > `default_chain`.
@@ -51,7 +58,7 @@ Subir heroes (fotos base) + swatches (muestras de tela), o traerlos desde Mercad
 - **El gasto de un trabajo vive en su `pipeline_log`** (JSONB): un `PROVIDER_USED` por cada intento de generación y un `BRAND_COST` por cada foto que devuelve Gemini en el paso de marca (`data.cost_usd`). Las columnas `generation_jobs.cost_usd_actual`, `provider_used` y `model_id` se pisan en cada intento: guardan solo el último. No sumarlas ni usarlas para saber cuánto costó un trabajo.
 - **Tope por trabajo**: `max_cost_per_job_usd` en `routing-rules.json`; `src/lib/cost-cap.ts` lo aplica desde el intento 1 sumando solo `PROVIDER_USED` (la marca no cuenta, a propósito).
 - **Panel**: `/admin/costos` (`/api/admin/costs`) suma `EVENTOS_DE_GASTO` (`PROVIDER_USED` + `BRAND_COST`) y usa la columna solo de respaldo. No cubre las llamadas de texto (verificador, QA, análisis) ni las rutas sin telemetría (`edit-image`, `resize`, `use-as-hero`, aplanado de muestra).
-- **Supabase corta cada lectura en 1.000 filas** aunque el código pida más (un `.limit(5000)` devolvió 1.000 de 8.566, medido 2026-09-29 sobre `generation_jobs` entera). Toda lectura que pueda pasar de 1.000 filas se pagina (ejemplo: `/api/admin/costs`, por `id`).
+- **Supabase corta cada lectura en 1.000 filas** aunque el código pida más (un `.limit(5000)` devolvió 1.000 de 8.566, medido 2026-09-29 sobre `generation_jobs` entera). Toda lectura que pueda pasar de 1.000 filas se pagina por `id`: el ayudante `leerTodo` (`src/lib/familias-ml.ts`, con `.range()`) o a mano como en `/api/admin/costs`.
 
 ## Datos
 - **Base propia** (`NEXT_PUBLIC_SUPABASE_URL`): `projects`, `generation_batches`, `generation_jobs` (con `pipeline_log`), `hero_shots`, `swatches`, `swatch_images`, `brands`, `skus`, `project_skus`, `category_templates`, `golden_runs` y la vista materializada `model_performance`. RPCs: `claim_next_job`, `append_pipeline_event`, `increment_batch_counts`, `refresh_model_performance`. Esquema en `supabase/migrations/`.
