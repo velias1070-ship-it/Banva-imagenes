@@ -21,7 +21,7 @@ export async function GET() {
       listarFamilias(inventario),
       leerProyectosConSkus(createAdminClient()),
       leerTodo<FilaComposicion>((desde, hasta) =>
-        inventario.from('composicion_venta').select('sku_venta, sku_origen, unidades').order('id').range(desde, hasta),
+        inventario.from('composicion_venta').select('sku_venta, sku_origen, unidades, tipo_relacion').order('id').range(desde, hasta),
       ),
       leerTodo<FilaNombre>((desde, hasta) =>
         inventario.from('productos').select('sku, nombre').order('id').range(desde, hasta),

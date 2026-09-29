@@ -34,9 +34,10 @@ export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
   const [errorIndice, setErrorIndice] = useState<string | null>(null);
   const pedido = useRef(false);
 
-  // El índice de SKU se pide una vez, al empezar a buscar.
-  function cargarIndice() {
-    if (pedido.current || indice) return;
+  // El índice de SKU se pide una vez, al empezar a buscar; si falla, sólo se
+  // vuelve a pedir con «Reintentar».
+  function cargarIndice(reintentar = false) {
+    if (indice || (pedido.current && !reintentar)) return;
     pedido.current = true;
     setErrorIndice(null);
     fetch('/api/projects/indice-busqueda')
@@ -48,12 +49,12 @@ export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
       .catch((err) => {
         console.error('[lista-carpetas] índice de búsqueda:', err);
         setErrorIndice(err instanceof Error ? err.message : 'Error');
-        pedido.current = false; // se reintenta al volver al buscador
       });
   }
 
   const tokens = sinTildes(busqueda).split(/\s+/).filter(Boolean);
   const skus = indice && tokens.length ? buscarSkus(indice, tokens) : null;
+  const cargando = tokens.length > 0 && !indice && !errorIndice;
   const visibles = tokens.length
     ? carpetas.filter((c) => {
         const texto = sinTildes([c.nombre, ...c.proyectos.map((p) => p.name)].join(' '));
@@ -120,7 +121,7 @@ export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
           value={busqueda}
-          onFocus={cargarIndice}
+          onFocus={() => cargarIndice()}
           onChange={(e) => {
             cargarIndice();
             setBusqueda(e.target.value);
@@ -130,16 +131,19 @@ export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
         />
       </div>
       {aviso && <p className="text-xs text-destructive">{aviso}</p>}
-      {tokens.length > 0 && !indice && !errorIndice && (
-        <p className="text-xs text-muted-foreground">Buscando también por SKU…</p>
-      )}
+      {cargando && <p className="text-xs text-muted-foreground">Buscando también por SKU…</p>}
       {tokens.length > 0 && errorIndice && (
         <p className="text-xs text-destructive">
-          No pude cargar los SKU ({errorIndice}): por ahora busca sólo por carpeta o proyecto.
+          No pude cargar los SKU ({errorIndice}): por ahora busca sólo por carpeta o proyecto.{' '}
+          <button type="button" onClick={() => cargarIndice(true)} className="underline">
+            Reintentar
+          </button>
         </p>
       )}
       {skus && skus.grupos.length > 0 && <SkuRelacionados skus={skus} nombres={nombres} />}
-      {visibles.length === 0 && !skus?.grupos.length && <p className="text-sm text-muted-foreground">Sin resultados</p>}
+      {visibles.length === 0 && !skus?.grupos.length && !cargando && (
+        <p className="text-sm text-muted-foreground">Sin resultados</p>
+      )}
 
       {visibles.map((c) => {
         const abierta = tokens.length > 0 || abiertas.has(c.nombre);
@@ -225,6 +229,7 @@ function SkuRelacionados({ skus, nombres }: { skus: ResultadoSkus; nombres: Map<
               {v.unidades !== null && v.unidades > 1 && (
                 <span className="text-xs text-muted-foreground">×{v.unidades}</span>
               )}
+              {v.combo && <span className="text-xs text-muted-foreground">combo</span>}
               <span className="min-w-0 flex-1" />
               {v.proyectos.length > 0 ? (
                 <span className="min-w-0 truncate text-xs">

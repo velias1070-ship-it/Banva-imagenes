@@ -11,6 +11,8 @@ import type { ProyectoSkus } from '@/lib/proyectos-familia';
 // - Al buscar se muestran, por cada SKU origen que calza, TODOS los SKU venta
 //   que lo llevan (el individual, los packs, los combos) y en qué proyecto está
 //   cada uno.
+// - Las filas 'alternativo' de composicion_venta no cuentan: ese SKU venta no
+//   lleva el origen (v_receta_componentes de Bodega hace lo mismo).
 
 export interface OrigenVenta {
   sku: string;
@@ -37,6 +39,7 @@ export interface FilaComposicion {
   sku_venta: string;
   sku_origen: string;
   unidades: number;
+  tipo_relacion: string | null;
 }
 
 export interface FilaNombre {
@@ -50,21 +53,23 @@ export function armarIndice(
   composicion: FilaComposicion[],
   productos: FilaNombre[],
 ): IndiceBusqueda {
+  const norm = (sku: string) => sku.trim().toUpperCase();
   const titulos = new Map<string, string | null>();
   for (const g of familias) {
     for (const v of g.variantes) {
-      const sku = v.sku.toUpperCase();
+      const sku = norm(v.sku);
       if (!titulos.get(sku)) titulos.set(sku, v.titulo ?? null);
     }
   }
   const enProyectos = new Map<string, string[]>();
   for (const p of proyectos) {
-    for (const sku of p.skus) enProyectos.set(sku, [...(enProyectos.get(sku) ?? []), p.id]);
+    for (const sku of new Set([...p.skus].map(norm))) enProyectos.set(sku, [...(enProyectos.get(sku) ?? []), p.id]);
   }
   const origenes = new Map<string, OrigenVenta[]>();
   for (const c of composicion) {
-    const venta = c.sku_venta.toUpperCase();
-    const origen = c.sku_origen.toUpperCase();
+    if (c.tipo_relacion === 'alternativo') continue;
+    const venta = norm(c.sku_venta);
+    const origen = norm(c.sku_origen);
     const lista = origenes.get(venta) ?? [];
     if (!lista.some((o) => o.sku === origen)) lista.push({ sku: origen, unidades: c.unidades });
     origenes.set(venta, lista);
@@ -79,7 +84,7 @@ export function armarIndice(
   const usados = new Set(ventas.flatMap((v) => v.origenes.map((o) => o.sku)));
   const nombres: Record<string, string> = {};
   for (const p of productos) {
-    const sku = p.sku.toUpperCase();
+    const sku = norm(p.sku);
     if (usados.has(sku) && p.nombre) nombres[sku] = p.nombre;
   }
   return { ventas, nombres };
@@ -89,6 +94,8 @@ export interface VentaEncontrada {
   sku: string;
   /** Unidades del origen del grupo, o null en el grupo sin origen. */
   unidades: number | null;
+  /** Lleva más de un SKU origen. */
+  combo: boolean;
   proyectos: string[];
 }
 
@@ -100,20 +107,22 @@ export interface GrupoOrigen {
 }
 
 export interface ResultadoSkus {
+  /** Los SKU origen que calzan y, al final, el grupo sin origen si hay. */
   grupos: GrupoOrigen[];
-  /** Grupos que calzan pero no se muestran (se acota escribiendo más). */
+  /** SKU origen que calzan pero no se muestran (se acota escribiendo más). */
   ocultos: number;
-  /** Proyectos que tienen alguno de los SKU venta encontrados (también los ocultos). */
+  /** Proyectos de los SKU venta que se muestran. */
   proyectos: Set<string>;
 }
 
-export const MAX_GRUPOS = 20;
+export const MAX_GRUPOS = 8;
 
 /**
  * `tokens` ya en minúsculas y sin tildes; todos tienen que aparecer. Sale un
- * grupo por cada SKU origen que calza por sí mismo (SKU o nombre) o que lleva
- * un SKU venta que calza (SKU o título). Calzar sólo a través del origen no
- * suma los otros componentes de un combo: buscar el quilt no trae la funda.
+ * grupo por cada SKU origen que calza por sí mismo (SKU o nombre) o que es el
+ * único origen de un SKU venta que calza (SKU o título). Un combo que calza
+ * suma sus orígenes sólo si ninguno salió así: buscar «atenas» no trae la funda
+ * del combo «Quilt Atenas con Funda»; buscar el combo trae los dos.
  */
 export function buscarSkus(indice: IndiceBusqueda, tokens: string[], maxGrupos = MAX_GRUPOS): ResultadoSkus {
   if (tokens.length === 0) return { grupos: [], ocultos: 0, proyectos: new Set() };
@@ -121,33 +130,39 @@ export function buscarSkus(indice: IndiceBusqueda, tokens: string[], maxGrupos =
     const texto = sinTildes(partes.filter(Boolean).join(' '));
     return tokens.every((k) => texto.includes(k));
   };
+  const fila = (v: VentaIndice, unidades: number | null): VentaEncontrada => ({
+    sku: v.sku,
+    unidades,
+    combo: v.origenes.length > 1,
+    proyectos: v.proyectos,
+  });
 
-  const porOrigen = new Map<string, { sku: string; unidades: number; proyectos: string[] }[]>();
+  const porOrigen = new Map<string, VentaEncontrada[]>();
   for (const v of indice.ventas) {
-    for (const o of v.origenes) {
-      porOrigen.set(o.sku, [...(porOrigen.get(o.sku) ?? []), { sku: v.sku, unidades: o.unidades, proyectos: v.proyectos }]);
-    }
+    for (const o of v.origenes) porOrigen.set(o.sku, [...(porOrigen.get(o.sku) ?? []), fila(v, o.unidades)]);
   }
-  const origenes = new Set([...porOrigen.keys()].filter((o) => calza(o, indice.nombres[o] ?? null)));
   const directas = indice.ventas.filter((v) => calza(v.sku, v.titulo));
-  for (const v of directas) for (const o of v.origenes) origenes.add(o.sku);
+  const base = new Set([...porOrigen.keys()].filter((o) => calza(o, indice.nombres[o] ?? null)));
+  for (const v of directas) if (v.origenes.length === 1) base.add(v.origenes[0].sku);
+  const origenes = new Set(base);
+  for (const v of directas) {
+    if (!v.origenes.some((o) => base.has(o.sku))) for (const o of v.origenes) origenes.add(o.sku);
+  }
 
-  const grupos: GrupoOrigen[] = [...origenes]
+  const todos: GrupoOrigen[] = [...origenes]
     .map((origen) => ({
       origen,
       nombre: indice.nombres[origen] ?? null,
-      ventas: [...porOrigen.get(origen)!].sort((a, b) => a.unidades - b.unidades || a.sku.localeCompare(b.sku)),
+      // Primero los de una unidad, después los packs y al final los combos.
+      ventas: [...porOrigen.get(origen)!].sort(
+        (a, b) => Number(a.combo) - Number(b.combo) || a.unidades! - b.unidades! || a.sku.localeCompare(b.sku),
+      ),
     }))
     .sort((a, b) => (a.nombre ?? a.origen).localeCompare(b.nombre ?? b.origen, 'es'));
+  const grupos = todos.slice(0, maxGrupos);
   const sinOrigen = directas.filter((v) => v.origenes.length === 0);
-  if (sinOrigen.length > 0) {
-    grupos.push({
-      origen: null,
-      nombre: null,
-      ventas: sinOrigen.map((v) => ({ sku: v.sku, unidades: null, proyectos: v.proyectos })),
-    });
-  }
+  if (sinOrigen.length > 0) grupos.push({ origen: null, nombre: null, ventas: sinOrigen.map((v) => fila(v, null)) });
 
   const proyectos = new Set(grupos.flatMap((g) => g.ventas.flatMap((v) => v.proyectos)));
-  return { grupos: grupos.slice(0, maxGrupos), ocultos: Math.max(0, grupos.length - maxGrupos), proyectos };
+  return { grupos, ocultos: Math.max(0, todos.length - maxGrupos), proyectos };
 }
