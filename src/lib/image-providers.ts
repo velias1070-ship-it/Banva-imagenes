@@ -176,6 +176,36 @@ export interface SmartGenerateExtras {
   costEstimateUsd?: number;
   modelIdUsed: ProviderId;
   costCapped?: boolean;
+  /**
+   * Sólo si OpenAI falló y la respuesta viene del respaldo Gemini: qué modelo
+   * falló y por qué (`code` = status HTTP o NETWORK_ERROR; 'sin_codigo' si la
+   * falla no traía uno, p.ej. sin llave o sin imagen en la respuesta).
+   */
+  fallbackFrom?: { modelId: ProviderId; code: string; error: string };
+}
+
+/**
+ * Datos del evento PROVIDER_USED del pipeline_log: costo y modelo de la foto
+ * y, si hubo respaldo, de qué modelo cayó y por qué. Único armador: los cuatro
+ * sitios que emiten el evento lo usan, así el respaldo nunca queda mudo.
+ */
+export function providerUsedEventData(smart: SmartGenerateExtras): Record<string, unknown> {
+  return {
+    cost_usd: smart.costEstimateUsd,
+    model_id: smart.modelIdUsed,
+    ...(smart.fallbackFrom
+      ? {
+          fallback_from: smart.fallbackFrom.modelId,
+          fallback_code: smart.fallbackFrom.code,
+          fallback_error: smart.fallbackFrom.error,
+        }
+      : {}),
+  };
+}
+
+/** Mensaje de error para el log: sin fragmentos de llave (OpenAI enmascara `sk-…1234` en sus 401) y corto. */
+function mensajeParaLog(error: string | undefined): string {
+  return (error ?? '').replace(/sk-[\w*-]+/g, 'sk-…').slice(0, 160);
 }
 
 function toGeminiResult(u: UnifiedResult): GeminiGenerateResult {
@@ -214,9 +244,9 @@ function familyToLegacyProvider(family: string, modelId: ProviderId): ImageProvi
 
 /**
  * Generate one image. Picks the model id from routing rules at the given
- * attempt, dispatches to its adapter. If the chosen Gemini model fails
- * with a recoverable error, transparently falls back to GPT-2 (preserves
- * the previous safety net at lines 118-152 of the legacy file).
+ * attempt and dispatches to its adapter. If the chosen model is OpenAI and
+ * it fails, falls back in the same call to the cheapest Gemini the category
+ * chain allows (see below) and reports it in `fallbackFrom`.
  *
  * Returns the result in the legacy GeminiGenerateResult shape with
  * provider/cost/model_id telemetry tagged on.
@@ -255,6 +285,13 @@ export async function generateImageSmart(
       providerUsed: familyToLegacyProvider('gemini', respaldoId),
       costEstimateUsd: respaldo.costUsd,
       modelIdUsed: respaldo.modelId,
+      // Hasta acá la caída de ChatGPT sólo iba a console.error: nada en la base decía
+      // cuántas fotos salían del respaldo ni por qué. Ahora viaja al PROVIDER_USED.
+      fallbackFrom: {
+        modelId: result.modelId,
+        code: result.errorCode ?? 'sin_codigo',
+        error: mensajeParaLog(result.error),
+      },
     };
   }
 

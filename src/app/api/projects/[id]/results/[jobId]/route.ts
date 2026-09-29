@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateImageSmart } from '@/lib/image-providers';
+import { generateImageSmart, providerUsedEventData } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, getDominantColorPalette, rgbToSpanishColorName } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
@@ -471,6 +471,14 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
             continue;
           }
 
+          // Gemini cobra toda foto que devuelve, aunque abajo la descartemos (recorte, deriva
+          // de color, texto en la zona del logo). Este evento es lo único que registra ese gasto:
+          // sale en el panel de costos, pero no cuenta para el tope por trabajo (ver cost-cap.ts).
+          logPipelineEvent(jobId, 'BRAND_COST', `attempt ${attempt}`, {
+            cost_usd: geminiResult.costEstimateUsd,
+            model_id: geminiResult.modelIdUsed,
+          });
+
           const geminiBuffer = Buffer.from(geminiResult.imageBase64, 'base64');
           const sharp = (await import('sharp')).default;
           const [srcMeta, gemMeta] = await Promise.all([
@@ -595,8 +603,15 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
         status: 'approved',
         output_storage_path: outputPath,
         generation_time_ms: 0,
-        provider_used: usedGemini ? 'gemini-flash' : 'sharp',
-        model_id: usedGemini ? (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview') : 'sharp-overlay',
+        // La marca no pisa qué modelo hizo la foto: esa fila ya lo dice (el panel de costos
+        // agrupa por él). Sólo se completa si estaba vacío (foto importada o subida). Qué
+        // hizo la marca queda en el pipeline_log (BRAND_GEMINI_OK / BRAND_GEMINI_FALLBACK).
+        ...(job.provider_used
+          ? {}
+          : {
+              provider_used: usedGemini ? 'gemini-flash' : 'sharp',
+              model_id: usedGemini ? (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview') : 'sharp-overlay',
+            }),
         _telemetry_source: 'sprint_1_runtime',
         attempt: attempt + 1,
         qa_score: 0.95,
@@ -1247,7 +1262,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         providerUsed = smart.providerUsed;
         modelIdUsed = smart.modelIdUsed;
         costUsdActual = smart.costEstimateUsd;
-        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
+        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, providerUsedEventData(smart));
       } else {
         // If strategy enables flatten_hero (e.g. quilts), pre-process the hero
         // through Sharp to remove its 3D relief before sending to the model.
@@ -1278,7 +1293,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         providerUsed = smart.providerUsed;
         modelIdUsed = smart.modelIdUsed;
         costUsdActual = smart.costEstimateUsd;
-        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
+        logPipelineEvent(jobId, 'PROVIDER_USED', smart.providerUsed, providerUsedEventData(smart));
       }
     }
 

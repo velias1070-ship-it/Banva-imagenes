@@ -59,7 +59,18 @@ export function getCostCapForCategory(category: string | null | undefined): numb
 }
 
 /**
- * Sum cost_usd from every PROVIDER_USED entry in a pipeline_log array.
+ * Eventos del pipeline_log que gastan plata: la generación (PROVIDER_USED) y
+ * cada foto que devolvió Gemini en el paso de marca (BRAND_COST).
+ *
+ * El TOPE por trabajo suma sólo PROVIDER_USED (el default de abajo): la marca
+ * no cuenta para él, así que hacer clic varias veces en «Marca» no hace que la
+ * próxima regeneración salga marcada por tope. El PANEL de costos suma los dos.
+ */
+export const EVENTOS_DE_GASTO = ['PROVIDER_USED', 'BRAND_COST'] as const;
+
+/**
+ * Sum cost_usd from the given events of a pipeline_log array (default: only
+ * PROVIDER_USED, which is what the per-job cap counts).
  * Pure function — pipeline_log is the JSONB column on generation_jobs.
  *
  * Matches both data shapes used in the codebase:
@@ -68,11 +79,12 @@ export function getCostCapForCategory(category: string | null | undefined): numb
  */
 export function sumJobCostFromPipelineLog(
   pipelineLog: PipelineLogEntry[] | null | undefined,
+  events: readonly string[] = ['PROVIDER_USED'],
 ): number {
   if (!pipelineLog || pipelineLog.length === 0) return 0;
   let total = 0;
   for (const entry of pipelineLog) {
-    if (entry.event !== 'PROVIDER_USED') continue;
+    if (!events.includes(entry.event)) continue;
     let costUsd: unknown;
     if (typeof entry.data === 'string') {
       try {

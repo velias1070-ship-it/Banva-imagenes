@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { type GeminiGenerateResult } from '@/lib/gemini/client';
-import { generateImageSmart } from '@/lib/image-providers';
+import { generateImageSmart, providerUsedEventData } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, getDominantColorPalette, rgbToSpanishColorName } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
@@ -1277,7 +1277,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         providerUsed = smart.providerUsed;
         modelIdUsed = smart.modelIdUsed;
         costUsdActual = smart.costEstimateUsd;
-        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, providerUsedEventData(smart));
       } else {
         const smart = await generateImageSmart({
           heroImageBase64: heroBase64,
@@ -1293,7 +1293,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         providerUsed = smart.providerUsed;
         modelIdUsed = smart.modelIdUsed;
         costUsdActual = smart.costEstimateUsd;
-        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, providerUsedEventData(smart));
       }
     }
 
