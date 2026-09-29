@@ -10,6 +10,7 @@ import { Dropzone } from '@/components/upload/dropzone';
 import { ArrowLeft, Trash2, Download, RefreshCw, Loader2, ImagePlus, Plus, X, Search, Globe } from 'lucide-react';
 import type { Swatch } from '@/types/database';
 import { toast } from 'sonner';
+import { VariantesNuevas } from '../variantes-nuevas';
 
 export default function SwatchesPage() {
   const { id } = useParams<{ id: string }>();
@@ -352,6 +353,14 @@ export default function SwatchesPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
+          <VariantesNuevas
+            projectId={id}
+            onAgregadas={() => {
+              setImgVersion((v) => v + 1);
+              fetchSwatches();
+            }}
+          />
+
           <Card>
             <CardHeader>
               <CardTitle>Agregar desde SKU</CardTitle>
