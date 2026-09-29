@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, Folder, Search } from 'lucide-react';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { sinTildes } from '@/lib/familias-ml';
 import type { Carpeta } from '@/lib/carpetas';
+import { buscarSkus, type IndiceBusqueda, type ResultadoSkus } from '@/lib/busqueda-proyectos';
 
 interface IProps {
   carpetas: Carpeta[];
@@ -22,20 +23,45 @@ const NUEVA = '__nueva__';
 
 // Proyectos por carpeta (una por producto). Para corregir: «Mover» un proyecto
 // a otra carpeta, o «Renombrar» una carpeta (con el nombre de otra, se juntan).
+// El buscador encuentra carpeta, proyecto, SKU venta, SKU origen, nombre de
+// origen o título de ML (src/lib/busqueda-proyectos.ts).
 export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
   const router = useRouter();
   const [busqueda, setBusqueda] = useState('');
   const [abiertas, setAbiertas] = useState<Set<string>>(new Set());
   const [guardando, setGuardando] = useState(false);
+  const [indice, setIndice] = useState<IndiceBusqueda | null>(null);
+  const [errorIndice, setErrorIndice] = useState<string | null>(null);
+  const pedido = useRef(false);
+
+  // El índice de SKU se pide una vez, al empezar a buscar.
+  function cargarIndice() {
+    if (pedido.current || indice) return;
+    pedido.current = true;
+    setErrorIndice(null);
+    fetch('/api/projects/indice-busqueda')
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `error ${res.status}`);
+        setIndice(data as IndiceBusqueda);
+      })
+      .catch((err) => {
+        console.error('[lista-carpetas] índice de búsqueda:', err);
+        setErrorIndice(err instanceof Error ? err.message : 'Error');
+        pedido.current = false; // se reintenta al volver al buscador
+      });
+  }
 
   const tokens = sinTildes(busqueda).split(/\s+/).filter(Boolean);
+  const skus = indice && tokens.length ? buscarSkus(indice, tokens) : null;
   const visibles = tokens.length
     ? carpetas.filter((c) => {
         const texto = sinTildes([c.nombre, ...c.proyectos.map((p) => p.name)].join(' '));
-        return tokens.every((t) => texto.includes(t));
+        return tokens.every((t) => texto.includes(t)) || c.proyectos.some((p) => skus?.proyectos.has(p.id));
       })
     : carpetas;
   const destinos = carpetas.map((c) => c.nombre).filter((n) => n !== sinGrupo);
+  const nombres = new Map(carpetas.flatMap((c) => c.proyectos.map((p) => [p.id, p.name] as const)));
 
   function alternar(nombre: string) {
     setAbiertas((prev) => {
@@ -94,13 +120,26 @@ export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
           value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar carpeta o proyecto"
+          onFocus={cargarIndice}
+          onChange={(e) => {
+            cargarIndice();
+            setBusqueda(e.target.value);
+          }}
+          placeholder="Buscar carpeta, proyecto, producto o SKU"
           className="pl-8"
         />
       </div>
       {aviso && <p className="text-xs text-destructive">{aviso}</p>}
-      {visibles.length === 0 && <p className="text-sm text-muted-foreground">Sin resultados</p>}
+      {tokens.length > 0 && !indice && !errorIndice && (
+        <p className="text-xs text-muted-foreground">Buscando también por SKU…</p>
+      )}
+      {tokens.length > 0 && errorIndice && (
+        <p className="text-xs text-destructive">
+          No pude cargar los SKU ({errorIndice}): por ahora busca sólo por carpeta o proyecto.
+        </p>
+      )}
+      {skus && skus.grupos.length > 0 && <SkuRelacionados skus={skus} nombres={nombres} />}
+      {visibles.length === 0 && !skus?.grupos.length && <p className="text-sm text-muted-foreground">Sin resultados</p>}
 
       {visibles.map((c) => {
         const abierta = tokens.length > 0 || abiertas.has(c.nombre);
@@ -158,6 +197,52 @@ export function ListaCarpetas({ carpetas, sinGrupo, aviso }: IProps) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Por cada SKU origen que calza: todos los SKU venta que lo llevan y en qué
+// proyecto está cada uno.
+function SkuRelacionados({ skus, nombres }: { skus: ResultadoSkus; nombres: Map<string, string> }) {
+  return (
+    <div className="space-y-3 rounded-md border px-4 py-3">
+      <p className="text-sm font-medium">SKU relacionados</p>
+      {skus.grupos.map((g) => (
+        <div key={g.origen ?? '(sin origen)'} className="space-y-1">
+          <p className="truncate text-xs text-muted-foreground">
+            {g.origen ? (
+              <>
+                Origen <span className="font-mono">{g.origen}</span>
+                {g.nombre && ` · ${g.nombre}`}
+              </>
+            ) : (
+              'Sin SKU origen en Bodega'
+            )}
+          </p>
+          {g.ventas.map((v) => (
+            <div key={v.sku} className="flex items-center gap-2 pl-3 text-sm">
+              <span className="font-mono">{v.sku}</span>
+              {v.unidades !== null && v.unidades > 1 && (
+                <span className="text-xs text-muted-foreground">×{v.unidades}</span>
+              )}
+              <span className="min-w-0 flex-1" />
+              {v.proyectos.length > 0 ? (
+                <span className="min-w-0 truncate text-xs">
+                  <Link href={`/projects/${v.proyectos[0]}`} className="hover:underline">
+                    {nombres.get(v.proyectos[0]) ?? 'proyecto'}
+                  </Link>
+                  {v.proyectos.length > 1 && <span className="text-muted-foreground"> y {v.proyectos.length - 1} más</span>}
+                </span>
+              ) : (
+                <span className="text-xs text-amber-600">sin proyecto</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+      {skus.ocultos > 0 && (
+        <p className="text-xs text-muted-foreground">Y {skus.ocultos} SKU origen más: escribe más para acotar.</p>
+      )}
     </div>
   );
 }
