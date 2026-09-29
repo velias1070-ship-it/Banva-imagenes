@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { resolveItemIdForSku } from '@/lib/ml';
 import { PRODUCT_CATEGORIES } from '@/lib/constants';
+import { leerTodo } from '@/lib/leer-todo';
 
 // Palabra del nombre → categoría de la app. Se compara SIN tildes ("Juego de
 // sábanas" caía en 'otros'), y lo específico va antes que lo genérico
@@ -49,22 +50,6 @@ function inferCategory(nombre: string, categoriaBodega?: string | null): string 
   if (CATEGORIAS_APP.has(b)) return b;
   if (CATEGORIAS_APP.has(`${b}s`)) return `${b}s`;
   return '';
-}
-
-// La base de inventario entrega como máximo 1.000 filas por consulta aunque se
-// pida más: con .limit(2000) la lista perdía publicaciones (29-sep-2026: el
-// limpiapiés de coco MLC2250580065 no aparecía). Se lee por páginas, ordenado
-// por id, hasta una página vacía.
-async function leerTodo<T>(
-  pagina: (desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-): Promise<T[]> {
-  const filas: T[] = [];
-  for (;;) {
-    const { data, error } = await pagina(filas.length, filas.length + 999);
-    if (error) throw new Error(error.message);
-    if (!data || data.length === 0) return filas;
-    filas.push(...data);
-  }
 }
 
 // Tradicional y activa o pausada (una pausada se reactiva con fotos nuevas).

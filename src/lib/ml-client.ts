@@ -16,7 +16,10 @@ interface MLConfig {
   seller_id: string;
 }
 
-function getInventarioSupabase() {
+// Cliente de la base de INVENTARIO (bodega). Lanza si faltan las variables: a
+// propósito NO cae a la base propia de la app, donde hay una copia vieja de las
+// tablas de bodega y se leerían datos atrasados sin ningún error.
+export function getInventarioSupabase() {
   const url = process.env.INVENTORY_SUPABASE_URL;
   const key = process.env.INVENTORY_SUPABASE_KEY;
   if (!url || !key) throw new Error('Missing INVENTORY_SUPABASE_URL or INVENTORY_SUPABASE_KEY');
