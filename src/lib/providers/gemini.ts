@@ -46,8 +46,14 @@ function buildAdapter(modelId: string, useProModel: boolean, costPerImageUsd: nu
   };
 }
 
-/** Flash provider — default for attempt 0 in most categories. */
-export const geminiFlashProvider: ImageGenerator = buildAdapter(FLASH_MODEL_ID, false, 0.045);
+// Flash cobra por tokens de imagen de salida: 1K = 1.120 tokens × US$60/M = US$0,067.
+// El 0,045 que había acá era el precio de 0,5K, y la app nunca manda `imageSize`
+// (default 1K). Medido 2026-09-26: 0,069 por foto contando el texto de entrada.
+// Esta es la ÚNICA fuente del precio de Flash: el registro de modelos la lee de acá.
+const FLASH_COST_PER_IMAGE_USD = 0.067;
 
-/** Pro provider — escalation for retries and complex categories (quilts/cortinas/alfombras). */
+/** Flash provider — el Gemini más barato: último de la cadena por defecto y único de `brand` (ver config/routing-rules.json). */
+export const geminiFlashProvider: ImageGenerator = buildAdapter(FLASH_MODEL_ID, false, FLASH_COST_PER_IMAGE_USD);
+
+/** Pro provider — segundo de la cadena por defecto (después de ChatGPT); en frazadas va dos veces. */
 export const geminiProProvider: ImageGenerator = buildAdapter(PRO_MODEL_ID, true, 0.134);

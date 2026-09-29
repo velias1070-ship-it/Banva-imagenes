@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { type GeminiGenerateResult } from '@/lib/gemini/client';
-import { generateImageSmart } from '@/lib/image-providers';
+import { generateImageSmart, providerUsedEventData } from '@/lib/image-providers';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, flattenHeroEmboss, ensureOutputSpec, createSwatchCollage, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, getDominantColorPalette, rgbToSpanishColorName } from '@/lib/image-processing';
 import {
   getCategoryStrategy,
@@ -1254,9 +1254,10 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
     }
 
     // ── Normal single-pass generation (or fallback from multi-pass) ──
-    // generateImageSmart routes entre Gemini Flash/Pro y GPT Image 2 según
-    // category + swatch profile + attempt. Con ENABLE_GPT_IMAGE_2=0 (default)
-    // siempre usa Gemini (comportamiento legacy, safe).
+    // generateImageSmart elige el modelo según category + swatch profile + attempt,
+    // con la cadena de config/routing-rules.json (ChatGPT primero en casi todas las
+    // categorías). Si ChatGPT falla, responde con el Gemini más barato que quede de
+    // la cadena y lo anota en PROVIDER_USED (fallback_from). Nada lee ENABLE_GPT_IMAGE_2.
     if (!result) {
       const swatchProfile = (job.swatch.fabric_profile as Record<string, unknown> | null) || null;
       const smartCtx = {
@@ -1277,7 +1278,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         providerUsed = smart.providerUsed;
         modelIdUsed = smart.modelIdUsed;
         costUsdActual = smart.costEstimateUsd;
-        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, providerUsedEventData(smart));
       } else {
         const smart = await generateImageSmart({
           heroImageBase64: heroBase64,
@@ -1293,7 +1294,7 @@ Output: ${projectSettings.generation.resolution}px, RGB, PNG.`;
         providerUsed = smart.providerUsed;
         modelIdUsed = smart.modelIdUsed;
         costUsdActual = smart.costEstimateUsd;
-        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, { cost_usd: smart.costEstimateUsd, model_id: smart.modelIdUsed });
+        logPipelineEvent(job.id, 'PROVIDER_USED', smart.providerUsed, providerUsedEventData(smart));
       }
     }
 

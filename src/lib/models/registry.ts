@@ -52,7 +52,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   [FLASH_ID]: {
     adapter: geminiFlashProvider,
     providerFamily: 'gemini',
-    costPerImageUsd: 0.045,
+    costPerImageUsd: geminiFlashProvider.costPerImageUsd,
     supports: ['edit', 'reference', 'from_scratch'],
     textureGrade: 4,
     notes: 'Cheap default. Fails on multi-pattern, light-on-white, sheer fabric, printed illustrations.',
@@ -79,7 +79,7 @@ export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   'gemini-flash': {
     adapter: geminiFlashProvider,
     providerFamily: 'gemini',
-    costPerImageUsd: 0.045,
+    costPerImageUsd: geminiFlashProvider.costPerImageUsd,
     supports: ['edit', 'reference', 'from_scratch'],
     textureGrade: 4,
   },
