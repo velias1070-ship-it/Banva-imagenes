@@ -8,11 +8,11 @@
  * with distinct ids.
  */
 
-import { generateImage, GEMINI_MODEL } from '@/lib/gemini/client';
+import { generateImage, GEMINI_MODEL, GEMINI_MODEL_PRO } from '@/lib/gemini/client';
 import type { ImageGenerator, UnifiedRequest, UnifiedResult } from './types';
 
 const FLASH_MODEL_ID = GEMINI_MODEL;
-const PRO_MODEL_ID = (process.env.GEMINI_MODEL_PRO || 'gemini-3-pro-image-preview').trim();
+const PRO_MODEL_ID = GEMINI_MODEL_PRO;
 
 function buildAdapter(modelId: string, useProModel: boolean, costPerImageUsd: number): ImageGenerator {
   return {
@@ -64,5 +64,15 @@ const FLASH_COST_PER_IMAGE_USD = 0.052;
  */
 export const geminiFlashProvider: ImageGenerator = buildAdapter(FLASH_MODEL_ID, false, FLASH_COST_PER_IMAGE_USD);
 
-/** Pro provider — segundo de la cadena por defecto (después de ChatGPT); en frazadas va dos veces. */
+/**
+ * Pro provider — segundo de la cadena por defecto (después de ChatGPT); en frazadas va dos veces.
+ * Hoy corre Nano Banana Pro estable; el nombre del slot (`gemini-pro`) queda igual porque lo usan
+ * routing-rules.json y `provider_used`.
+ *
+ * Costo: US$0,134 es el precio de lista de la imagen sola (1.120 tokens a US$120/M). Con la entrada
+ * y el pensamiento, medido 2026-10-08 en 3 llamadas reales con las mismas entradas que la app, el
+ * costo fue US$0,1414-0,1416 (el preview, mismas entradas: 0,1416-0,1421). No se movió porque ~6 %
+ * no es material para el tope de costo. El número se repite en `models/registry.ts` (la entrada del
+ * id concreto y la del alias `gemini-pro`): si se cambia acá, cambiarlas también.
+ */
 export const geminiProProvider: ImageGenerator = buildAdapter(PRO_MODEL_ID, true, 0.134);
