@@ -8,10 +8,10 @@
  * with distinct ids.
  */
 
-import { generateImage } from '@/lib/gemini/client';
+import { generateImage, GEMINI_MODEL } from '@/lib/gemini/client';
 import type { ImageGenerator, UnifiedRequest, UnifiedResult } from './types';
 
-const FLASH_MODEL_ID = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview').trim();
+const FLASH_MODEL_ID = GEMINI_MODEL;
 const PRO_MODEL_ID = (process.env.GEMINI_MODEL_PRO || 'gemini-3-pro-image-preview').trim();
 
 function buildAdapter(modelId: string, useProModel: boolean, costPerImageUsd: number): ImageGenerator {
@@ -46,13 +46,22 @@ function buildAdapter(modelId: string, useProModel: boolean, costPerImageUsd: nu
   };
 }
 
-// Flash cobra por tokens de imagen de salida: 1K = 1.120 tokens × US$60/M = US$0,067.
-// El 0,045 que había acá era el precio de 0,5K, y la app nunca manda `imageSize`
-// (default 1K). Medido 2026-09-26: 0,069 por foto contando el texto de entrada.
+// Flash = Nano Banana 2.1. Cobra por tokens: entrada US$1,50/M, texto y "pensamiento" de
+// salida US$7,50/M, imagen de salida US$30/M (1K = 1.120 tokens = US$0,0336). En modo edición
+// las dos fotos de entrada suman 2.240 tokens y el modelo SIEMPRE piensa (no se puede apagar),
+// por eso el precio no es el de la imagen sola. Medido 2026-10-08 en 5 llamadas reales (3 generaciones
+// y 2 pasos de marca): US$0,049-0,057, promedio 0,052; el Flash anterior con las mismas 3
+// entradas de generación: US$0,069-0,070. Unos 400-600 tokens de salida por llamada vienen
+// sin desglose y se contaron a precio de texto; si fueran de imagen el promedio subiría
+// hasta ~0,067. Precios: https://ai.google.dev/gemini-api/docs/pricing
 // Esta es la ÚNICA fuente del precio de Flash: el registro de modelos la lee de acá.
-const FLASH_COST_PER_IMAGE_USD = 0.067;
+const FLASH_COST_PER_IMAGE_USD = 0.052;
 
-/** Flash provider — el Gemini más barato: último de la cadena por defecto y único de `brand` (ver config/routing-rules.json). */
+/**
+ * Flash provider — el Gemini más barato: último de la cadena por defecto y único de `brand`
+ * (ver config/routing-rules.json). Hoy corre Nano Banana 2.1; el nombre del slot
+ * (`gemini-flash`) queda igual porque lo usan routing-rules.json y `provider_used`.
+ */
 export const geminiFlashProvider: ImageGenerator = buildAdapter(FLASH_MODEL_ID, false, FLASH_COST_PER_IMAGE_USD);
 
 /** Pro provider — segundo de la cadena por defecto (después de ChatGPT); en frazadas va dos veces. */

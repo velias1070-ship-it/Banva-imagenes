@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateImageSmart, providerUsedEventData } from '@/lib/image-providers';
+import { GEMINI_MODEL } from '@/lib/gemini/client';
 import { isSwatchDark, cropSwatchToFabric, cropAndTileSwatchToFabric, ensureOutputSpec, flattenHeroEmboss, computeSwatchOutputDeltaE, compositeHeroOverlays, getProductBaseColor, getDominantColorPalette, rgbToSpanishColorName } from '@/lib/image-processing';
 import { detectShotType } from '@/lib/shot-type-detector';
 import {
@@ -610,7 +611,7 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
           ? {}
           : {
               provider_used: usedGemini ? 'gemini-flash' : 'sharp',
-              model_id: usedGemini ? (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview') : 'sharp-overlay',
+              model_id: usedGemini ? GEMINI_MODEL : 'sharp-overlay',
             }),
         _telemetry_source: 'sprint_1_runtime',
         attempt: attempt + 1,
