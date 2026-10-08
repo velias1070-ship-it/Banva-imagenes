@@ -1,5 +1,12 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
-const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-image-preview').trim();
+// Flash de imagen = Nano Banana 2.1 (estable desde 2026-10-06). Reemplaza al preview
+// `gemini-3.1-flash-image-preview`, que la tabla de deprecaciones de Google da de baja
+// desde 2026-06-25 (aun así seguía respondiendo).
+// OJO: si `GEMINI_MODEL` está definida en Vercel, MANDA sobre este default. Al cambiar
+// de modelo hay que cambiar también esa variable; no alcanza con tocar el código.
+// Se exporta porque es la ÚNICA fuente del nombre: `providers/gemini.ts` y la etiqueta
+// `model_id` de `results/[jobId]` la importan de acá.
+export const GEMINI_MODEL = (process.env.GEMINI_MODEL || 'gemini-nano-banana-2.1').trim();
 export const GEMINI_MODEL_PRO = process.env.GEMINI_MODEL_PRO || 'gemini-3-pro-image-preview';
 // gemini-2.0-flash fue retirado por Google (HTTP 404 "no longer available") y dejaba
 // el QA scorer atascado en qa_pending. Default ahora gemini-2.5-flash (vivo, mismo modelo
