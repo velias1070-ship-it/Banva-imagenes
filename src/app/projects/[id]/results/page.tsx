@@ -1466,7 +1466,7 @@ export default function ResultsPage() {
                 if (thisJob.status === 'approved') {
                   toast.success('Brand regen completada y aprobada');
                 } else if (thisJob.status === 'flagged') {
-                  toast.error('Brand regen completada pero rechazada por QA');
+                  toast.error('Brand regen completada, pero la revisión de marca la dejó en flagged — el motivo está en la tarjeta');
                 } else {
                   toast.error(`Brand regen termino con estado: ${thisJob.status}`);
                 }
