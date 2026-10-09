@@ -16,6 +16,7 @@ import { buildSizePromptNote } from '@/lib/size-utils';
 import { getProjectSettings } from '@/lib/project-settings';
 import { buildBrandPromptSection, overlayBrandLogo, chooseBestCornerByBbox, type BrandConfig } from '@/lib/brand';
 import { analyzeTextElements, detectTextBboxes } from '@/lib/text-element-analyzer';
+import { reviewBrandPass, brandPassOutcome, type BrandReview } from '@/lib/brand-reviewer';
 import { flattenSwatchWithAI } from '@/lib/swatch-flattener';
 import { analyzeSwatchPattern } from '@/lib/swatch-planner';
 import { generateSabanasMultiPass } from '@/lib/multipass-generator';
@@ -592,16 +593,50 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
 
       // Logo ALWAYS at brand book position (finalBuffer is already 1200x1200)
       let imageBuffer = finalBuffer;
+      // overlayBrandLogo devuelve el MISMO contenido cuando no pega nada (marca con el overlay
+      // apagado, tipo de toma fuera de su filtro, logo que no se pudo bajar): la revisión de
+      // abajo necesita saber si de verdad hay un logo que mirar.
+      let logoPasted = false;
       if (brand) {
-        imageBuffer = Buffer.from(await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null, brand.logo_position));
-        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position, final_overlap_pct: Math.round(bestOverlap * 100) });
+        const withLogo = await overlayBrandLogo(imageBuffer, brand, 'lifestyle', null, brand.logo_position);
+        logoPasted = !withLogo.equals(imageBuffer);
+        imageBuffer = Buffer.from(withLogo);
+        logPipelineEvent(jobId, 'BRAND_OVERLAY', brand.name, { corner: brand.logo_position, final_overlap_pct: Math.round(bestOverlap * 100), logo_pasted: logoPasted });
       }
+
+      // Revisión por modelo ANTES de aprobar (src/lib/brand-reviewer.ts): texto legible y logo
+      // visible. Con nota 1-2 queda `flagged` con el motivo; si el modelo no puede revisar se
+      // aprueba como siempre pero qa_feedback lo dice. Nunca lanza.
+      let review: BrandReview | null = null;
+      if (brand) {
+        review = await reviewBrandPass({
+          beforeBuffer: sourceBuffer,
+          afterBuffer: imageBuffer,
+          brand,
+          textChanged: usedGemini,
+          hasLogo: logoPasted,
+        });
+        logPipelineEvent(jobId, 'BRAND_REVIEW', review.summary, {
+          verdict: review.verdict,
+          problems: review.problems,
+          answer: review.answer,
+          model: review.model,
+          input_tokens: review.inputTokens,
+          output_tokens: review.outputTokens,
+          duration_ms: review.durationMs,
+          text_changed: usedGemini,
+          has_logo: logoPasted,
+        });
+      } else {
+        logPipelineEvent(jobId, 'BRAND_REVIEW_SKIPPED', 'sin marca configurada: no hay qué revisar');
+      }
+      const outcome = brandPassOutcome(review, usedGemini);
 
       const outputPath = `projects/${projectId}/generated/${jobId}.png`;
       await supabase.storage.from('images').upload(outputPath, imageBuffer, { contentType: 'image/png', upsert: true });
       logPipelineEvent(jobId, 'UPLOAD', outputPath);
       await supabase.from('generation_jobs').update({
-        status: 'approved',
+        status: outcome.status,
         output_storage_path: outputPath,
         generation_time_ms: 0,
         // La marca no pisa qué modelo hizo la foto: esa fila ya lo dice (el panel de costos
@@ -615,11 +650,11 @@ You MUST RELOCATE these specific text elements so they no longer overlap the ${b
             }),
         _telemetry_source: 'sprint_1_runtime',
         attempt: attempt + 1,
-        qa_score: 0.95,
-        qa_feedback: usedGemini ? 'Auto-approved (BRAND_ONLY Gemini)' : 'Auto-approved (BRAND_ONLY Sharp fallback)',
+        qa_score: outcome.qa_score,
+        qa_feedback: outcome.qa_feedback,
         updated_at: new Date().toISOString(),
       }).eq('id', jobId);
-      logPipelineEvent(jobId, 'STATUS', 'approved', { method: usedGemini ? 'gemini' : 'sharp-fallback' });
+      logPipelineEvent(jobId, 'STATUS', outcome.status, { method: usedGemini ? 'gemini' : 'sharp-fallback', brand_review: review?.verdict ?? 'sin_revision' });
       return;
     }
 
